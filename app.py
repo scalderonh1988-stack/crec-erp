@@ -123,6 +123,7 @@ PROVEEDORES_FILE = os.path.join(CLIENTES_DIR, "maestro_proveedores.xlsx")
 def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA DE DESPACHO", fecha_emision=None):
     from fpdf import FPDF
     from datetime import datetime
+    import os
 
     # Formateo de la fecha
     if fecha_emision is None:
@@ -136,7 +137,9 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
     pdf.add_page()
   
     negocio_actual = str(st.session_state.get('negocio_seleccionado', '')).strip()
-    tenant_dir = os.path.join("clientes_data", negocio_actual) if negocio_actual else "" # Ajusta CARPETA_CLIENTES si es distinto
+    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+    
+    tenant_dir = os.path.join("clientes_data", negocio_actual) if negocio_actual else "" 
 
     # --- LOGO ---
     if tenant_dir:
@@ -159,10 +162,13 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
             except Exception:
                 pass
 
-    nombre_empresa = cfg.get('nombre_empresa') or negocio_actual or 'MI EMPRESA SPA'
+    nombre_empresa = cfg.get('nombre_empresa') or nombre_empresa_act or negocio_actual or 'MI EMPRESA SPA'
     rut_empresa = cfg.get('rut_empresa') or 'Sin RUT'
     direccion_empresa = cfg.get('direccion') or 'Sin Dirección'
-    tasa_iva_global = float(cfg.get('iva_tasa', 19.0))
+    
+    # 🚨 CORRECCIÓN IVA: Si es Uruguay o el RUT de Uruguay, aplica 22% por defecto
+    tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa or negocio_actual == "219449970012" else 19.0
+    tasa_iva_global = float(cfg.get('iva_tasa', tasa_defecto))
    
     # --- CABECERA DE LA EMPRESA ---
     pdf.set_font("Arial", 'B', 14)
@@ -182,8 +188,8 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
     pdf.ln(5)
    
     # --- DATOS DEL CLIENTE ---
-    c_nombre = cliente_nombre if cliente_nombre else "Consumidor Final"
-    c_rut = cliente_rut if cliente_rut else "Sin RUT"
+    c_nombre = cliente_nombre if cliente_nombre and cliente_nombre.strip() else "Consumidor Final"
+    c_rut = cliente_rut if cliente_rut and cliente_rut.strip() else "Sin RUT"
     
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 6, "DATOS DEL CLIENTE", ln=True)
@@ -211,13 +217,11 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
         precio_unitario = float(item.get('Precio Unitario') or item.get('Precio_Unitario') or 0)
         subtotal = float(item.get('Subtotal', 0))
         
-        # Dibujar fila
         pdf.cell(85, 7, producto, border=1)
         pdf.cell(20, 7, f"{cantidad:g}", border=1, align='C')
         pdf.cell(35, 7, f"${precio_unitario:,.0f}", border=1, align='R')
         pdf.cell(35, 7, f"${subtotal:,.0f}", border=1, align='R', ln=True)
         
-        # Cálculos de impuestos para el desglose (Respetando si el producto es exento)
         tasa_iva_item = 0.0 if item.get("Es Exento", False) else (tasa_iva_global / 100.0)
         tasa_ila_item = float(item.get("Tasa ILA", 0.0))
         
@@ -231,7 +235,6 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
     # --- PIE DE PÁGINA CON DESGLOSE ---
     pdf.set_font("Arial", 'B', 10)
     
-    # Solo mostramos el desglose de Neto e IVA si el documento es una Factura
     if "FACTURA" in titulo_doc:
         pdf.cell(140, 7, "SUBTOTAL NETO:", border=1, align='R')
         pdf.cell(35, 7, f"${total_neto:,.0f}", border=1, align='R', ln=True)
@@ -3093,7 +3096,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
     rut_actual = st.session_state.get("negocio_seleccionado")
     mostrar_encabezado_con_home(f"Terminal de Ventas - {caja_actual}")
 
-    # --- 1. CABECERA: TIPO DE DOCUMENTO Y FECHA DE EMISIÓN ---
+    # --- 1. CABECERA ---
     col_doc1, col_doc2 = st.columns(2)
     with col_doc1:
         tipo_documento = st.selectbox("📄 Selecciona el documento:", ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho"])
@@ -3112,10 +3115,15 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 if st.button("📥 Cargar Guía", use_container_width=True):
                     if folio_guia_a_facturar:
                         try:
-                            # Busca la guía en la tabla ventas de Supabase
                             res_guia = supabase.table("ventas").select("*").eq("rut_empresa", rut_actual).eq("folio", folio_guia_a_facturar.strip()).execute()
                             if res_guia.data:
                                 st.session_state.carrito_ventas = []
+                                
+                                # 🚨 CORRECCIÓN CLIENTE: Capturamos y guardamos el cliente de la guía
+                                cliente_de_guia = res_guia.data[0].get("cliente", "")
+                                if cliente_de_guia and cliente_de_guia != "Cliente General":
+                                    st.session_state.cliente_preseleccionado = cliente_de_guia
+
                                 for item in res_guia.data:
                                     cant = float(item["cantidad"])
                                     monto_total = float(item["monto"])
@@ -3127,7 +3135,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                         "Cantidad": cant,
                                         "Precio Unitario": precio_unitario,
                                         "Subtotal": monto_total,
-                                        "es_guia_previa": True # 🚨 Evita el doble descuento de stock
+                                        "es_guia_previa": True 
                                     })
                                 st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente al carrito.")
                             else:
@@ -3146,32 +3154,50 @@ elif menu == "💰 Módulo de Ventas (POS)":
     )
     controlar_stock = "Estricto" in modo_inventario
 
+    # --- 3. SELECCIÓN DE CLIENTES (AUTO-RESCATE DE DATOS) ---
     cliente_nombre, cliente_rut = "", ""
-
-    # Lógica de Selección de Clientes (Solo para Factura/Guía) BLINDADA POR EMPRESA
     if tipo_documento in ["Factura Electrónica", "Guía de Despacho"]:
         try:
             res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", rut_actual).execute()
             df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
         except Exception as e:
-            st.error(f"⚠️ Error conectando a la base de clientes en la nube: {e}")
             df_clientes_pos = pd.DataFrame()
 
+        c_nombre_def = st.session_state.get("cliente_preseleccionado", "")
+        c_rut_def = ""
+        
+        # Rescatar el RUT si conocemos el nombre desde la guía
+        if c_nombre_def and not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
+            match_rut = df_clientes_pos[df_clientes_pos["nombre"] == c_nombre_def]
+            if not match_rut.empty:
+                c_rut_def = str(match_rut.iloc[0]["rut"])
+
+        lista_clientes = []
         if not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
             df_clientes_pos["etiqueta"] = df_clientes_pos["nombre"].astype(str) + " (" + df_clientes_pos["rut"].astype(str) + ")"
-            lista_clientes = ["-- Selecciona un cliente --"] + df_clientes_pos["etiqueta"].tolist()
-            cliente_elegido = st.selectbox("👤 Selecciona un cliente registrado:", lista_clientes)
-          
-            if cliente_elegido != "-- Selecciona un cliente --" and " (" in cliente_elegido:
-                cliente_nombre = cliente_elegido.split(" (")[0]
-                cliente_rut = cliente_elegido.split(" (")[1].replace(")", "")
-        else:
-            st.warning("⚠️ No hay clientes registrados para este negocio en la nube. Agrégalos en el módulo correspondiente.")
-            col_f1, col_f2 = st.columns(2)
-            with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente")
-            with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria")
+            lista_clientes = df_clientes_pos["etiqueta"].tolist()
+            
+        lista_clientes.insert(0, "-- Selecciona un cliente --")
+        
+        idx_cliente = 0
+        if c_nombre_def:
+            for i, etiqueta in enumerate(lista_clientes):
+                if etiqueta.startswith(c_nombre_def + " ("):
+                    idx_cliente = i
+                    break
 
-    # --- PANTALLA DE ÉXITO Y DESCARGA (FACTURAS Y GUÍAS EN PDF) ---
+        cliente_elegido = st.selectbox("👤 Selecciona un cliente registrado:", lista_clientes, index=idx_cliente)
+      
+        if cliente_elegido and cliente_elegido != "-- Selecciona un cliente --" and " (" in cliente_elegido:
+            cliente_nombre = cliente_elegido.split(" (")[0]
+            cliente_rut = cliente_elegido.split(" (")[1].replace(")", "")
+        else:
+            col_f1, col_f2 = st.columns(2)
+            # 🚨 CORRECCIÓN: Si no hay selección, las cajas de texto heredan los datos de la guía
+            with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def)
+            with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def)
+
+    # --- PANTALLA DE ÉXITO ---
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y archivada con éxito!")
         st.markdown(f'<div class="ticket-box">{st.session_state.ultimo_recibo}</div>', unsafe_allow_html=True)
@@ -3181,15 +3207,13 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
         col_r1, col_r2 = st.columns(2)
         with col_r1:
-            # 📄 Ambas (Factura y Guía) salen en PDF por defecto
             if tipo_documento in ["Guía de Despacho", "Factura Electrónica"]:
                 items_a_imprimir = st.session_state.get('items_recibo_actual', st.session_state.carrito_ventas)
                 try:
-                    # Mantenemos tu función original para evitar errores de argumentos
                     pdf_bytes = generar_guia_pdf(cliente_nombre, cliente_rut, items_a_imprimir, tipo_documento, fecha_emision_venta)
                     st.download_button(f"📥 Descargar {tipo_documento} (PDF)", data=bytes(pdf_bytes), file_name=f"{tipo_documento.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
-                    st.error(f"⚠️ Error al generar el PDF. Verifica que la función generar_guia_pdf esté declarada: {e}")
+                    st.error(f"⚠️ Error al generar el PDF: {e}")
             else:
                 st.download_button("📥 Descargar Recibo Térmico", data=st.session_state.ultimo_recibo, file_name="Comprobante.txt", mime="text/plain", use_container_width=True)
       
@@ -3199,6 +3223,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.estado_pago = False
                 st.session_state.items_recibo_actual = None
                 st.session_state.carrito_ventas = []
+                st.session_state.pop("cliente_preseleccionado", None)
                 st.rerun()
 
     # --- PANTALLA DE PAGO ---
@@ -3225,7 +3250,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     st.success(f"🟢 **Vuelto: ${cambio:,.2f}**")
                 else:
                     st.error("🔴 Monto insuficiente.")
-                    
             elif forma_pago == "Crédito":
                 st.warning("⚖️ Esta venta se enviará automáticamente al módulo de Cuentas por Cobrar.")
                 dias_credito = st.number_input("⏳ Días de Crédito (Plazo para pagar):", min_value=1, value=30, step=1)
@@ -3249,18 +3273,20 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         
                         venta_exitosa = True
                         
+                        # 🚨 CORRECCIÓN IVA: Detecta Uruguay (22%) o Chile (19%)
                         cfg_actual = st.session_state.get("config_ticket", {})
-                        tasa_iva_global = float(cfg_actual.get("iva_tasa", 19.0)) / 100.0
+                        nombre_empresa_sesion = str(st.session_state.get("nombre_empresa", "")).upper()
+                        tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_sesion or str(rut_actual) == "219449970012" else 19.0
+                        iva_porcentaje = float(cfg_actual.get("iva_tasa", tasa_defecto))
+                        tasa_iva_global = iva_porcentaje / 100.0
                         
                         total_neto_ticket = 0.0
                         total_iva_ticket = 0.0
                         total_ila_ticket = 0.0
                         
-                        # --- ☁️ SINCRONIZACIÓN CON TABLA VENTAS ---
                         for item in st.session_state.carrito_ventas:
                             lineas_productos += f"- {item['Descripción']} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
                             
-                            # 🚨 DESCUENTO DE STOCK PROTEGIDO (Evita doble descuento si viene de Guía)
                             try:
                                 if not item.get("es_guia_previa", False):
                                     res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
@@ -3269,7 +3295,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                         nuevo_stock = stock_actual - float(item["Cantidad"])
                                         supabase.table("productos").update({"stock": nuevo_stock}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
                             except Exception as e:
-                                pass # Silenciamos el error para no trabar la venta
+                                pass 
 
                             tasa_iva_item = 0.0 if item.get("Es Exento", False) else tasa_iva_global
                             tasa_ila_item = item.get("Tasa ILA", 0.0)
@@ -3327,10 +3353,9 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             try:
                                 supabase.table("cuentas_por_cobrar").insert(registro_cxc).execute()
                             except Exception as e:
-                                st.error(f"⚠️ Error al enviar a Cuentas por Cobrar: {e}")
+                                pass
 
                         st.session_state.items_recibo_actual = st.session_state.carrito_ventas.copy()
-                        iva_porcentaje = float(cfg_actual.get("iva_tasa", 19.0))
                         linea_ila = f"IMP. ESPECÍFICO: ${total_ila_ticket:,.2f}\n" if total_ila_ticket > 0 else ""
                         
                         info_pago = ""
@@ -3382,14 +3407,11 @@ PAGO: {forma_pago.upper()}
             col_stock = 'stock'
 
             metodo_lectura = st.radio("Método de entrada de código:", ["⌨️ Digitar / Lector Físico", "📷 Usar Cámara del Celular"], horizontal=True, key="radio_metodo_pos")
-
             codigo_escan_pos = ""
 
             if metodo_lectura == "📷 Usar Cámara del Celular":
                 st.markdown("Apunta la cámara al código de barras y captura la foto:")
                 foto_capturada = st.camera_input("Capturar código de barras", key="cam_pos")
-                if foto_capturada is not None:
-                    st.success("✔️ ¡Foto capturada con éxito!")
             else:
                 codigo_escan_pos = st.text_input("📷 Digita el código o usa tu pistola láser:", key="input_escan_pos")
 
@@ -3402,15 +3424,11 @@ PAGO: {forma_pago.upper()}
                     match_str_pos = f"{match_pos.iloc[0][col_cod]} - {match_pos.iloc[0][col_desc]}"
                     if match_str_pos in opciones_productos:
                         prod_sugerido_pos_idx = opciones_productos.index(match_str_pos)
-                        st.success(f"✔️ Producto detectado: {match_str_pos}")
-                    
                         st.session_state.precio_actual_input = float(match_pos.iloc[0][col_precio] or 0.0)
                         st.session_state.ultimo_prod_sel = match_str_pos
 
-            if "ultimo_prod_sel" not in st.session_state:
-                st.session_state.ultimo_prod_sel = ""
-            if "precio_actual_input" not in st.session_state:
-                st.session_state.precio_actual_input = 0.0
+            if "ultimo_prod_sel" not in st.session_state: st.session_state.ultimo_prod_sel = ""
+            if "precio_actual_input" not in st.session_state: st.session_state.precio_actual_input = 0.0
 
             producto_seleccionado = st.selectbox(
                 "O selecciona manualmente el producto:",
@@ -3452,11 +3470,8 @@ PAGO: {forma_pago.upper()}
                         if not match_row.empty:
                             fila = match_row.iloc[0]
                             stock_disponible = float(fila[col_stock] or 0.0)
-                            
                             es_exento = fila.get("es_exento", False) in [True, "Si", "si", "Sí", "sí", "1"]
                             imp_esp_str = str(fila.get("impuesto_especifico", "")).upper()
-                            
-                            tasa_ila_item = 0.0
                             if "10" in imp_esp_str: tasa_ila_item = 0.10
                             elif "18" in imp_esp_str: tasa_ila_item = 0.18
                             elif "20.5" in imp_esp_str or "20,5" in imp_esp_str: tasa_ila_item = 0.205
@@ -3466,7 +3481,7 @@ PAGO: {forma_pago.upper()}
                         total_intentado = unidades_en_carrito + float(cantidad_vendida)
 
                         if controlar_stock and total_intentado > stock_disponible:
-                            st.error(f"🚨 **¡Inventario Insuficiente en la Nube!** Stock disponible: {stock_disponible:,.2f} | Intentas vender: {total_intentado:,.2f}")
+                            st.error(f"🚨 **¡Inventario Insuficiente en la Nube!** Stock disponible: {stock_disponible:,.2f}")
                         else:
                             st.session_state.carrito_ventas.append({
                                 "Código": c_buscado,
@@ -3478,7 +3493,6 @@ PAGO: {forma_pago.upper()}
                                 "Tasa ILA": tasa_ila_item,
                                 "es_guia_previa": False
                             })
-                            st.success("✅ Producto agregado con éxito.")
                             st.rerun()
         else:
             st.info("ℹ️ Aún no hay productos registrados en tu base de datos en la nube.")
@@ -3494,10 +3508,8 @@ PAGO: {forma_pago.upper()}
             for i, item in enumerate(st.session_state.carrito_ventas):
                 col_c1, col_c2, col_c3, col_c4, col_c5, col_c6 = st.columns([1.2, 2.5, 1.2, 1.5, 1.5, 0.8])
                 with col_c1: st.text(item["Código"])
-                
                 desc_texto = item["Descripción"] + (" (📄 de Guía)" if item.get("es_guia_previa") else "")
                 with col_c2: st.text(desc_texto)
-                
                 with col_c3:
                     nc = st.number_input("Cant", min_value=0.01, step=0.1, value=float(item["Cantidad"]), format="%.2f", key=f"cant_{i}", label_visibility="collapsed")
                     st.session_state.carrito_ventas[i]["Cantidad"] = nc
@@ -3523,6 +3535,7 @@ PAGO: {forma_pago.upper()}
             with col_b1:
                 if st.button("🗑️ Vaciar Carrito", use_container_width=True):
                     st.session_state.carrito_ventas = []
+                    st.session_state.pop("cliente_preseleccionado", None)
                     st.rerun()
             with col_b2:
                 if st.button("[F12] 💳 Cobrar", use_container_width=True, key="btn_cobrar_principal") or st.session_state.get('ejecutar_cobro', False):
