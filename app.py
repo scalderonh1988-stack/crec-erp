@@ -125,7 +125,7 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
     from datetime import datetime
     import os
 
-    # Formateo de la fecha
+    # 1. Formateo de la fecha
     if fecha_emision is None:
         fecha_str = datetime.now().strftime('%d/%m/%Y')
     elif hasattr(fecha_emision, 'strftime'):
@@ -136,12 +136,11 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
     pdf = FPDF(orientation='P', unit='mm', format='Letter')
     pdf.add_page()
   
+    # 2. Datos de la empresa
     negocio_actual = str(st.session_state.get('negocio_seleccionado', '')).strip()
     nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
-    
     tenant_dir = os.path.join("clientes_data", negocio_actual) if negocio_actual else "" 
 
-    # --- LOGO ---
     if tenant_dir:
         ruta_logo = os.path.join(tenant_dir, "logo_empresa.png")
         if os.path.exists(ruta_logo):
@@ -150,7 +149,6 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
             except Exception:
                 pass
 
-    # --- CONFIGURACIÓN DE LA EMPRESA Y TASAS ---
     cfg = st.session_state.get('config_ticket', {})
     if not cfg and tenant_dir:
         ruta_config_json = os.path.join(tenant_dir, "config_ticket.json")
@@ -166,11 +164,10 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
     rut_empresa = cfg.get('rut_empresa') or 'Sin RUT'
     direccion_empresa = cfg.get('direccion') or 'Sin Dirección'
     
-    # 🚨 CORRECCIÓN IVA: Si es Uruguay o el RUT de Uruguay, aplica 22% por defecto
     tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa or negocio_actual == "219449970012" else 19.0
     tasa_iva_global = float(cfg.get('iva_tasa', tasa_defecto))
    
-    # --- CABECERA DE LA EMPRESA ---
+    # 3. Cabecera
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 6, str(nombre_empresa), ln=True, align='C')
     pdf.set_font("Arial", '', 9)
@@ -178,16 +175,13 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
     pdf.cell(0, 5, f"RUT: {str(rut_empresa)}", ln=True, align='C')
     pdf.ln(5)
    
-    # --- TÍTULO DINÁMICO Y FECHA ---
     titulo_doc = str(tipo_documento).upper()
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 8, titulo_doc, ln=True, align='C')
-    
     pdf.set_font("Arial", '', 10)
     pdf.cell(0, 5, f"Fecha de Emisión: {fecha_str}", ln=True, align='C')
     pdf.ln(5)
    
-    # --- DATOS DEL CLIENTE ---
     c_nombre = cliente_nombre if cliente_nombre and cliente_nombre.strip() else "Consumidor Final"
     c_rut = cliente_rut if cliente_rut and cliente_rut.strip() else "Sin RUT"
     
@@ -198,52 +192,82 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
     pdf.cell(60, 6, f"RUT: {c_rut}", border=1, ln=True)
     pdf.ln(5)
    
-    # --- ENCABEZADOS DE LA TABLA ---
-    pdf.set_font("Arial", 'B', 10)
-    pdf.cell(85, 8, "Descripción", border=1, align='C')
-    pdf.cell(20, 8, "Cant.", border=1, align='C')
-    pdf.cell(35, 8, "P. Unitario", border=1, align='C')
-    pdf.cell(35, 8, "Total Bruto", border=1, align='C', ln=True)
+    # 4. Encabezados de Tabla (Dinámico)
+    pdf.set_font("Arial", 'B', 9)
+    es_factura = "FACTURA" in titulo_doc
+    
+    if es_factura:
+        pdf.cell(70, 8, "Descripción", border=1, align='C')
+        pdf.cell(15, 8, "Cant", border=1, align='C')
+        pdf.cell(35, 8, "P. Unit. Neto", border=1, align='C')
+        pdf.cell(35, 8, "P. Unit. Bruto", border=1, align='C')
+        pdf.cell(35, 8, "Total Bruto", border=1, align='C', ln=True)
+    else:
+        pdf.cell(90, 8, "Descripción", border=1, align='C')
+        pdf.cell(20, 8, "Cant.", border=1, align='C')
+        pdf.cell(40, 8, "P. Unitario", border=1, align='C')
+        pdf.cell(40, 8, "Total", border=1, align='C', ln=True)
    
-    # --- DETALLE DE PRODUCTOS Y CÁLCULO CONTABLE ---
+    # 5. Detalle y Motor Contable
     pdf.set_font("Arial", '', 9)
     total_general = 0.0
     total_neto = 0.0
     total_iva = 0.0
+    total_ila = 0.0 # 🚨 AQUÍ ACUMULAREMOS EL IMPUESTO ESPECÍFICO
 
     for item in carrito:
         producto = str(item.get('Descripción') or item.get('Producto') or 'Ítem')
         cantidad = float(item.get('Cantidad', 0))
-        precio_unitario = float(item.get('Precio Unitario') or item.get('Precio_Unitario') or 0)
-        subtotal = float(item.get('Subtotal', 0))
-        
-        pdf.cell(85, 7, producto, border=1)
-        pdf.cell(20, 7, f"{cantidad:g}", border=1, align='C')
-        pdf.cell(35, 7, f"${precio_unitario:,.0f}", border=1, align='R')
-        pdf.cell(35, 7, f"${subtotal:,.0f}", border=1, align='R', ln=True)
+        precio_unitario_bruto = float(item.get('Precio Unitario') or item.get('Precio_Unitario') or 0)
+        subtotal_bruto = float(item.get('Subtotal', 0))
         
         tasa_iva_item = 0.0 if item.get("Es Exento", False) else (tasa_iva_global / 100.0)
         tasa_ila_item = float(item.get("Tasa ILA", 0.0))
         
-        neto_calc = subtotal / (1.0 + tasa_iva_item + tasa_ila_item)
+        precio_unitario_neto = precio_unitario_bruto / (1.0 + tasa_iva_item + tasa_ila_item)
+        
+        if es_factura:
+            pdf.cell(70, 7, producto[:35], border=1)
+            pdf.cell(15, 7, f"{cantidad:g}", border=1, align='C')
+            pdf.cell(35, 7, f"${precio_unitario_neto:,.0f}", border=1, align='R')
+            pdf.cell(35, 7, f"${precio_unitario_bruto:,.0f}", border=1, align='R')
+            pdf.cell(35, 7, f"${subtotal_bruto:,.0f}", border=1, align='R', ln=True)
+        else:
+            pdf.cell(90, 7, producto, border=1)
+            pdf.cell(20, 7, f"{cantidad:g}", border=1, align='C')
+            pdf.cell(40, 7, f"${precio_unitario_bruto:,.0f}", border=1, align='R')
+            pdf.cell(40, 7, f"${subtotal_bruto:,.0f}", border=1, align='R', ln=True)
+        
+        # Matemáticas
+        neto_calc = subtotal_bruto / (1.0 + tasa_iva_item + tasa_ila_item)
         iva_calc = neto_calc * tasa_iva_item
+        ila_calc = neto_calc * tasa_ila_item # 🚨 CÁLCULO DEL ILA
         
         total_neto += neto_calc
         total_iva += iva_calc
-        total_general += subtotal
+        total_ila += ila_calc # 🚨 SUMAMOS EL ILA
+        total_general += subtotal_bruto
        
-    # --- PIE DE PÁGINA CON DESGLOSE ---
+    # 6. Pie de Página con Desglose Total
     pdf.set_font("Arial", 'B', 10)
     
-    if "FACTURA" in titulo_doc:
-        pdf.cell(140, 7, "SUBTOTAL NETO:", border=1, align='R')
+    if es_factura:
+        pdf.cell(155, 7, "SUBTOTAL NETO:", border=1, align='R')
         pdf.cell(35, 7, f"${total_neto:,.0f}", border=1, align='R', ln=True)
         
-        pdf.cell(140, 7, f"IVA ({tasa_iva_global:g}%):", border=1, align='R')
+        pdf.cell(155, 7, f"IVA ({tasa_iva_global:g}%):", border=1, align='R')
         pdf.cell(35, 7, f"${total_iva:,.0f}", border=1, align='R', ln=True)
-
-    pdf.cell(140, 8, "TOTAL GENERAL:", border=1, align='R')
-    pdf.cell(35, 8, f"${total_general:,.0f}", border=1, align='R', ln=True)
+        
+        # 🚨 SOLO MUESTRA LA LÍNEA SI HAY IMPUESTO ESPECÍFICO COBRADO
+        if total_ila > 0:
+            pdf.cell(155, 7, "IMP. ESPECÍFICO:", border=1, align='R')
+            pdf.cell(35, 7, f"${total_ila:,.0f}", border=1, align='R', ln=True)
+        
+        pdf.cell(155, 8, "TOTAL GENERAL:", border=1, align='R')
+        pdf.cell(35, 8, f"${total_general:,.0f}", border=1, align='R', ln=True)
+    else:
+        pdf.cell(150, 8, "TOTAL GENERAL:", border=1, align='R')
+        pdf.cell(40, 8, f"${total_general:,.0f}", border=1, align='R', ln=True)
    
     return pdf.output(dest='S').encode('latin1')
 
@@ -1194,6 +1218,7 @@ elif menu == "📦 Inventario y Productos":
         rut_actual = st.session_state.get("negocio_seleccionado")
         
         try:
+            # 🚨 NUEVO: Ahora también llamamos a precio_neto y porcentaje_iva
             res_inv = supabase.table("productos").select("*").eq("rut_empresa", rut_actual).execute()
             df_inv = pd.DataFrame(res_inv.data)
             st.success(f"Base de datos conectada con éxito desde la Nube. ({len(df_inv)} productos)")
@@ -1209,22 +1234,54 @@ elif menu == "📦 Inventario y Productos":
                     dun14 = st.text_input("DUN14 (Opcional)", placeholder="Código de caja")
                     descripcion = st.text_input("Descripción *", placeholder="Ej: BEBIDA ORANGE CRUSH PET300")
                     categoria = st.selectbox("Categoría", ["Ninguna", "BEBIDAS", "ABARROTES", "SNACKS", "OTROS"])
-                    costo = st.number_input("Costo ($)", min_value=0.0, step=100.0)
+                    costo = st.number_input("Costo Neto ($)", min_value=0.0, step=100.0)
+                    
+                    stock = st.number_input("Stock Inicial", min_value=0.0, step=1.0)
+                    impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
                     
                 with col2:
-                    precio_venta = st.number_input("Precio de Venta ($) *", min_value=0.0, step=100.0)
-                    stock = st.number_input("Stock Inicial", min_value=0.0, step=1.0)
-                    es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
-                    impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
-                    disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
-                    activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
+                    # 🚨 INTELIGENCIA TRIBUTARIA: Tasa por defecto
+                    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+                    tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
+                    
+                    st.markdown("💡 **Configuración de Precios (Ingresa el Neto o el Bruto)**")
+                    col_p1, col_p2 = st.columns(2)
+                    with col_p1:
+                        precio_neto = st.number_input("Precio Neto ($)", min_value=0.0, step=100.0)
+                        porcentaje_iva = st.number_input("% de IVA", min_value=0.0, value=tasa_defecto, step=1.0)
+                    with col_p2:
+                        precio_venta = st.number_input("Precio Bruto/Final ($)", min_value=0.0, step=100.0)
+                        es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
+                    
+                    st.markdown("---")
+                    col_disp, col_act = st.columns(2)
+                    with col_disp:
+                        disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
+                    with col_act:
+                        activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
 
                 btn_g_prod = st.form_submit_button("💾 Guardar Producto")
                 
                 if btn_g_prod:
-                    if not codigo or not descripcion or precio_venta <= 0:
-                        st.warning("⚠️ Ingresa al menos el código, la descripción y el precio de venta.")
+                    if not codigo or not descripcion or (precio_venta <= 0 and precio_neto <= 0):
+                        st.warning("⚠️ Ingresa al menos el código, la descripción y un precio (Neto o Bruto).")
                     else:
+                        # --- 🧮 MOTOR DE CÁLCULO DE PRECIOS AUTOMÁTICO ---
+                        iva_final = float(porcentaje_iva)
+                        if es_exento == "Si":
+                            iva_final = 0.0
+                            
+                        p_neto_calc = float(precio_neto)
+                        p_bruto_calc = float(precio_venta)
+                        
+                        # Si llenó solo el Bruto, calculamos el Neto
+                        if p_bruto_calc > 0 and p_neto_calc == 0:
+                            p_neto_calc = p_bruto_calc / (1.0 + (iva_final / 100.0))
+                        
+                        # Si llenó solo el Neto (o ambos), el Bruto manda según el Neto
+                        elif p_neto_calc > 0:
+                            p_bruto_calc = p_neto_calc * (1.0 + (iva_final / 100.0))
+                        
                         nuevo_producto = {
                             "rut_empresa": rut_actual,
                             "codigo": str(codigo).strip(),
@@ -1232,7 +1289,9 @@ elif menu == "📦 Inventario y Productos":
                             "descripcion": descripcion.strip(),
                             "categoria": categoria if categoria != "Ninguna" else None,
                             "costo": costo,
-                            "precio_venta": precio_venta,
+                            "precio_neto": round(p_neto_calc, 2),            # 🚨 NUEVA COLUMNA
+                            "porcentaje_iva": round(iva_final, 2),           # 🚨 NUEVA COLUMNA
+                            "precio_venta": round(p_bruto_calc, 2),
                             "stock": stock,
                             "es_exento": es_exento,
                             "impuesto_especifico": impuesto_especifico if impuesto_especifico != "Ninguno" else None,
@@ -1241,12 +1300,12 @@ elif menu == "📦 Inventario y Productos":
                         }
                         
                         try:
-                            # Utilizamos el método upsert que tenías para no chocar si el código ya existe
+                            # upsert actualiza si el código ya existe, o crea uno nuevo
                             supabase.table("productos").upsert(nuevo_producto, on_conflict="rut_empresa, codigo").execute()
-                            st.success("✅ ¡Producto registrado con éxito en la Nube!")
+                            st.success("✅ ¡Producto registrado con éxito en la Nube con sus datos tributarios!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al guardar en Supabase: {e}")
+                            st.error(f"❌ Error al guardar en Supabase. ¿Ya creaste las columnas 'precio_neto' y 'porcentaje_iva' en la base de datos? Detalle: {e}")
         except Exception as e:
             st.error(f"⚠️ Error al conectar con Supabase: {e}")
 
