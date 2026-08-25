@@ -1769,103 +1769,178 @@ elif menu == "📊 Dashboard Ejecutivo":
 
 # ----------------- SECCIÓN INVENTARIO GENERAL -----------------
 elif menu == "📦 Inventario y Productos":
-    mostrar_encabezado_con_home("Gestión de Bases de Datos")
+    mostrar_encabezado_con_home("📦 Administración de Inventario")
     
-    # Usamos tu variable de sesión para el RUT del local
     rut_actual = st.session_state.get("negocio_seleccionado")
     if not rut_actual:
         st.error("❌ No se ha identificado el negocio. Por favor, inicia sesión.")
         st.stop()
    
-    tab_prod, tab_cli, tab_prov = st.tabs(["📦 Productos / Inventario", "👥 Clientes", "🚚 Proveedores"])
+    # 🚨 AQUÍ AGREGAMOS LA NUEVA PESTAÑA DE INGREDIENTES SIN BORRAR LAS OTRAS
+    tab_prod, tab_ing, tab_cli, tab_prov, tab_bod = st.tabs([
+        "📦 Productos (Venta)", 
+        "🍅 Ingredientes", 
+        "👥 Clientes", 
+        "🚚 Proveedores", 
+        "🏢 Bodegas y Sucursales"
+    ])
    
+    # --- MOTOR DE BODEGAS (Global para Productos e Ingredientes) ---
+    bodegas_existentes = ["Bodega Principal"]
+    try:
+        res_bodegas = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_actual).execute()
+        if res_bodegas.data:
+            for row in res_bodegas.data:
+                nombre_b = str(row.get("nombre", "")).strip(' "\'')
+                if nombre_b and nombre_b not in bodegas_existentes:
+                    bodegas_existentes.append(nombre_b)
+    except Exception:
+        pass 
+        
+    try:
+        res_inv = supabase.table("productos").select("*").eq("rut_empresa", rut_actual).execute()
+        df_inv = pd.DataFrame(res_inv.data)
+        if not df_inv.empty and "bodega" in df_inv.columns:
+            for b in df_inv["bodega"].dropna().unique().tolist():
+                b_clean = str(b).strip(' "\'')
+                if b_clean and b_clean not in bodegas_existentes:
+                    bodegas_existentes.append(b_clean)
+    except Exception:
+        df_inv = pd.DataFrame()
+        
+    bodegas_existentes.append("➕ Crear Nueva Bodega / Sucursal...")
+
     # ==========================================
-    # PESTAÑA 1: PRODUCTOS (100% NUBE)
+    # PESTAÑA 1: PRODUCTOS PARA LA VENTA
     # ==========================================
     with tab_prod:
-        st.markdown("### 📦 Administración de Productos (Nube)")
-        
-        # --- Formulario de Creación (Actualizado a 2 Columnas) ---
-        with st.expander("➕ Registrar Nuevo Producto", expanded=False):
-            with st.form("form_nuevo_producto_inventario", clear_on_submit=True):
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    codigo = st.text_input("Código *", placeholder="Ej: 780123456789")
-                    dun14 = st.text_input("DUN14 (Opcional)", placeholder="Código de caja")
-                    descripcion = st.text_input("Descripción *", placeholder="Ej: BEBIDA ORANGE CRUSH PET300")
-                    categoria = st.selectbox("Categoría", ["Ninguna", "BEBIDAS", "ABARROTES", "SNACKS", "OTROS"])
-                    costo = st.number_input("Costo Neto ($) *", min_value=0.0, step=100.0)
-                    
-                with col2:
-                    precio_venta = st.number_input("Precio de Venta ($) *", min_value=0.0, step=100.0)
-                    stock = st.number_input("Stock Inicial *", min_value=0.0, step=1.0)
-                    es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
-                    impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
-                    disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
-                    activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
-
-                # El botón oficial para enviar los datos
-                submit_btn = st.form_submit_button("💾 Guardar Producto", type="primary")
-
-            # --- LÓGICA PARA ENVIAR A SUPABASE ---
-            if submit_btn:
-                if codigo == "" or descripcion == "" or precio_venta <= 0:
-                    st.warning("⚠️ Por favor, completa al menos el Código, Descripción y Precio de Venta.")
-                else:
-                    try:
-                        # Empaquetamos los datos transformando "Si"/"No" en True/False para Supabase
-                        nuevo_producto = {
-                            "rut_empresa": str(rut_actual),
-                            "codigo": str(codigo).strip(),
-                            "dun14": str(dun14) if dun14 else None,
-                            "descripcion": str(descripcion).strip(),
-                            "categoria": str(categoria) if categoria != "Ninguna" else None,
-                            "costo": float(costo),
-                            "precio_venta": float(precio_venta), 
-                            "stock": float(stock),
-                            "es_exento": True if es_exento == "Si" else False,
-                            "impuesto_especifico": str(impuesto_especifico) if impuesto_especifico != "Ninguno" else None,
-                            "disponible_venta": True if disponible_venta == "Si" else False,
-                            "activo": True if activo == "Si" else False
-                        }
-                        
-                        # Enviamos a la nube
-                        supabase.table("productos").insert(nuevo_producto).execute()
-                        st.success(f"✅ ¡Producto '{descripcion}' guardado con éxito en la Nube!")
-                        st.rerun() # Recarga la página para mostrarlo en la tabla superior
-                    except Exception as e:
-                        st.error(f"❌ Error al guardar (¿Código duplicado?): {e}")
-
-        # --- Catálogo Visual ---
-        st.markdown("#### 📋 Catálogo de Inventario Actual")
-        try:
-            res_inv2 = supabase.table("productos").select("*").eq("rut_empresa", rut_actual).order("id", desc=True).execute()
-            df_base_nube = pd.DataFrame(res_inv2.data)
+        st.markdown("### ➕ Registrar o Gestionar Productos")
+        if not df_inv.empty:
+            # Mostramos solo los productos que sí se venden (Precio > 0)
+            df_venta = df_inv[df_inv['precio_venta'] > 0]
+            st.success(f"Base de datos conectada con éxito desde la Nube. ({len(df_venta)} productos de venta)")
+            st.dataframe(df_venta, use_container_width=True)
             
-            if not df_base_nube.empty:
-                # Ordenamos las columnas para la vista
-                cols = ['codigo', 'descripcion', 'stock', 'precio_venta', 'costo', 'categoria', 'es_exento', 'disponible_venta']
-                df_mostrar = df_base_nube[[c for c in cols if c in df_base_nube.columns]]
-                st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
-                
-                # Botón de borrado rápido (opcional, para mantener tu lógica anterior)
-                with st.expander("🗑️ Zona de Peligro: Eliminar Producto"):
-                    cod_eliminar = st.selectbox("Selecciona el producto a eliminar:", df_base_nube['codigo'].astype(str) + " - " + df_base_nube['descripcion'])
-                    if st.button("Eliminar Producto Definitivamente", type="secondary"):
-                        codigo_real = cod_eliminar.split(" - ")[0]
-                        supabase.table("productos").delete().eq("rut_empresa", rut_actual).eq("codigo", codigo_real).execute()
-                        st.success("✅ Producto eliminado.")
+        st.markdown("### 🆕 Ingresar Nuevo Producto a la Base de Datos")
+        codigo_scanned_nuevo = st.text_input("📷 Digita o ingresa el código del producto nuevo:", key="scan_nuevo_prod")
+    
+        with st.form("form_crear_producto_multi", clear_on_submit=True):
+            st.markdown("#### Datos Básicos y Ubicación")
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                codigo = st.text_input("Código del Producto (EAN o Interno) *", value=codigo_scanned_nuevo if codigo_scanned_nuevo else "")
+                descripcion = st.text_input("Descripción / Nombre del Producto *")
+                categoria = st.selectbox("Categoría", ["Ninguna", "BEBIDAS", "ABARROTES", "SNACKS", "OTROS"])
+            with col_b2:
+                bodega_seleccionada = st.selectbox("🏢 Asignar a Bodega / Sucursal:", bodegas_existentes, key="bod_prod")
+                nueva_bodega = st.text_input("✍️ Escribe el nombre de la nueva Bodega:") if bodega_seleccionada == "➕ Crear Nueva Bodega / Sucursal..." else ""
+                stock = st.number_input("Stock Inicial a ingresar en esta bodega", min_value=0.0, step=1.0)
+                costo = st.number_input("Costo de Compra Neto ($)", min_value=0.0, step=100.0)
+
+            st.markdown("#### 💡 Configuración Tributaria (Ingresa el Neto o el Bruto)")
+            nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+            tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
+            
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                precio_neto = st.number_input("Precio Neto ($)", min_value=0.0, step=100.0)
+                porcentaje_iva = st.number_input("% de IVA", min_value=0.0, value=tasa_defecto, step=1.0)
+                impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
+            with col_p2:
+                precio_venta = st.number_input("Precio Bruto/Final ($)", min_value=0.0, step=100.0)
+                es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
+                activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
+        
+            if st.form_submit_button("💾 Guardar Producto en la Bodega"):
+                bodega_final = nueva_bodega.strip() if bodega_seleccionada == "➕ Crear Nueva Bodega / Sucursal..." else bodega_seleccionada
+                if not codigo or not descripcion or (precio_venta <= 0 and precio_neto <= 0):
+                    st.warning("⚠️ Completa Código, Descripción y un Precio (Neto o Bruto).")
+                elif not bodega_final:
+                    st.warning("⚠️ Asigna un nombre a la bodega.")
+                else:
+                    iva_final = 0.0 if es_exento == "Si" else float(porcentaje_iva)
+                    p_neto_calc, p_bruto_calc = float(precio_neto), float(precio_venta)
+                    
+                    if p_bruto_calc > 0 and p_neto_calc == 0: p_neto_calc = p_bruto_calc / (1.0 + (iva_final / 100.0))
+                    elif p_neto_calc > 0: p_bruto_calc = p_neto_calc * (1.0 + (iva_final / 100.0))
+
+                    nuevo_producto = {
+                        "rut_empresa": rut_actual, "codigo": codigo.strip(), "bodega": bodega_final.strip(' "\''),
+                        "descripcion": descripcion.strip(), "categoria": categoria if categoria != "Ninguna" else None,
+                        "costo": costo, "precio_neto": round(p_neto_calc, 2), "porcentaje_iva": round(iva_final, 2),
+                        "precio_venta": round(p_bruto_calc, 2), "stock": stock, "es_exento": es_exento,
+                        "impuesto_especifico": impuesto_especifico if impuesto_especifico != "Ninguno" else None, "activo": activo
+                    }
+                    try:
+                        res_check = supabase.table("productos").select("id").eq("rut_empresa", rut_actual).eq("codigo", codigo.strip()).eq("bodega", bodega_final).execute()
+                        if res_check.data:
+                            supabase.table("productos").update(nuevo_producto).eq("id", res_check.data[0]["id"]).execute()
+                            st.success(f"✅ Producto actualizado.")
+                        else:
+                            supabase.table("productos").insert(nuevo_producto).execute()
+                            st.success(f"✅ Producto creado.")
                         st.rerun()
-            else:
-                st.info("ℹ️ No hay productos cargados en este local.")
-        except Exception as e:
-            st.error(f"⚠️ Error conectando: {e}")
+                    except Exception as e: st.error(f"❌ Error: {e}")
 
     # ==========================================
-    # PESTAÑA 2: CLIENTES (100% NUBE)
+    # 🚨 PESTAÑA 2: INGREDIENTES / MATERIA PRIMA (NUEVA)
+    # ==========================================
+    with tab_ing:
+        st.markdown("#### 🍅 Registrar Materia Prima e Ingredientes")
+        st.info("💡 Usa este formulario simplificado para ingresar insumos (Pan, Carne, Palta). Se guardarán con Precio de Venta $0 para que no estorben en el Punto de Venta.")
+        
+        if not df_inv.empty:
+            df_insumos = df_inv[df_inv['precio_venta'] == 0]
+            if not df_insumos.empty:
+                st.markdown("##### Insumos Actuales:")
+                st.dataframe(df_insumos[['codigo', 'descripcion', 'categoria', 'bodega', 'stock', 'costo']], use_container_width=True)
+
+        with st.form("form_crear_ingrediente", clear_on_submit=True):
+            col_i1, col_i2 = st.columns(2)
+            with col_i1:
+                codigo_ing = st.text_input("Código del Insumo (Ej: INS-001) *")
+                descripcion_ing = st.text_input("Nombre del Ingrediente (Ej: Palta Hass) *")
+                categoria_ing = st.selectbox("Categoría", ["VEGETALES", "CARNES", "PANADERIA", "SALSAS", "LACTEOS", "OTROS"])
+            with col_i2:
+                bodega_ing_sel = st.selectbox("🏢 Bodega / Sucursal:", bodegas_existentes, key="bod_ing")
+                nueva_bodega_ing = st.text_input("✍️ Escribe el nombre de la nueva Bodega:", key="nb_ing") if bodega_ing_sel == "➕ Crear Nueva Bodega / Sucursal..." else ""
+                stock_ing = st.number_input("Stock Inicial (En Kilos, Litros o Unidades)", min_value=0.0, step=0.1, format="%.2f")
+                costo_bruto_ing = st.number_input("Costo Bruto Total de Compra ($)", min_value=0.0, step=100.0)
+
+            if st.form_submit_button("💾 Guardar Ingrediente"):
+                bodega_ing_final = nueva_bodega_ing.strip() if bodega_ing_sel == "➕ Crear Nueva Bodega / Sucursal..." else bodega_ing_sel
+                
+                if not codigo_ing or not descripcion_ing:
+                    st.warning("⚠️ El Código y Nombre del ingrediente son obligatorios.")
+                elif not bodega_ing_final:
+                    st.warning("⚠️ Asigna un nombre a la bodega.")
+                else:
+                    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+                    tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
+                    costo_neto_calc = costo_bruto_ing / (1.0 + (tasa_defecto / 100.0)) if costo_bruto_ing > 0 else 0.0
+
+                    nuevo_ingrediente = {
+                        "rut_empresa": rut_actual, "codigo": codigo_ing.strip(), "bodega": bodega_ing_final.strip(' "\''),
+                        "descripcion": descripcion_ing.strip(), "categoria": categoria_ing, "costo": round(costo_neto_calc, 2),
+                        "precio_neto": 0.0, "porcentaje_iva": tasa_defecto, "precio_venta": 0.0, 
+                        "stock": stock_ing, "es_exento": "No", "impuesto_especifico": None, "activo": "Si"
+                    }
+                    try:
+                        res_check = supabase.table("productos").select("id").eq("rut_empresa", rut_actual).eq("codigo", codigo_ing.strip()).eq("bodega", bodega_ing_final).execute()
+                        if res_check.data:
+                            supabase.table("productos").update(nuevo_ingrediente).eq("id", res_check.data[0]["id"]).execute()
+                            st.success(f"✅ Ingrediente actualizado.")
+                        else:
+                            supabase.table("productos").insert(nuevo_ingrediente).execute()
+                            st.success(f"✅ Ingrediente creado.")
+                        st.rerun()
+                    except Exception as e: st.error(f"❌ Error: {e}")
+
+    # ==========================================
+    # PESTAÑA 3: CLIENTES
     # ==========================================
     with tab_cli:
+        # A partir de aquí, deja TU CÓDIGO ACTUAL EXACTAMENTE COMO ESTÁ
         st.markdown("### 👥 Administración de Clientes (Nube)")
        
         with st.form("form_nuevo_cliente", clear_on_submit=True):
