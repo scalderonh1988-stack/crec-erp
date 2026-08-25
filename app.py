@@ -1266,23 +1266,19 @@ elif menu == "📦 Inventario y Productos":
             
             bodegas_existentes = ["Bodega Principal"]
             
-            # A) Buscar en la tabla oficial 'bodegas' y aplicar el escudo protector
             try:
                 res_bodegas = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_actual).execute()
                 if res_bodegas.data:
                     for row in res_bodegas.data:
-                        # ESCUDO: Limpia comillas y espacios basura
                         nombre_b = str(row.get("nombre", "")).strip(' "\'') 
                         if nombre_b and nombre_b not in bodegas_existentes:
                             bodegas_existentes.append(nombre_b)
             except Exception:
                 pass 
                 
-            # B) Buscar en los productos ya creados y aplicar el escudo
             if not df_inv.empty and "bodega" in df_inv.columns:
                 bodegas_extra = df_inv["bodega"].dropna().unique().tolist()
                 for b in bodegas_extra:
-                    # ESCUDO: Limpia comillas de datos antiguos
                     b_clean = str(b).strip(' "\'') 
                     if b_clean and b_clean not in bodegas_existentes:
                         bodegas_existentes.append(b_clean)
@@ -1345,7 +1341,7 @@ elif menu == "📦 Inventario y Productos":
                         nuevo_producto = {
                             "rut_empresa": rut_actual,
                             "codigo": codigo.strip(),
-                            "bodega": bodega_final.strip(' "\''), # ESCUDO: Limpia al guardar
+                            "bodega": bodega_final.strip(' "\''),
                             "descripcion": descripcion.strip(),
                             "categoria": categoria if categoria != "Ninguna" else None,
                             "costo": costo,
@@ -1374,13 +1370,12 @@ elif menu == "📦 Inventario y Productos":
             st.error(f"⚠️ Error al conectar con Supabase: {e}")
 
     # ==========================================
-    # 🚨 PESTAÑA 2: INGREDIENTES (TABLA 100% INDEPENDIENTE)
+    # 🍅 PESTAÑA 2: INGREDIENTES (TABLA INDEPENDIENTE)
     # ==========================================
     with tab_ing:
         st.markdown("#### 🍅 Gestión de Materia Prima e Insumos")
-        st.info("💡 Esta tabla es independiente. Aquí registras insumos que no se venden directamente al público, sino que se usan para armar recetas.")
+        st.info("💡 Esta tabla es independiente. Aquí registras insumos que se usan para armar recetas y no aparecen en el POS.")
         
-        # 1. Leer ingredientes directo desde la nueva tabla de Supabase
         try:
             res_ing = supabase.table("ingredientes").select("*").eq("rut_empresa", rut_actual).execute()
             df_insumos_tabla = pd.DataFrame(res_ing.data) if res_ing.data else pd.DataFrame()
@@ -1393,7 +1388,6 @@ elif menu == "📦 Inventario y Productos":
         else:
             st.info("ℹ️ No hay ingredientes registrados en esta bodega todavía.")
 
-        # 2. Formulario de Creación de Ingrediente
         with st.form("form_crear_ingrediente_independiente", clear_on_submit=True):
             col_i1, col_i2 = st.columns(2)
             with col_i1:
@@ -1420,7 +1414,6 @@ elif menu == "📦 Inventario y Productos":
                     nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
                     tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
                     
-                    # Cálculo matemático de paquetes y costos unitarios
                     stock_real_guardar = float(stock_ing) * float(unidades_paquete)
                     costo_bruto_unitario = (costo_bruto_ing / stock_real_guardar) if stock_real_guardar > 0 else costo_bruto_ing
                     costo_neto_calc = costo_bruto_unitario / (1.0 + (tasa_defecto / 100.0)) if costo_bruto_unitario > 0 else 0.0
@@ -1437,7 +1430,6 @@ elif menu == "📦 Inventario y Productos":
                         "costo": round(costo_neto_calc, 2)
                     }
                     try:
-                        # Guardado directo en la tabla 'ingredientes'
                         supabase.table("ingredientes").insert(nuevo_ingrediente_nube).execute()
                         st.success(f"✅ ¡Ingrediente guardado con éxito en la tabla independiente!")
                         st.rerun()
@@ -1446,15 +1438,11 @@ elif menu == "📦 Inventario y Productos":
 
     with tab_inv2:
             st.markdown("#### 👥 Maestro de Clientes")
-            
-            # 1. Cargar clientes directamente desde Supabase filtrando por la empresa actual
             df_clientes = pd.DataFrame()
             try:
                 res_cli = supabase.table("clientes").select("*").eq("id_negocio", rut_actual).execute()
                 if res_cli.data:
-                    # Mapeamos los campos para que la tabla muestre los nombres correctos
                     df_clientes = pd.DataFrame(res_cli.data)
-                    # Aseguramos nombres de columnas estandarizados si vienen con otro nombre de la nube
                     renames = {}
                     if "nombre" in df_clientes.columns and "Nombre_Cliente" not in df_clientes.columns:
                         renames["nombre"] = "Nombre_Cliente"
@@ -1480,18 +1468,15 @@ elif menu == "📦 Inventario y Productos":
                     if not cl_nom or not cl_rut:
                         st.warning("⚠️ Debes ingresar al menos el nombre y el RUT del cliente.")
                     else:
-                        # 2. Preparamos el diccionario para subirlo directo a Supabase
                         nuevo_cliente_nube = {
-                        "rut": str(cl_rut).strip(),
-                        "nombre": str(cl_nom).strip(),
-                        "telefono": str(cl_tel).strip(),
-                        "correo": str(cl_mail).strip(),  # <-- Cambiado de "email" a "correo"
-                        "direccion": str(cl_dir).strip(),
-                        "id_negocio": str(rut_actual).strip()
-                    }
-                        
+                            "rut": str(cl_rut).strip(),
+                            "nombre": str(cl_nom).strip(),
+                            "telefono": str(cl_tel).strip(),
+                            "correo": str(cl_mail).strip(),
+                            "direccion": str(cl_dir).strip(),
+                            "id_negocio": str(rut_actual).strip()
+                        }
                         try:
-                            # 3. Guardado directo en la tabla 'clientes' de Supabase
                             supabase.table("clientes").upsert(nuevo_cliente_nube, on_conflict="rut").execute()
                             st.success("✅ ¡Cliente guardado con éxito en la nube!")
                             st.rerun()
@@ -1500,14 +1485,11 @@ elif menu == "📦 Inventario y Productos":
 
     with tab_inv3:
         st.markdown("#### 🚚 Directorio de Proveedores")
-        
-        # 1. Cargar proveedores directamente desde Supabase filtrando por el negocio activo
         df_proveedores = pd.DataFrame()
         try:
             res_prov = supabase.table("proveedores").select("*").eq("id_negocio", rut_actual).execute()
             if res_prov.data:
                 df_proveedores = pd.DataFrame(res_prov.data)
-                # Normalizamos las columnas para que la tabla se dibuje correctamente en la interfaz
                 renames_prov = {}
                 if "nombre" in df_proveedores.columns and "Nombre_Proveedor" not in df_proveedores.columns:
                     renames_prov["nombre"] = "Nombre_Proveedor"
@@ -1539,32 +1521,25 @@ elif menu == "📦 Inventario y Productos":
                 if not pr_nom or not pr_rut:
                     st.warning("⚠️ Debes ingresar al menos el nombre y el RUT del proveedor.")
                 else:
-                    # 2. Preparamos el registro para subirlo directamente a Supabase
                     nuevo_proveedor_nube = {
                         "rut": str(pr_rut).strip(),
                         "nombre": str(pr_nom).strip(),
                         "contacto": str(pr_cont).strip(),
                         "telefono": str(pr_tel).strip(),
-                        "correo": str(pr_mail).strip(),  # <-- Cambiado de "email" a "correo"
+                        "correo": str(pr_mail).strip(),
                         "id_negocio": str(rut_actual).strip()
                     }
-                    
                     try:
-                        # 3. Guardado directo en la tabla 'proveedores' de Supabase
                         supabase.table("proveedores").insert(nuevo_proveedor_nube).execute()
                         st.success("✅ ¡Proveedor guardado con éxito en la nube!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ Error al guardar en Supabase: {e}")
 
-    # ==========================================
-    # PESTAÑA 4: BODEGAS (100% NUBE)
-    # ==========================================
     with tab_inv4:
         st.markdown("### 🏢 Administración de Bodegas y Sucursales")
-        st.info("💡 Crea diferentes ubicaciones físicas para controlar el stock separado (Ej: Sala de Ventas, Bodega Central, Local 2).")
+        st.info("💡 Crea diferentes ubicaciones físicas para controlar el stock separado.")
         
-        # 1. Mostrar Bodegas Actuales
         df_bodegas = pd.DataFrame()
         try:
             res_bodegas = supabase.table("bodegas").select("*").eq("rut_empresa", rut_actual).execute()
@@ -1576,7 +1551,6 @@ elif menu == "📦 Inventario y Productos":
         except Exception as e:
             st.error(f"⚠️ Error cargando bodegas desde la nube: {e}")
 
-        # 2. Formulario para Nueva Bodega
         with st.form("form_nueva_bodega", clear_on_submit=True):
             st.markdown("##### Registrar Nueva Bodega")
             col_b1, col_b2 = st.columns(2)
@@ -1601,7 +1575,7 @@ elif menu == "📦 Inventario y Productos":
                         st.success(f"✅ ¡Bodega '{nombre_bodega}' creada con éxito!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en Supabase: {e}")                 
+                        st.error(f"❌ Error al guardar en Supabase: {e}")                
 
 elif menu == "📚 Historial de Ventas":
     mostrar_modulo_historial_ventas(ruta_negocio)                    
