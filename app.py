@@ -16,6 +16,7 @@ from cuadratura import mostrar_modulo_cuadratura_diaria
 from historial_ventas import mostrar_modulo_historial_ventas
 from notas_credito import mostrar_modulo_notas_credito
 from cuentas_por_pagar import mostrar_modulo_cuentas_por_pagar
+from produccion_recetas import mostrar_modulo_produccion
 # Ocultar el menú predeterminado y la marca de agua de Streamlit
 hide_st_style = """
             <style>
@@ -1018,6 +1019,7 @@ modulos_totales = [
     "🏠 Home / Bienvenida",
     "📊 Dashboard Ejecutivo",
     "📦 Inventario y Productos",
+    "🍔 Producción y Recetas",
     "💰 Módulo de Ventas (POS)",
     "🛒 Registrar Compra (CPP)",
     "📉 Mermas y Ajustes",
@@ -1206,6 +1208,7 @@ if menu == "🏠 Home / Bienvenida":
     modulos_disponibles_home = [
         {"id": "dash", "nombre_ref": "Dashboard Ejecutivo", "label": "📊 Dashboard Ejecutivo"},
         {"id": "inv", "nombre_ref": "Inventario y Productos", "label": "📦 Inventario y Productos"},
+        {"id": "prod", "nombre_ref": "Producción y Recetas", "label": "🍔 Producción y Recetas"}, # 🚨 NUEVO BOTÓN AGREGADO AQUÍ
         {"id": "pos", "nombre_ref": "Módulo de Ventas (POS)", "label": "💰 Módulo de Ventas (POS)"},
         {"id": "nc", "nombre_ref": "Notas de Crédito", "label": "🔄 Notas de Crédito"},
         {"id": "comp", "nombre_ref": "Registrar Compra (CPP)", "label": "🛒 Registrar Compra (CPP)"},
@@ -3870,3 +3873,8 @@ elif menu == "🔑 Control Maestro de Licencias":
 
 elif menu == "🔄 Notas de Crédito" or st.session_state.get("modulo_activo") == "nc":
     mostrar_modulo_notas_credito(ruta_negocio)
+
+# --- MÓDULO DE PRODUCCIÓN Y RECETAS ---
+elif menu == "🍔 Producción y Recetas":
+    # Llamamos a la función que importaste al inicio
+    mostrar_modulo_produccion()
