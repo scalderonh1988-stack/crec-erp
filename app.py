@@ -1227,13 +1227,28 @@ elif menu == "📦 Inventario y Productos":
             # --- LÓGICA DE CREACIÓN DE PRODUCTOS MULTI-BODEGA ---
             st.markdown("### 🆕 Ingresar Nuevo Producto a la Base de Datos")
             
-            # 1. Rescatar bodegas existentes dinámicamente
             bodegas_existentes = ["Bodega Principal"]
+            
+            # A) Buscar en la tabla oficial 'bodegas' y aplicar el escudo protector
+            try:
+                res_bodegas = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_actual).execute()
+                if res_bodegas.data:
+                    for row in res_bodegas.data:
+                        # ESCUDO: Limpia comillas y espacios basura
+                        nombre_b = str(row.get("nombre", "")).strip(' "\'') 
+                        if nombre_b and nombre_b not in bodegas_existentes:
+                            bodegas_existentes.append(nombre_b)
+            except Exception:
+                pass 
+                
+            # B) Buscar en los productos ya creados y aplicar el escudo
             if not df_inv.empty and "bodega" in df_inv.columns:
                 bodegas_extra = df_inv["bodega"].dropna().unique().tolist()
                 for b in bodegas_extra:
-                    if b and b not in bodegas_existentes:
-                        bodegas_existentes.append(b)
+                    # ESCUDO: Limpia comillas de datos antiguos
+                    b_clean = str(b).strip(' "\'') 
+                    if b_clean and b_clean not in bodegas_existentes:
+                        bodegas_existentes.append(b_clean)
                 
             bodegas_existentes.append("➕ Crear Nueva Bodega / Sucursal...")
 
@@ -1293,7 +1308,7 @@ elif menu == "📦 Inventario y Productos":
                         nuevo_producto = {
                             "rut_empresa": rut_actual,
                             "codigo": codigo.strip(),
-                            "bodega": bodega_final,
+                            "bodega": bodega_final.strip(' "\''), # ESCUDO: Limpia al guardar
                             "descripcion": descripcion.strip(),
                             "categoria": categoria if categoria != "Ninguna" else None,
                             "costo": costo,
