@@ -932,13 +932,15 @@ st.session_state.negocio_seleccionado = negocio_seleccionado
 
 
 # --- 6. BARRA LATERAL, PERMISOS Y MENÚ ÚNICO ---
-st.sidebar.markdown(f"👤 Usuario: **{st.session_state.get('usuario_logueado', 'Ninguno')}**")
-st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.get('nombre_empresa', 'NINGUNO')}*")
 
-if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
-    # 🚨 SOLUCIÓN APLICADA: Vacía toda la memoria de la sesión de golpe
-    st.session_state.clear()
-    st.rerun()
+if st.session_state.get("autenticado", False):
+    st.sidebar.markdown(f"👤 Usuario: **{st.session_state.get('usuario_logueado', 'Ninguno')}**")
+    st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.get('nombre_empresa', 'NINGUNO')}*")
+
+    if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+        # Vacía toda la memoria de la sesión de golpe
+        st.session_state.clear()
+        st.rerun()
 
 if not st.session_state.get("es_admin_dev", False):
     st.sidebar.write("") 
