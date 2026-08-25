@@ -52,7 +52,7 @@ def mostrar_modulo_produccion():
                     codigo_final = match_p['codigo'].values[0] if not match_p.empty else ""
                     nombre_final = prod_elegido
             else:
-                nombre_final = st.text_input("Nombre del Plato o Pack (Ej: SÁNDWICH ITALIANO o PACK VERANO)")
+                nombre_final = st.text_input("Nombre del Plato o Pack (Ej: PACK VERANO WHISKY)")
                 codigo_sugerido = nombre_final.upper().strip().replace(" ", "-").replace(":", "").replace("+", "-").replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U") if nombre_final else ""
                 codigo_final = st.text_input("Código Interno (Autogenerado, editable)", value=codigo_sugerido)
 
@@ -122,7 +122,6 @@ def mostrar_modulo_produccion():
                         costo_unitario = 0.0
                         cod_buscado = str(row['codigo_ingrediente']).strip()
                         
-                        # 🛡️ BÚSQUEDA BLINDADA: Evita cualquier KeyError verificando existencia de columnas
                         if not df_prod.empty and 'codigo' in df_prod.columns:
                             match_prod = df_prod[df_prod['codigo'].astype(str).str.strip() == cod_buscado]
                             if not match_prod.empty:
@@ -145,6 +144,26 @@ def mostrar_modulo_produccion():
                     
                     st.info(f"💰 **Costo Real de Producción / Armado: ${costo_total_receta:,.2f}**")
                     
+                    # 🚨 NUEVO: Desglose Tributario e Impuestos del Pack
+                    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+                    tasa_iva = 22.0 if "URUGUAY" in nombre_empresa_act or str(tenant_id) == "219449970012" else 19.0
+                    
+                    costo_neto_pack = costo_total_receta / (1.0 + (tasa_iva / 100.0))
+                    iva_credito_pack = costo_total_receta - costo_neto_pack
+                    
+                    with st.expander("🏛️ Ver Desglose Tributario del Costo (IVA y Neto)"):
+                        st.markdown(f"- **Costo Neto:** ${costo_neto_pack:,.2f}")
+                        st.markdown(f"- **IVA Crédito ({tasa_iva:g}%):** ${iva_credito_pack:,.2f}")
+                        st.markdown(f"- **Costo Bruto Total:** ${costo_total_receta:,.2f}")
+
+                    # 🚨 NUEVO: Cuadro visible de Nombre y Código del Pack antes de publicar
+                    st.markdown("##### 📝 Identificación Oficial del Pack")
+                    col_id1, col_id2 = st.columns(2)
+                    with col_id1:
+                        nombre_pack_final = st.text_input("Nombre del Pack para el POS", value=nombre_final)
+                    with col_id2:
+                        codigo_pack_final = st.text_input("Código de Barras / Interno", value=codigo_final)
+
                     id_a_borrar = st.selectbox("Eliminar componente:", ["-- Ninguno --"] + df_receta['nombre_ingrediente'].tolist())
                     if id_a_borrar != "-- Ninguno --":
                         if st.button("🗑️ Quitar Componente"):
@@ -153,19 +172,28 @@ def mostrar_modulo_produccion():
                             st.rerun()
                 else:
                     st.info("ℹ️ Aún no hay componentes en esta receta.")
+                    nombre_pack_final = nombre_final
+                    codigo_pack_final = codigo_final
 
                 st.divider()
                 st.markdown("##### 🚀 Publicar en el POS")
                 precio_venta_p = st.number_input("Precio de Venta al Público ($)", min_value=0.0, value=3500.0, step=100.0)
                 
+                # Cálculo rápido de margen proyectado con el impuesto desglosado
+                if precio_venta_p > 0 and costo_total_receta > 0:
+                    margen_estimado = ((precio_venta_p - costo_total_receta) / precio_venta_p) * 100
+                    st.caption(f"📈 Margen de ganancia bruto estimado: **{margen_estimado:.1f}%**")
+
                 if st.button("💾 Guardar y Publicar en el Punto de Venta", type="primary"):
                     if precio_venta_p <= 0:
                         st.warning("⚠️ Ingresa un precio válido.")
+                    elif not nombre_pack_final or not codigo_pack_final:
+                        st.warning("⚠️ El nombre y el código del pack son obligatorios.")
                     else:
                         datos_finales = {
                             "rut_empresa": str(tenant_id),
-                            "codigo": str(codigo_final).strip(),
-                            "descripcion": str(nombre_final).strip(),
+                            "codigo": str(codigo_pack_final).strip(),
+                            "descripcion": str(nombre_pack_final).strip(),
                             "costo": round(costo_total_receta, 2),
                             "precio_venta": float(precio_venta_p),
                             "stock": 0.0,
@@ -175,7 +203,7 @@ def mostrar_modulo_produccion():
                         }
                         try:
                             supabase.table("productos").upsert(datos_finales, on_conflict="rut_empresa,codigo").execute()
-                            st.success(f"🎉 ¡'{nombre_final}' publicado con éxito! Costo real: ${costo_total_receta:,.2f}.")
+                            st.success(f"🎉 ¡'{nombre_pack_final}' publicado con éxito! Costo real: ${costo_total_receta:,.2f}.")
                         except Exception as e:
                             st.error(f"❌ Error: {e}")
 
