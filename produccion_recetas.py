@@ -3,6 +3,11 @@ import pandas as pd
 from data_manager import supabase, get_current_tenant
 
 def mostrar_modulo_produccion():
+    # 🚨 NUEVO: Agregamos el botón estándar para volver al Home
+    if st.button("🏠 Volver al Home"):
+        st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
+        st.rerun()
+
     st.markdown("### 🍔 Módulo de Producción y Fichas Técnicas")
     st.markdown("Diseña tus recetas uniendo un 'Producto Final' con sus 'Ingredientes'. El costo de producción se calculará en tiempo real según la materia prima.")
 
