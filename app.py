@@ -2781,29 +2781,63 @@ PRODUCTO INGRESADO:
                     categoria = st.selectbox("Categoría", ["Ninguna", "BEBIDAS", "ABARROTES", "SNACKS", "OTROS"])
                     costo = st.number_input("Costo de Compra Neto ($)", min_value=0.0, step=100.0)
                     
-                with col2:
-                    precio_venta = st.number_input("Precio de Venta ($) *", min_value=0.0, step=100.0)
                     stock = st.number_input("Stock Inicial", min_value=0.0, step=1.0)
-                    es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
                     impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
-                    disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
-                    activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
+                    
+                with col2:
+                    # 🚨 INTELIGENCIA TRIBUTARIA: Tasa por defecto
+                    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+                    tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
+                    
+                    st.markdown("💡 **Configuración de Precios (Ingresa el Neto o el Bruto)**")
+                    col_p1, col_p2 = st.columns(2)
+                    with col_p1:
+                        precio_neto = st.number_input("Precio Neto ($)", min_value=0.0, step=100.0)
+                        porcentaje_iva = st.number_input("% de IVA", min_value=0.0, value=tasa_defecto, step=1.0)
+                    with col_p2:
+                        precio_venta = st.number_input("Precio Bruto/Final ($) *", min_value=0.0, step=100.0)
+                        es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
+                    
+                    st.markdown("---")
+                    col_disp, col_act = st.columns(2)
+                    with col_disp:
+                        disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
+                    with col_act:
+                        activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
             
                 btn_crear_prod = st.form_submit_button("💾 Agregar Producto a la Base de Datos")
 
                 if btn_crear_prod:
-                    if codigo == "" or descripcion == "" or precio_venta <= 0:
-                        st.warning("⚠️ Por favor, completa al menos el Código, Descripción y Precio de Venta (mayor a 0).")
+                    if codigo == "" or descripcion == "" or (precio_venta <= 0 and precio_neto <= 0):
+                        st.warning("⚠️ Por favor, completa al menos el Código, Descripción y un Precio (Neto o Bruto mayor a 0).")
                     else:
+                        # --- 🧮 MOTOR DE CÁLCULO DE PRECIOS AUTOMÁTICO ---
+                        iva_final = float(porcentaje_iva)
+                        if es_exento == "Si":
+                            iva_final = 0.0
+                            
+                        p_neto_calc = float(precio_neto)
+                        p_bruto_calc = float(precio_venta)
+                        
+                        # Si llenó solo el Bruto, calculamos el Neto
+                        if p_bruto_calc > 0 and p_neto_calc == 0:
+                            p_neto_calc = p_bruto_calc / (1.0 + (iva_final / 100.0))
+                        
+                        # Si llenó solo el Neto (o ambos), el Bruto manda según el Neto
+                        elif p_neto_calc > 0:
+                            p_bruto_calc = p_neto_calc * (1.0 + (iva_final / 100.0))
+
                         # Preparamos el paquete de datos para Supabase
                         nuevo_producto = {
                             "rut_empresa": rut_actual,
-                            "codigo": codigo,
+                            "codigo": codigo.strip(),
                             "dun14": dun14 if dun14 else None,
-                            "descripcion": descripcion,
+                            "descripcion": descripcion.strip(),
                             "categoria": categoria if categoria != "Ninguna" else None,
                             "costo": costo,
-                            "precio_venta": precio_venta,
+                            "precio_neto": round(p_neto_calc, 2),            # 🚨 NUEVA COLUMNA
+                            "porcentaje_iva": round(iva_final, 2),           # 🚨 NUEVA COLUMNA
+                            "precio_venta": round(p_bruto_calc, 2),
                             "stock": stock,
                             "es_exento": es_exento,
                             "impuesto_especifico": impuesto_especifico if impuesto_especifico != "Ninguno" else None,
@@ -2814,7 +2848,7 @@ PRODUCTO INGRESADO:
                         try:
                             # Inserción directa en la nube ☁️
                             supabase.table("productos").insert(nuevo_producto).execute()
-                            st.success(f"✅ ¡Producto '{descripcion}' guardado con éxito en Supabase!")
+                            st.success(f"✅ ¡Producto '{descripcion}' guardado con éxito y configuración tributaria lista!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error al guardar en la nube: {e}")
@@ -2829,9 +2863,15 @@ PRODUCTO INGRESADO:
                 st.info("💡 Deja en 0 o en blanco los campos que NO deseas modificar.")
                 prod_a_editar = st.selectbox("Selecciona Producto", options=opciones_editar)
                 nuevo_nombre = st.text_input("Nueva Descripción / Nombre")
-                nuevo_precio = st.number_input("Modificar Precio de Venta ($)", min_value=0.0, step=100.0, value=0.0)
-                nuevo_costo = st.number_input("Modificar Costo Neto ($)", min_value=0.0, step=100.0, value=0.0)
-                nuevo_stock = st.number_input("Reemplazar Stock Actual", min_value=0.0, step=1.0, value=0.0)
+                
+                col_e1, col_e2 = st.columns(2)
+                with col_e1:
+                    nuevo_precio_neto = st.number_input("Modificar Precio Neto ($)", min_value=0.0, step=100.0, value=0.0)
+                    nuevo_iva = st.number_input("Modificar % IVA (Ingresa -1 para omitir)", min_value=-1.0, step=1.0, value=-1.0)
+                    nuevo_costo = st.number_input("Modificar Costo Neto ($)", min_value=0.0, step=100.0, value=0.0)
+                with col_e2:
+                    nuevo_precio_bruto = st.number_input("Modificar Precio Bruto ($)", min_value=0.0, step=100.0, value=0.0)
+                    nuevo_stock = st.number_input("Reemplazar Stock Actual", min_value=0.0, step=1.0, value=0.0)
                 
                 btn_editar_prod = st.form_submit_button("💾 Guardar Cambios en la Nube")
 
@@ -2839,12 +2879,15 @@ PRODUCTO INGRESADO:
                     if prod_a_editar != "-- Selecciona producto a editar --":
                         cod_editar = prod_a_editar.split(" - ")[0]
                         
-                        # Preparamos solo los datos que el usuario realmente quiere cambiar
                         datos_a_actualizar = {}
                         if nuevo_nombre.strip() != "":
                             datos_a_actualizar["descripcion"] = nuevo_nombre.strip()
-                        if nuevo_precio > 0:
-                            datos_a_actualizar["precio_venta"] = nuevo_precio
+                        if nuevo_precio_neto > 0:
+                            datos_a_actualizar["precio_neto"] = nuevo_precio_neto
+                        if nuevo_precio_bruto > 0:
+                            datos_a_actualizar["precio_venta"] = nuevo_precio_bruto
+                        if nuevo_iva != -1.0:
+                            datos_a_actualizar["porcentaje_iva"] = nuevo_iva
                         if nuevo_costo > 0:
                             datos_a_actualizar["costo"] = nuevo_costo
                         if nuevo_stock > 0:
@@ -2852,7 +2895,6 @@ PRODUCTO INGRESADO:
                             
                         if datos_a_actualizar:
                             try:
-                                # Enviamos la actualización directo a Supabase
                                 supabase.table("productos").update(datos_a_actualizar).eq("rut_empresa", rut_actual).eq("codigo", str(cod_editar)).execute()
                                 st.success("✅ ¡Producto actualizado correctamente en todos los módulos!")
                                 st.rerun()
