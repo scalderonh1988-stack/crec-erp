@@ -825,53 +825,77 @@ if not st.session_state.autenticado:
                 else:
                     acceso_exitoso = False
                     
-                    # 2. VALIDACIÓN ESTRICTA EN LA NUBE: Solo pasan los registrados en el módulo de Usuarios
-                    try:
-                        res_usr = supabase.table("usuarios").select("*").eq("rut_usuario", usuario_limpio).execute()
+                    # 🚨 1.5 NUEVO: VALIDACIÓN DEL PROPIETARIO / DUEÑO DE LA EMPRESA
+                    maestro_clientes = cargar_maestro_clientes()
+                    if usuario_limpio in maestro_clientes:
+                        datos_propietario = maestro_clientes[usuario_limpio]
                         
-                        if res_usr.data:
-                            datos_usr = res_usr.data[0]
+                        if str(datos_propietario.get("password", "")) == password_limpio:
+                            if datos_propietario.get("activo", True):
+                                st.session_state.autenticado = True
+                                st.session_state.es_admin_dev = False
+                                st.session_state.negocio_actual = usuario_limpio
+                                st.session_state.usuario_logueado = "Propietario / Administrador"
+                                st.session_state.rol_usuario = "Propietario"
+                                st.session_state.modulos_permitidos = "ALL" # Acceso a TODO
+                                st.session_state.intentos_fallidos = 0
+                                st.session_state.nombre_empresa = datos_propietario.get("nombre", usuario_limpio)
+                                
+                                st.success(f"👑 ¡Bienvenido Propietario de {st.session_state.nombre_empresa}!")
+                                acceso_exitoso = True
+                                st.rerun()
+                            else:
+                                st.error("❌ La licencia de esta empresa se encuentra expirada o inactiva.")
+                                acceso_exitoso = True # Bloqueo intencional, no resta intentos
+                    
+                    # 2. VALIDACIÓN ESTRICTA EN LA NUBE: Cajeros y Operadores
+                    if not acceso_exitoso:
+                        try:
+                            res_usr = supabase.table("usuarios").select("*").eq("rut_usuario", usuario_limpio).execute()
                             
-                            # 🚨 BARRERA DE SEGURIDAD 1: La contraseña debe ser EXACTA
-                            if str(datos_usr.get("password_hash")) == password_limpio:
+                            if res_usr.data:
+                                datos_usr = res_usr.data[0]
                                 
-                                id_empresa = datos_usr.get("empresa_id")
-                                res_emp = supabase.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa").eq("id", id_empresa).execute()
-                                
-                                if res_emp.data:
-                                    datos_empresa = res_emp.data[0]
+                                # BARRERA DE SEGURIDAD 1: La contraseña debe ser EXACTA
+                                if str(datos_usr.get("password_hash")) == password_limpio:
                                     
-                                    # 🚨 BARRERA DE SEGURIDAD 2: La empresa debe estar al día
-                                    if datos_empresa.get("licencia_activa", True):
-                                        rut_negocio = datos_empresa.get("rut_empresa")
-                                        nombre_negocio = datos_empresa.get("empresa_nombre")
+                                    id_empresa = datos_usr.get("empresa_id")
+                                    res_emp = supabase.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa").eq("id", id_empresa).execute()
+                                    
+                                    if res_emp.data:
+                                        datos_empresa = res_emp.data[0]
                                         
-                                        modulos_str = datos_usr.get("modulos", "")
-                                        modulos_operador = [m.strip() for m in modulos_str.split(",") if m.strip()]
-                                        
-                                        # 🚨 BARRERA DE SEGURIDAD 3: Debe tener módulos asignados
-                                        if not modulos_operador:
-                                            st.error("❌ Tu usuario no tiene módulos asignados. Acceso denegado.")
-                                            acceso_exitoso = True # Lo marcamos True para no sumarle un intento fallido (el bloqueo es intencional)
-                                        else:
-                                            # 🎉 ACCESO APROBADO Y BLINDADO
-                                            st.session_state.autenticado = True
-                                            st.session_state.es_admin_dev = False
-                                            st.session_state.negocio_actual = rut_negocio
-                                            st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
-                                            st.session_state.rol_usuario = datos_usr.get("rol", "Cajero / Vendedor")
-                                            st.session_state.modulos_permitidos = modulos_operador
-                                            st.session_state.intentos_fallidos = 0
-                                            st.session_state.nombre_empresa = nombre_negocio
+                                        # BARRERA DE SEGURIDAD 2: La empresa debe estar al día
+                                        if datos_empresa.get("licencia_activa", True):
+                                            rut_negocio = datos_empresa.get("rut_empresa")
+                                            nombre_negocio = datos_empresa.get("empresa_nombre")
                                             
-                                            st.success(f"🟢 ¡Bienvenido {st.session_state.usuario_logueado}!")
+                                            modulos_str = datos_usr.get("modulos", "")
+                                            modulos_operador = [m.strip() for m in modulos_str.split(",") if m.strip()]
+                                            
+                                            # BARRERA DE SEGURIDAD 3: Debe tener módulos asignados
+                                            if not modulos_operador:
+                                                st.error("❌ Tu usuario no tiene módulos asignados. Acceso denegado.")
+                                                acceso_exitoso = True 
+                                            else:
+                                                # ACCESO APROBADO A CAJERO
+                                                st.session_state.autenticado = True
+                                                st.session_state.es_admin_dev = False
+                                                st.session_state.negocio_actual = rut_negocio
+                                                st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
+                                                st.session_state.rol_usuario = datos_usr.get("rol", "Cajero / Vendedor")
+                                                st.session_state.modulos_permitidos = modulos_operador
+                                                st.session_state.intentos_fallidos = 0
+                                                st.session_state.nombre_empresa = nombre_negocio
+                                                
+                                                st.success(f"🟢 ¡Bienvenido {st.session_state.usuario_logueado}!")
+                                                acceso_exitoso = True
+                                                st.rerun()
+                                        else:
+                                            st.error("❌ La licencia de la empresa se encuentra expirada o inactiva.")
                                             acceso_exitoso = True
-                                            st.rerun()
-                                    else:
-                                        st.error("❌ La licencia de la empresa se encuentra expirada o inactiva.")
-                                        acceso_exitoso = True
-                    except Exception as e:
-                        pass
+                        except Exception as e:
+                            pass
                         
                     # 3. FALLBACK LOCAL: Por si hay cajeros en el archivo JSON antiguo
                     if not acceso_exitoso:
@@ -901,14 +925,18 @@ if not st.session_state.autenticado:
                                                     st.session_state.modulos_permitidos = modulos_operador
                                                     st.session_state.intentos_fallidos = 0
                                                     
-                                                    emp_info = next((emp for emp in empresas_data if str(emp.get("rut_empresa")) == neg_folder), None)
-                                                    st.session_state.nombre_empresa = emp_info.get("empresa_nombre") if emp_info else neg_folder
-                                                    
+                                                    # Validación segura de empresas_data si existe
+                                                    if 'empresas_data' in globals():
+                                                        emp_info = next((emp for emp in empresas_data if str(emp.get("rut_empresa")) == neg_folder), None)
+                                                        st.session_state.nombre_empresa = emp_info.get("empresa_nombre") if emp_info else neg_folder
+                                                    else:
+                                                        st.session_state.nombre_empresa = neg_folder
+                                                        
                                                     st.success(f"🟢 ¡Bienvenido {st.session_state.usuario_logueado}!")
                                                     acceso_exitoso = True
                                                     st.rerun()
                     
-                    # 4. RECHAZO TOTAL: Si lo borraron de la lista o puso mal la clave
+                    # 4. RECHAZO TOTAL
                     if not acceso_exitoso:
                         st.session_state.intentos_fallidos += 1
                         intentos_restantes = 3 - st.session_state.intentos_fallidos
@@ -938,7 +966,6 @@ if st.session_state.get("autenticado", False):
     st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.get('nombre_empresa', 'NINGUNO')}*")
 
     if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
-        # Vacía toda la memoria de la sesión de golpe
         st.session_state.clear()
         st.rerun()
 
