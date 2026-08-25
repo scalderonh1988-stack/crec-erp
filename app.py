@@ -932,15 +932,12 @@ st.session_state.negocio_seleccionado = negocio_seleccionado
 
 
 # --- 6. BARRA LATERAL, PERMISOS Y MENÚ ÚNICO ---
-st.sidebar.markdown(f"👤 Usuario: **{st.session_state.usuario_logueado}**")
-st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.nombre_empresa if 'nombre_empresa' in st.session_state else 'NINGUNO'}*")
+st.sidebar.markdown(f"👤 Usuario: **{st.session_state.get('usuario_logueado', 'Ninguno')}**")
+st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.get('nombre_empresa', 'NINGUNO')}*")
 
 if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
-    st.session_state.autenticado = False
-    st.session_state.negocio_actual = None
-    st.session_state.usuario_logueado = None
-    st.session_state.es_admin_dev = False
-    st.session_state.modulos_permitidos = ["🏠 Home / Bienvenida"]
+    # 🚨 SOLUCIÓN APLICADA: Vacía toda la memoria de la sesión de golpe
+    st.session_state.clear()
     st.rerun()
 
 if not st.session_state.get("es_admin_dev", False):
@@ -1011,7 +1008,7 @@ if "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
     lista_modulos_permitidos.insert(0, "🏠 Home / Bienvenida")
 
 # --- 🛠️ PANEL DE DESARROLLADOR MAESTRO ---
-if st.session_state.es_admin_dev:
+if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
         tab_lic, tab_crear, tab_mant = st.tabs(["⚙️ Licencias", "➕ Crear Negocio", "🧹 Mantenimiento"])
@@ -1148,7 +1145,7 @@ df_base = cargar_datos(archivo_base) if ('archivo_base' in globals() and archivo
 def mostrar_encabezado_con_home(titulo_modulo):
     col_titulo, col_btn = st.columns([4, 1])
     with col_titulo:
-        nombre_mostrar = st.session_state.get('nombre_empresa', negocio_seleccionado)
+        nombre_mostrar = st.session_state.get('nombre_empresa', st.session_state.get('negocio_seleccionado', 'Empresa no seleccionada'))
         st.subheader(f"{titulo_modulo} (Negocio: {nombre_mostrar})")
     with col_btn:
         st.write("")
