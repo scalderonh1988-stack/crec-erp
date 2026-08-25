@@ -1248,7 +1248,7 @@ if menu == "🏠 Home / Bienvenida":
 elif menu == "📦 Inventario y Productos":
     mostrar_encabezado_con_home("📦 Administración de Inventario")
     
-    tab_inv1, tab_inv2, tab_inv3, tab_inv4 = st.tabs(["📦 Productos", "👥 Clientes", "🚚 Proveedores", "🏢 Bodegas y Sucursales"])
+    tab_inv1, tab_ing, tab_inv2, tab_inv3, tab_inv4 = st.tabs(["📦 Productos", "🍅 Ingredientes", "👥 Clientes", "🚚 Proveedores", "🏢 Bodegas y Sucursales"])
     
     with tab_inv1:
         st.markdown("#### ➕ Registrar o Gestionar Productos")
