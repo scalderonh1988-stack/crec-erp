@@ -1373,6 +1373,59 @@ elif menu == "📦 Inventario y Productos":
         except Exception as e:
             st.error(f"⚠️ Error al conectar con Supabase: {e}")
 
+    # ==========================================
+    # 🚨 PESTAÑA 2: INGREDIENTES / MATERIA PRIMA
+    # ==========================================
+    with tab_ing:
+        st.markdown("#### 🍅 Registrar Materia Prima e Ingredientes")
+        st.info("💡 Usa este formulario simplificado para ingresar insumos. Se guardarán con Precio de Venta $0 para que no estorben en el POS.")
+        
+        if 'df_inv' in locals() and not df_inv.empty:
+            df_insumos = df_inv[df_inv['precio_venta'] == 0]
+            if not df_insumos.empty:
+                st.markdown("##### Insumos Actuales:")
+                st.dataframe(df_insumos[['codigo', 'descripcion', 'categoria', 'bodega', 'stock', 'costo']], use_container_width=True)
+
+        with st.form("form_crear_ingrediente", clear_on_submit=True):
+            col_i1, col_i2 = st.columns(2)
+            with col_i1:
+                codigo_ing = st.text_input("Código del Insumo (Ej: INS-001) *")
+                descripcion_ing = st.text_input("Nombre del Ingrediente (Ej: Palta Hass) *")
+                categoria_ing = st.selectbox("Categoría", ["VEGETALES", "CARNES", "PANADERIA", "SALSAS", "LACTEOS", "OTROS"])
+            with col_i2:
+                lista_bodegas = bodegas_existentes if 'bodegas_existentes' in locals() else ["Bodega Principal"]
+                bodega_ing_sel = st.selectbox("🏢 Bodega / Sucursal:", lista_bodegas, key="bod_ing")
+                nueva_bodega_ing = st.text_input("✍️ Nombre de nueva Bodega:", key="nb_ing") if bodega_ing_sel == "➕ Crear Nueva Bodega / Sucursal..." else ""
+                stock_ing = st.number_input("Stock Inicial", min_value=0.0, step=0.1, format="%.2f")
+                costo_bruto_ing = st.number_input("Costo Bruto Total ($)", min_value=0.0, step=100.0)
+
+            if st.form_submit_button("💾 Guardar Ingrediente"):
+                bodega_ing_final = nueva_bodega_ing.strip() if bodega_ing_sel == "➕ Crear Nueva Bodega / Sucursal..." else bodega_ing_sel
+                
+                if not codigo_ing or not descripcion_ing:
+                    st.warning("⚠️ El Código y Nombre del ingrediente son obligatorios.")
+                else:
+                    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+                    tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
+                    costo_neto_calc = costo_bruto_ing / (1.0 + (tasa_defecto / 100.0)) if costo_bruto_ing > 0 else 0.0
+
+                    nuevo_ingrediente = {
+                        "rut_empresa": rut_actual, "codigo": codigo_ing.strip(), "bodega": bodega_ing_final.strip(' "\''),
+                        "descripcion": descripcion_ing.strip(), "categoria": categoria_ing, "costo": round(costo_neto_calc, 2),
+                        "precio_neto": 0.0, "porcentaje_iva": tasa_defecto, "precio_venta": 0.0, 
+                        "stock": stock_ing, "es_exento": "No", "impuesto_especifico": None, "activo": "Si"
+                    }
+                    try:
+                        res_check = supabase.table("productos").select("id").eq("rut_empresa", rut_actual).eq("codigo", codigo_ing.strip()).eq("bodega", bodega_ing_final).execute()
+                        if res_check.data:
+                            supabase.table("productos").update(nuevo_ingrediente).eq("id", res_check.data[0]["id"]).execute()
+                            st.success(f"✅ Ingrediente actualizado.")
+                        else:
+                            supabase.table("productos").insert(nuevo_ingrediente).execute()
+                            st.success(f"✅ Ingrediente creado.")
+                        st.rerun()
+                    except Exception as e: st.error(f"❌ Error: {e}")
+
     with tab_inv2:
             st.markdown("#### 👥 Maestro de Clientes")
             
@@ -1530,7 +1583,7 @@ elif menu == "📦 Inventario y Productos":
                         st.success(f"✅ ¡Bodega '{nombre_bodega}' creada con éxito!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en Supabase: {e}")                    
+                        st.error(f"❌ Error al guardar en Supabase: {e}")                 
 
 elif menu == "📚 Historial de Ventas":
     mostrar_modulo_historial_ventas(ruta_negocio)                    
