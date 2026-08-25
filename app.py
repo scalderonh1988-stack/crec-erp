@@ -1392,12 +1392,19 @@ elif menu == "📦 Inventario y Productos":
                 codigo_ing = st.text_input("Código del Insumo (Ej: INS-001) *")
                 descripcion_ing = st.text_input("Nombre del Ingrediente (Ej: Palta Hass) *")
                 categoria_ing = st.selectbox("Categoría", ["VEGETALES", "CARNES", "PANADERIA", "SALSAS", "LACTEOS", "OTROS"])
+                
+                # 🚨 NUEVO: Selector de Formato
+                formato_ing = st.selectbox("Formato de Compra", ["Unidad", "Granel (Kg / Litros)", "Paquete / Caja"])
+                
             with col_i2:
                 lista_bodegas = bodegas_existentes if 'bodegas_existentes' in locals() else ["Bodega Principal"]
                 bodega_ing_sel = st.selectbox("🏢 Bodega / Sucursal:", lista_bodegas, key="bod_ing")
                 nueva_bodega_ing = st.text_input("✍️ Nombre de nueva Bodega:", key="nb_ing") if bodega_ing_sel == "➕ Crear Nueva Bodega / Sucursal..." else ""
-                stock_ing = st.number_input("Stock Inicial", min_value=0.0, step=0.1, format="%.2f")
-                costo_bruto_ing = st.number_input("Costo Bruto Total ($)", min_value=0.0, step=100.0)
+                
+                # 🚨 NUEVO: Campos separados para Cantidad Comprada vs Rendimiento del Paquete
+                stock_ing = st.number_input("Cantidad Comprada (Ej: 1 paquete, o 2.5 kilos)", min_value=0.0, step=0.1, format="%.2f")
+                unidades_paquete = st.number_input("Si es Paquete, ¿Cuántas unidades trae?", min_value=1.0, value=1.0, step=1.0, help="Si es a Granel o Unidad, déjalo en 1.")
+                costo_bruto_ing = st.number_input("Costo Bruto TOTAL de esta compra ($)", min_value=0.0, step=100.0)
 
             if st.form_submit_button("💾 Guardar Ingrediente"):
                 bodega_ing_final = nueva_bodega_ing.strip() if bodega_ing_sel == "➕ Crear Nueva Bodega / Sucursal..." else bodega_ing_sel
@@ -1407,22 +1414,37 @@ elif menu == "📦 Inventario y Productos":
                 else:
                     nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
                     tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
-                    costo_neto_calc = costo_bruto_ing / (1.0 + (tasa_defecto / 100.0)) if costo_bruto_ing > 0 else 0.0
+                    
+                    # 🧠 CEREBRO MATEMÁTICO: Conversión de Paquetes a Unidades
+                    # Ej: Si compras 1 paquete de 20 salchichas, el stock real es 20.
+                    stock_real_guardar = float(stock_ing) * float(unidades_paquete)
+                    
+                    # El costo total se divide por las unidades reales para sacar el Costo Unitario exacto
+                    if stock_real_guardar > 0:
+                        costo_bruto_unitario = costo_bruto_ing / stock_real_guardar
+                    else:
+                        costo_bruto_unitario = costo_bruto_ing
+
+                    # Calculamos el neto final en base a la unidad
+                    costo_neto_calc = costo_bruto_unitario / (1.0 + (tasa_defecto / 100.0)) if costo_bruto_unitario > 0 else 0.0
+
+                    # Agregamos una marca visual si es paquete para que sepas cómo se guardó
+                    descripcion_final = f"{descripcion_ing.strip()} (Paq. x{int(unidades_paquete)})" if formato_ing == "Paquete / Caja" else descripcion_ing.strip()
 
                     nuevo_ingrediente = {
                         "rut_empresa": rut_actual, "codigo": codigo_ing.strip(), "bodega": bodega_ing_final.strip(' "\''),
-                        "descripcion": descripcion_ing.strip(), "categoria": categoria_ing, "costo": round(costo_neto_calc, 2),
+                        "descripcion": descripcion_final, "categoria": categoria_ing, "costo": round(costo_neto_calc, 2),
                         "precio_neto": 0.0, "porcentaje_iva": tasa_defecto, "precio_venta": 0.0, 
-                        "stock": stock_ing, "es_exento": "No", "impuesto_especifico": None, "activo": "Si"
+                        "stock": stock_real_guardar, "es_exento": "No", "impuesto_especifico": None, "activo": "Si"
                     }
                     try:
                         res_check = supabase.table("productos").select("id").eq("rut_empresa", rut_actual).eq("codigo", codigo_ing.strip()).eq("bodega", bodega_ing_final).execute()
                         if res_check.data:
                             supabase.table("productos").update(nuevo_ingrediente).eq("id", res_check.data[0]["id"]).execute()
-                            st.success(f"✅ Ingrediente actualizado.")
+                            st.success(f"✅ Ingrediente actualizado. (Stock interno ajustado a: {stock_real_guardar})")
                         else:
                             supabase.table("productos").insert(nuevo_ingrediente).execute()
-                            st.success(f"✅ Ingrediente creado.")
+                            st.success(f"✅ Ingrediente creado. (Stock interno ajustado a: {stock_real_guardar})")
                         st.rerun()
                     except Exception as e: st.error(f"❌ Error: {e}")
 
