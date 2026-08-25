@@ -3554,14 +3554,35 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             
                             try:
                                 if not item.get("es_guia_previa", False):
-                                    # 🚨 AHORA DESCUENTA STOCK SOLO DE LA BODEGA SELECCIONADA
-                                    res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_actual).execute()
-                                    if res_stock.data:
-                                        stock_actual = float(res_stock.data[0]["stock"] or 0.0)
-                                        nuevo_stock = stock_actual - float(item["Cantidad"])
-                                        supabase.table("productos").update({"stock": nuevo_stock}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_actual).execute()
+                                    codigo_vendido = str(item["Código"])
+                                    cantidad_vendida = float(item["Cantidad"])
+
+                                    # 🚨 1. VERIFICAR SI EL PRODUCTO ES UN PACK / TIENE RECETA
+                                    res_receta_pos = supabase.table("recetas").select("*").eq("rut_empresa", rut_actual).eq("codigo_producto_final", codigo_vendido).execute()
+                                    
+                                    if res_receta_pos.data:
+                                        # 📦 ES UN PACK: Descuenta el stock de cada componente (padre) de la receta
+                                        for componente in res_receta_pos.data:
+                                            cod_componente = str(componente["codigo_ingrediente"])
+                                            cant_por_pack = float(componente["cantidad_usada"])
+                                            cantidad_total_a_descontar = cant_por_pack * cantidad_vendida
+
+                                            res_stock_comp = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", cod_componente).eq("bodega", bodega_actual).execute()
+                                            
+                                            if res_stock_comp.data:
+                                                stock_actual_comp = float(res_stock_comp.data[0]["stock"] or 0.0)
+                                                nuevo_stock_comp = stock_actual_comp - cantidad_total_a_descontar
+                                                
+                                                supabase.table("productos").update({"stock": nuevo_stock_comp}).eq("rut_empresa", rut_actual).eq("codigo", cod_componente).eq("bodega", bodega_actual).execute()
+                                    else:
+                                        # 🟢 ES UN PRODUCTO NORMAL: Descuenta su propio stock normalmente
+                                        res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", codigo_vendido).eq("bodega", bodega_actual).execute()
+                                        if res_stock.data:
+                                            stock_actual = float(res_stock.data[0]["stock"] or 0.0)
+                                            nuevo_stock = stock_actual - cantidad_vendida
+                                            supabase.table("productos").update({"stock": nuevo_stock}).eq("rut_empresa", rut_actual).eq("codigo", codigo_vendido).eq("bodega", bodega_actual).execute()
                             except Exception as e:
-                                pass 
+                                print(f"Error descontando stock en POS: {e}")
 
                             tasa_iva_item = 0.0 if item.get("Es Exento", False) else tasa_iva_global
                             tasa_ila_item = item.get("Tasa ILA", 0.0)
