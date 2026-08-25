@@ -3248,6 +3248,21 @@ elif menu == "💰 Módulo de Ventas (POS)":
     rut_actual = st.session_state.get("negocio_seleccionado")
     mostrar_encabezado_con_home(f"Terminal de Ventas - {caja_actual}")
 
+    # --- 0. SELECTOR MULTI-BODEGA PARA EL POS ---
+    bodegas_pos = ["Bodega Principal"]
+    try:
+        res_bod = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_actual).execute()
+        if res_bod.data:
+            for r in res_bod.data:
+                nb = str(r.get("nombre", "")).strip(' "\'')
+                if nb and nb not in bodegas_pos:
+                    bodegas_pos.append(nb)
+    except Exception:
+        pass
+        
+    bodega_actual = st.selectbox("🏢 Selecciona la Bodega / Sucursal de origen:", bodegas_pos)
+    st.markdown("---")
+
     # --- 1. CABECERA ---
     col_doc1, col_doc2 = st.columns(2)
     with col_doc1:
@@ -3271,7 +3286,9 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             if res_guia.data:
                                 st.session_state.carrito_ventas = []
                                 
-                                # 🚨 CORRECCIÓN CLIENTE: Capturamos y guardamos el cliente de la guía
+                                # 🚨 GUARDAMOS EL FOLIO ORIGEN PARA ELIMINARLO DESPUÉS
+                                st.session_state.folio_guia_origen = folio_guia_a_facturar.strip()
+                                
                                 cliente_de_guia = res_guia.data[0].get("cliente", "")
                                 if cliente_de_guia and cliente_de_guia != "Cliente General":
                                     st.session_state.cliente_preseleccionado = cliente_de_guia
@@ -3289,7 +3306,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                         "Subtotal": monto_total,
                                         "es_guia_previa": True 
                                     })
-                                st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente al carrito.")
+                                st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente. Lista para facturar.")
                             else:
                                 st.warning("⚠️ No se encontró ninguna guía con ese folio.")
                         except Exception as e:
@@ -3306,7 +3323,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
     )
     controlar_stock = "Estricto" in modo_inventario
 
-    # --- 3. SELECCIÓN DE CLIENTES (AUTO-RESCATE DE DATOS) ---
+    # --- 3. SELECCIÓN DE CLIENTES ---
     cliente_nombre, cliente_rut = "", ""
     if tipo_documento in ["Factura Electrónica", "Guía de Despacho"]:
         try:
@@ -3318,7 +3335,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
         c_nombre_def = st.session_state.get("cliente_preseleccionado", "")
         c_rut_def = ""
         
-        # Rescatar el RUT si conocemos el nombre desde la guía
         if c_nombre_def and not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
             match_rut = df_clientes_pos[df_clientes_pos["nombre"] == c_nombre_def]
             if not match_rut.empty:
@@ -3345,7 +3361,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
             cliente_rut = cliente_elegido.split(" (")[1].replace(")", "")
         else:
             col_f1, col_f2 = st.columns(2)
-            # 🚨 CORRECCIÓN: Si no hay selección, las cajas de texto heredan los datos de la guía
             with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def)
             with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def)
 
@@ -3376,6 +3391,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.items_recibo_actual = None
                 st.session_state.carrito_ventas = []
                 st.session_state.pop("cliente_preseleccionado", None)
+                st.session_state.pop("folio_guia_origen", None) # Limpiamos la memoria de la guía
                 st.rerun()
 
     # --- PANTALLA DE PAGO ---
@@ -3422,10 +3438,17 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
                         lineas_productos = ""
-                        
                         venta_exitosa = True
                         
-                        # 🚨 CORRECCIÓN IVA: Detecta Uruguay (22%) o Chile (19%)
+                        # 🚨 LA MAGIA: Si viene de una Guía, borramos la original para no duplicar
+                        folio_origen = st.session_state.get("folio_guia_origen")
+                        if folio_origen and tipo_documento == "Factura Electrónica":
+                            try:
+                                supabase.table("ventas").delete().eq("rut_empresa", rut_actual).eq("folio", folio_origen).execute()
+                                supabase.table("cuentas_por_cobrar").delete().eq("rut_empresa", rut_actual).eq("folio_venta", folio_origen).execute()
+                            except Exception:
+                                pass # Si no existe, ignoramos y seguimos
+                        
                         cfg_actual = st.session_state.get("config_ticket", {})
                         nombre_empresa_sesion = str(st.session_state.get("nombre_empresa", "")).upper()
                         tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_sesion or str(rut_actual) == "219449970012" else 19.0
@@ -3441,11 +3464,12 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             
                             try:
                                 if not item.get("es_guia_previa", False):
-                                    res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
+                                    # 🚨 AHORA DESCUENTA STOCK SOLO DE LA BODEGA SELECCIONADA
+                                    res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_actual).execute()
                                     if res_stock.data:
                                         stock_actual = float(res_stock.data[0]["stock"] or 0.0)
                                         nuevo_stock = stock_actual - float(item["Cantidad"])
-                                        supabase.table("productos").update({"stock": nuevo_stock}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
+                                        supabase.table("productos").update({"stock": nuevo_stock}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_actual).execute()
                             except Exception as e:
                                 pass 
 
@@ -3546,7 +3570,8 @@ PAGO: {forma_pago.upper()}
     else:
         df_nube = pd.DataFrame()
         try:
-            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", rut_actual).limit(10000).execute()
+            # 🚨 LEE EL INVENTARIO SOLO DE LA BODEGA SELECCIONADA EN EL POS
+            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", rut_actual).eq("bodega", bodega_actual).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
         except Exception as e:
@@ -3633,7 +3658,7 @@ PAGO: {forma_pago.upper()}
                         total_intentado = unidades_en_carrito + float(cantidad_vendida)
 
                         if controlar_stock and total_intentado > stock_disponible:
-                            st.error(f"🚨 **¡Inventario Insuficiente en la Nube!** Stock disponible: {stock_disponible:,.2f}")
+                            st.error(f"🚨 **¡Inventario Insuficiente en {bodega_actual}!** Stock disponible: {stock_disponible:,.2f}")
                         else:
                             st.session_state.carrito_ventas.append({
                                 "Código": c_buscado,
@@ -3647,7 +3672,7 @@ PAGO: {forma_pago.upper()}
                             })
                             st.rerun()
         else:
-            st.info("ℹ️ Aún no hay productos registrados en tu base de datos en la nube.")
+            st.info(f"ℹ️ Aún no hay productos registrados en {bodega_actual}.")
 
         st.divider()
         st.markdown("### 🛒 Carrito de Venta Actual:")
@@ -3688,6 +3713,7 @@ PAGO: {forma_pago.upper()}
                 if st.button("🗑️ Vaciar Carrito", use_container_width=True):
                     st.session_state.carrito_ventas = []
                     st.session_state.pop("cliente_preseleccionado", None)
+                    st.session_state.pop("folio_guia_origen", None) # Limpia la memoria de la guía al vaciar
                     st.rerun()
             with col_b2:
                 if st.button("[F12] 💳 Cobrar", use_container_width=True, key="btn_cobrar_principal") or st.session_state.get('ejecutar_cobro', False):
