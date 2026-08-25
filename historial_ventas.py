@@ -6,14 +6,21 @@ import io
 from data_manager import supabase, get_current_tenant
 
 def mostrar_modulo_historial_ventas(ruta_negocio):
-    # Botón para volver al Home fijo
-    if st.button("🏠 Volver al Home", use_container_width=True):
-        st.session_state["modulo_activo"] = "home"
-        st.rerun()
+    # --- 🛠️ CORRECCIÓN ESTÉTICA Y LÓGICA DEL ENCABEZADO ---
+    col_titulo, col_btn = st.columns([4, 1])
+    
+    with col_titulo:
+        st.markdown("### 📚 Historial de Documentos y Ventas Emitidas")
+        st.markdown("📌 **Archivo General:** Explora el registro histórico almacenado en la nube con filtros avanzados.")
+        
+    with col_btn:
+        st.write("") # Pequeño espacio para alinear el botón con el título
+        if st.button("🏠 Volver al Home", use_container_width=True, key="btn_home_historial_ventas"):
+            # Ahora sí ataca a la variable correcta de tu menú lateral
+            st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
+            st.rerun()
     
     st.markdown("---")
-    st.markdown("### 📚 Historial de Documentos y Ventas Emitidas")
-    st.markdown("📌 **Archivo General:** Explora el registro histórico almacenado en la nube con filtros avanzados.")
 
     tenant_id = get_current_tenant()
     if not tenant_id:
@@ -48,7 +55,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
         "🖨️ Descargar Comprobante"
     ])
 
-    st.markdown("---")
     st.markdown("#### 🔍 Panel de Filtros Dinámicos")
     col_f1, col_f2 = st.columns(2)
     with col_f1:
