@@ -47,8 +47,12 @@ def mostrar_modulo_produccion():
                 codigo_final = match_p['codigo'].values[0] if not match_p.empty else ""
                 nombre_final = prod_elegido
         else:
-            codigo_final = st.text_input("Código del Producto / Pack (Ej: PACK-WHISKY o PROD-ITALIANO)")
-            nombre_final = st.text_input("Nombre (Ej: PACK VERANO: WHISKY + BEBIDA + HIELO)")
+            # 🚨 AQUÍ CAMBIÓ: Primero escribes el nombre con total libertad
+            nombre_final = st.text_input("Nombre del Producto / Pack (Ej: PACK VERANO o SÁNDWICH ITALIANO)")
+            
+            # El código se autogenera de forma limpia quitando espacios y acentos, pero puedes editarlo si deseas
+            codigo_sugerido = nombre_final.upper().strip().replace(" ", "-").replace(":", "").replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U") if nombre_final else ""
+            codigo_final = st.text_input("Código Interno (Autogenerado, editable)", value=codigo_sugerido)
 
     if codigo_final and nombre_final:
         st.markdown(f"--- \n### 🛠️ Armando Ficha Técnica para: **{nombre_final}** (Cód: `{codigo_final}`)")
