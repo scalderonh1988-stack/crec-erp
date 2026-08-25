@@ -59,37 +59,50 @@ def mostrar_modulo_produccion():
         
         col1, col2 = st.columns([1, 1.2])
 
-        # --- 2. FORMULARIO PARA AGREGAR INGREDIENTES ---
+        # --- 2. FORMULARIO PARA AGREGAR INGREDIENTES CON BÚSQUEDA ESCRITA ---
         with col1:
             st.markdown("##### ➕ Añadir Insumos / Componentes")
             if df_ing.empty:
                 st.warning("⚠️ No tienes ingredientes registrados en la pestaña 'Ingredientes'.")
             else:
-                opciones_ingredientes = [f"{row['codigo']} - {row['descripcion']} (Costo: ${row['costo']})" for _, row in df_ing.iterrows()]
-                
+                # Creamos una lista limpia para que puedas escribir y buscar por nombre o código
+                dict_ingredientes = {}
+                opciones_busqueda = []
+                for _, row in df_ing.iterrows():
+                    etiqueta = f"{row['codigo']} - {row['descripcion']} (Costo: ${row['costo']})"
+                    opciones_busqueda.append(etiqueta)
+                    dict_ingredientes[etiqueta] = row['codigo']
+
                 with st.form("form_agregar_ingrediente_receta"):
-                    ingrediente_sel = st.selectbox("Selecciona la Materia Prima / Insumo:", opciones_ingredientes)
+                    # 🚨 AQUÍ CAMBIÓ: Usamos un campo donde puedes escribir/buscar el texto libremente
+                    ingrediente_sel = st.selectbox(
+                        "🔍 Escribe para buscar o selecciona el Insumo:", 
+                        options=opciones_busqueda,
+                        help="Empieza a escribir el nombre del ingrediente para filtrar la lista automáticamente."
+                    )
+                    
                     cantidad_usada = st.number_input("Cantidad a usar", min_value=0.001, value=1.000, step=0.050, format="%.3f")
                     
                     btn_guardar_ing = st.form_submit_button("➕ Agregar a la Receta", type="primary")
                     
                     if btn_guardar_ing:
-                        cod_ing = ingrediente_sel.split(" - ")[0]
-                        nom_ing = ingrediente_sel.split(" - ")[1].split(" (Costo:")[0]
-                        
-                        nueva_linea = {
-                            "rut_empresa": str(tenant_id),
-                            "codigo_producto_final": str(codigo_final).strip(),
-                            "codigo_ingrediente": cod_ing,
-                            "nombre_ingrediente": nom_ing,
-                            "cantidad_usada": float(cantidad_usada)
-                        }
-                        try:
-                            supabase.table("recetas").insert(nueva_linea).execute()
-                            st.success(f"✅ {nom_ing} agregado.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error al guardar: {e}")
+                        if ingrediente_sel:
+                            cod_ing = ingrediente_sel.split(" - ")[0]
+                            nom_ing = ingrediente_sel.split(" - ")[1].split(" (Costo:")[0]
+                            
+                            nueva_linea = {
+                                "rut_empresa": str(tenant_id),
+                                "codigo_producto_final": str(codigo_final).strip(),
+                                "codigo_ingrediente": cod_ing,
+                                "nombre_ingrediente": nom_ing,
+                                "cantidad_usada": float(cantidad_usada)
+                            }
+                            try:
+                                supabase.table("recetas").insert(nueva_linea).execute()
+                                st.success(f"✅ {nom_ing} agregado.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al guardar: {e}")
 
         # --- 3. VISUALIZACIÓN Y PUBLICACIÓN EN EL POS ---
         with col2:
