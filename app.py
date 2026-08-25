@@ -1218,94 +1218,106 @@ elif menu == "📦 Inventario y Productos":
         rut_actual = st.session_state.get("negocio_seleccionado")
         
         try:
-            # 🚨 NUEVO: Ahora también llamamos a precio_neto y porcentaje_iva
             res_inv = supabase.table("productos").select("*").eq("rut_empresa", rut_actual).execute()
             df_inv = pd.DataFrame(res_inv.data)
             st.success(f"Base de datos conectada con éxito desde la Nube. ({len(df_inv)} productos)")
             if not df_inv.empty:
                 st.dataframe(df_inv, use_container_width=True)
             
-            with st.form("form_nuevo_producto", clear_on_submit=True):
-                st.markdown("##### Nuevo Producto")
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    codigo = st.text_input("Código *", placeholder="Ej: 780123456789")
-                    dun14 = st.text_input("DUN14 (Opcional)", placeholder="Código de caja")
-                    descripcion = st.text_input("Descripción *", placeholder="Ej: BEBIDA ORANGE CRUSH PET300")
-                    categoria = st.selectbox("Categoría", ["Ninguna", "BEBIDAS", "ABARROTES", "SNACKS", "OTROS"])
-                    costo = st.number_input("Costo Neto ($)", min_value=0.0, step=100.0)
-                    
-                    stock = st.number_input("Stock Inicial", min_value=0.0, step=1.0)
-                    impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
-                    
-                with col2:
-                    # 🚨 INTELIGENCIA TRIBUTARIA: Tasa por defecto
-                    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
-                    tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
-                    
-                    st.markdown("💡 **Configuración de Precios (Ingresa el Neto o el Bruto)**")
-                    col_p1, col_p2 = st.columns(2)
-                    with col_p1:
-                        precio_neto = st.number_input("Precio Neto ($)", min_value=0.0, step=100.0)
-                        porcentaje_iva = st.number_input("% de IVA", min_value=0.0, value=tasa_defecto, step=1.0)
-                    with col_p2:
-                        precio_venta = st.number_input("Precio Bruto/Final ($)", min_value=0.0, step=100.0)
-                        es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
-                    
-                    st.markdown("---")
-                    col_disp, col_act = st.columns(2)
-                    with col_disp:
-                        disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
-                    with col_act:
-                        activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
-
-                btn_g_prod = st.form_submit_button("💾 Guardar Producto")
+            # --- LÓGICA DE CREACIÓN DE PRODUCTOS MULTI-BODEGA ---
+            st.markdown("### 🆕 Ingresar Nuevo Producto a la Base de Datos")
+            
+            # 1. Rescatar bodegas existentes dinámicamente
+            bodegas_existentes = ["Bodega Principal"]
+            if not df_inv.empty and "bodega" in df_inv.columns:
+                bodegas_extra = df_inv["bodega"].dropna().unique().tolist()
+                for b in bodegas_extra:
+                    if b and b not in bodegas_existentes:
+                        bodegas_existentes.append(b)
                 
-                if btn_g_prod:
+            bodegas_existentes.append("➕ Crear Nueva Bodega / Sucursal...")
+
+            codigo_scanned_nuevo = st.text_input("📷 Digita o ingresa el código del producto nuevo:", key="scan_nuevo_prod")
+        
+            with st.form("form_crear_producto_multi", clear_on_submit=True):
+                st.markdown("##### Datos Básicos y Ubicación")
+                col_b1, col_b2 = st.columns(2)
+                
+                with col_b1:
+                    codigo = st.text_input("Código del Producto (EAN o Interno) *", value=codigo_scanned_nuevo if codigo_scanned_nuevo else "")
+                    descripcion = st.text_input("Descripción / Nombre del Producto *")
+                    categoria = st.selectbox("Categoría", ["Ninguna", "BEBIDAS", "ABARROTES", "SNACKS", "OTROS"])
+                    
+                with col_b2:
+                    bodega_seleccionada = st.selectbox("🏢 Asignar a Bodega / Sucursal:", bodegas_existentes)
+                    nueva_bodega = ""
+                    if bodega_seleccionada == "➕ Crear Nueva Bodega / Sucursal...":
+                        nueva_bodega = st.text_input("✍️ Escribe el nombre de la nueva Bodega:")
+                    
+                    stock = st.number_input("Stock Inicial a ingresar en esta bodega", min_value=0.0, step=1.0)
+                    costo = st.number_input("Costo de Compra Neto ($)", min_value=0.0, step=100.0)
+
+                st.markdown("##### 💡 Configuración Tributaria (Ingresa el Neto o el Bruto)")
+                
+                nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+                tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
+                
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    precio_neto = st.number_input("Precio Neto ($)", min_value=0.0, step=100.0)
+                    porcentaje_iva = st.number_input("% de IVA", min_value=0.0, value=tasa_defecto, step=1.0)
+                    impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
+                with col_p2:
+                    precio_venta = st.number_input("Precio Bruto/Final ($)", min_value=0.0, step=100.0)
+                    es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
+                    activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
+            
+                btn_crear_prod = st.form_submit_button("💾 Guardar Producto en la Bodega")
+
+                if btn_crear_prod:
+                    bodega_final = nueva_bodega.strip() if bodega_seleccionada == "➕ Crear Nueva Bodega / Sucursal..." else bodega_seleccionada
+                    
                     if not codigo or not descripcion or (precio_venta <= 0 and precio_neto <= 0):
-                        st.warning("⚠️ Ingresa al menos el código, la descripción y un precio (Neto o Bruto).")
+                        st.warning("⚠️ Por favor, completa Código, Descripción y un Precio (Neto o Bruto).")
+                    elif not bodega_final:
+                        st.warning("⚠️ Debes asignar un nombre a la bodega.")
                     else:
-                        # --- 🧮 MOTOR DE CÁLCULO DE PRECIOS AUTOMÁTICO ---
-                        iva_final = float(porcentaje_iva)
-                        if es_exento == "Si":
-                            iva_final = 0.0
-                            
-                        p_neto_calc = float(precio_neto)
-                        p_bruto_calc = float(precio_venta)
+                        iva_final = 0.0 if es_exento == "Si" else float(porcentaje_iva)
+                        p_neto_calc, p_bruto_calc = float(precio_neto), float(precio_venta)
                         
-                        # Si llenó solo el Bruto, calculamos el Neto
                         if p_bruto_calc > 0 and p_neto_calc == 0:
                             p_neto_calc = p_bruto_calc / (1.0 + (iva_final / 100.0))
-                        
-                        # Si llenó solo el Neto (o ambos), el Bruto manda según el Neto
                         elif p_neto_calc > 0:
                             p_bruto_calc = p_neto_calc * (1.0 + (iva_final / 100.0))
-                        
+
                         nuevo_producto = {
                             "rut_empresa": rut_actual,
-                            "codigo": str(codigo).strip(),
-                            "dun14": dun14 if dun14 else None,
+                            "codigo": codigo.strip(),
+                            "bodega": bodega_final,
                             "descripcion": descripcion.strip(),
                             "categoria": categoria if categoria != "Ninguna" else None,
                             "costo": costo,
-                            "precio_neto": round(p_neto_calc, 2),            # 🚨 NUEVA COLUMNA
-                            "porcentaje_iva": round(iva_final, 2),           # 🚨 NUEVA COLUMNA
+                            "precio_neto": round(p_neto_calc, 2),
+                            "porcentaje_iva": round(iva_final, 2),
                             "precio_venta": round(p_bruto_calc, 2),
                             "stock": stock,
                             "es_exento": es_exento,
                             "impuesto_especifico": impuesto_especifico if impuesto_especifico != "Ninguno" else None,
-                            "disponible_venta": disponible_venta,
                             "activo": activo
                         }
                         
                         try:
-                            # upsert actualiza si el código ya existe, o crea uno nuevo
-                            supabase.table("productos").upsert(nuevo_producto, on_conflict="rut_empresa, codigo").execute()
-                            st.success("✅ ¡Producto registrado con éxito en la Nube con sus datos tributarios!")
+                            res_check = supabase.table("productos").select("id").eq("rut_empresa", rut_actual).eq("codigo", codigo.strip()).eq("bodega", bodega_final).execute()
+                            
+                            if res_check.data:
+                                supabase.table("productos").update(nuevo_producto).eq("id", res_check.data[0]["id"]).execute()
+                                st.success(f"✅ Producto actualizado en '{bodega_final}'.")
+                            else:
+                                supabase.table("productos").insert(nuevo_producto).execute()
+                                st.success(f"✅ ¡Producto nuevo creado exitosamente en '{bodega_final}'!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al guardar en Supabase. ¿Ya creaste las columnas 'precio_neto' y 'porcentaje_iva' en la base de datos? Detalle: {e}")
+                            st.error(f"❌ Error al guardar en la nube: {e}")
         except Exception as e:
             st.error(f"⚠️ Error al conectar con Supabase: {e}")
 
@@ -2766,9 +2778,23 @@ PRODUCTO INGRESADO:
                         st.success(f"✅ ¡GRI #{folio_gri} procesada con éxito! Stock actualizado y documento archivado automáticamente.")
                         st.rerun()
 
-        # --- 3. CREAR PRODUCTO NUEVO ---
+        # --- 3. CREAR PRODUCTO NUEVO (MÓDULO DE COMPRAS) ---
         elif accion_producto == "➕ Crear Producto Nuevo":
             st.markdown("### 🆕 Ingresar Nuevo Producto a la Base de Datos")
+            
+            # 1. Rescatar bodegas existentes para Compras
+            bodegas_existentes = ["Bodega Principal"]
+            try:
+                res_bod = supabase.table("productos").select("bodega").eq("rut_empresa", rut_actual).execute()
+                if res_bod.data:
+                    for row in res_bod.data:
+                        b = row.get("bodega")
+                        if b and b not in bodegas_existentes:
+                            bodegas_existentes.append(b)
+            except Exception:
+                pass
+            bodegas_existentes.append("➕ Crear Nueva Bodega / Sucursal...")
+
             codigo_scanned_nuevo = st.text_input("📷 Digita o ingresa el código del producto nuevo:", key="scan_nuevo_prod")
         
             with st.form("form_crear_producto_compras", clear_on_submit=True):
@@ -2779,39 +2805,47 @@ PRODUCTO INGRESADO:
                     dun14 = st.text_input("DUN14 (Opcional)", placeholder="Código de caja")
                     descripcion = st.text_input("Descripción / Nombre del Producto *", placeholder="Ej: BEBIDA ORANGE CRUSH PET300")
                     categoria = st.selectbox("Categoría", ["Ninguna", "BEBIDAS", "ABARROTES", "SNACKS", "OTROS"])
-                    costo = st.number_input("Costo de Compra Neto ($)", min_value=0.0, step=100.0)
                     
+                with col2:
+                    # 🚨 SELECTOR DE BODEGA EN COMPRAS
+                    bodega_seleccionada = st.selectbox("🏢 Asignar a Bodega / Sucursal:", bodegas_existentes)
+                    nueva_bodega = ""
+                    if bodega_seleccionada == "➕ Crear Nueva Bodega / Sucursal...":
+                        nueva_bodega = st.text_input("✍️ Escribe el nombre de la nueva Bodega:")
+                        
+                    costo = st.number_input("Costo de Compra Neto ($)", min_value=0.0, step=100.0)
                     stock = st.number_input("Stock Inicial", min_value=0.0, step=1.0)
                     impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
                     
-                with col2:
-                    # 🚨 INTELIGENCIA TRIBUTARIA: Tasa por defecto
-                    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
-                    tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
+                st.markdown("##### 💡 Configuración Tributaria (Ingresa el Neto o el Bruto)")
+                nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
+                tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
+                
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    precio_neto = st.number_input("Precio Neto ($)", min_value=0.0, step=100.0)
+                    porcentaje_iva = st.number_input("% de IVA", min_value=0.0, value=tasa_defecto, step=1.0)
+                with col_p2:
+                    precio_venta = st.number_input("Precio Bruto/Final ($) *", min_value=0.0, step=100.0)
+                    es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
                     
-                    st.markdown("💡 **Configuración de Precios (Ingresa el Neto o el Bruto)**")
-                    col_p1, col_p2 = st.columns(2)
-                    with col_p1:
-                        precio_neto = st.number_input("Precio Neto ($)", min_value=0.0, step=100.0)
-                        porcentaje_iva = st.number_input("% de IVA", min_value=0.0, value=tasa_defecto, step=1.0)
-                    with col_p2:
-                        precio_venta = st.number_input("Precio Bruto/Final ($) *", min_value=0.0, step=100.0)
-                        es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
-                    
-                    st.markdown("---")
-                    col_disp, col_act = st.columns(2)
-                    with col_disp:
-                        disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
-                    with col_act:
-                        activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
+                st.markdown("---")
+                col_disp, col_act = st.columns(2)
+                with col_disp:
+                    disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
+                with col_act:
+                    activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
             
                 btn_crear_prod = st.form_submit_button("💾 Agregar Producto a la Base de Datos")
 
                 if btn_crear_prod:
+                    bodega_final = nueva_bodega.strip() if bodega_seleccionada == "➕ Crear Nueva Bodega / Sucursal..." else bodega_seleccionada
+                    
                     if codigo == "" or descripcion == "" or (precio_venta <= 0 and precio_neto <= 0):
-                        st.warning("⚠️ Por favor, completa al menos el Código, Descripción y un Precio (Neto o Bruto mayor a 0).")
+                        st.warning("⚠️ Por favor, completa Código, Descripción y un Precio (Neto o Bruto mayor a 0).")
+                    elif not bodega_final:
+                        st.warning("⚠️ Debes asignar un nombre a la bodega.")
                     else:
-                        # --- 🧮 MOTOR DE CÁLCULO DE PRECIOS AUTOMÁTICO ---
                         iva_final = float(porcentaje_iva)
                         if es_exento == "Si":
                             iva_final = 0.0
@@ -2819,24 +2853,21 @@ PRODUCTO INGRESADO:
                         p_neto_calc = float(precio_neto)
                         p_bruto_calc = float(precio_venta)
                         
-                        # Si llenó solo el Bruto, calculamos el Neto
                         if p_bruto_calc > 0 and p_neto_calc == 0:
                             p_neto_calc = p_bruto_calc / (1.0 + (iva_final / 100.0))
-                        
-                        # Si llenó solo el Neto (o ambos), el Bruto manda según el Neto
                         elif p_neto_calc > 0:
                             p_bruto_calc = p_neto_calc * (1.0 + (iva_final / 100.0))
 
-                        # Preparamos el paquete de datos para Supabase
                         nuevo_producto = {
                             "rut_empresa": rut_actual,
                             "codigo": codigo.strip(),
+                            "bodega": bodega_final,
                             "dun14": dun14 if dun14 else None,
                             "descripcion": descripcion.strip(),
                             "categoria": categoria if categoria != "Ninguna" else None,
                             "costo": costo,
-                            "precio_neto": round(p_neto_calc, 2),            # 🚨 NUEVA COLUMNA
-                            "porcentaje_iva": round(iva_final, 2),           # 🚨 NUEVA COLUMNA
+                            "precio_neto": round(p_neto_calc, 2),
+                            "porcentaje_iva": round(iva_final, 2),
                             "precio_venta": round(p_bruto_calc, 2),
                             "stock": stock,
                             "es_exento": es_exento,
@@ -2846,9 +2877,14 @@ PRODUCTO INGRESADO:
                         }
                         
                         try:
-                            # Inserción directa en la nube ☁️
-                            supabase.table("productos").insert(nuevo_producto).execute()
-                            st.success(f"✅ ¡Producto '{descripcion}' guardado con éxito y configuración tributaria lista!")
+                            # 🚨 CHECK MULTI-BODEGA (Actualiza o Crea)
+                            res_check = supabase.table("productos").select("id").eq("rut_empresa", rut_actual).eq("codigo", codigo.strip()).eq("bodega", bodega_final).execute()
+                            if res_check.data:
+                                supabase.table("productos").update(nuevo_producto).eq("id", res_check.data[0]["id"]).execute()
+                                st.success(f"✅ Producto actualizado en '{bodega_final}'.")
+                            else:
+                                supabase.table("productos").insert(nuevo_producto).execute()
+                                st.success(f"✅ ¡Producto '{descripcion}' guardado con éxito en '{bodega_final}'!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error al guardar en la nube: {e}")
