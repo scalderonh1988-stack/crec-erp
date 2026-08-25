@@ -825,28 +825,36 @@ if not st.session_state.autenticado:
                 else:
                     acceso_exitoso = False
                     
-                    # 🚨 1.5 NUEVO: VALIDACIÓN DEL PROPIETARIO / DUEÑO DE LA EMPRESA
-                    maestro_clientes = cargar_maestro_clientes()
-                    if usuario_limpio in maestro_clientes:
-                        datos_propietario = maestro_clientes[usuario_limpio]
+                    # 🚨 1.5 NUEVO: VALIDACIÓN DEL PROPIETARIO 100% EN LA NUBE (Supabase)
+                    try:
+                        # Buscamos si el RUT ingresado pertenece a una Empresa dueña
+                        res_dueño = supabase.table("empresas").select("*").eq("rut_empresa", usuario_limpio).execute()
                         
-                        if str(datos_propietario.get("password", "")) == password_limpio:
-                            if datos_propietario.get("activo", True):
-                                st.session_state.autenticado = True
-                                st.session_state.es_admin_dev = False
-                                st.session_state.negocio_actual = usuario_limpio
-                                st.session_state.usuario_logueado = "Propietario / Administrador"
-                                st.session_state.rol_usuario = "Propietario"
-                                st.session_state.modulos_permitidos = "ALL" # Acceso a TODO
-                                st.session_state.intentos_fallidos = 0
-                                st.session_state.nombre_empresa = datos_propietario.get("nombre", usuario_limpio)
-                                
-                                st.success(f"👑 ¡Bienvenido Propietario de {st.session_state.nombre_empresa}!")
-                                acceso_exitoso = True
-                                st.rerun()
-                            else:
-                                st.error("❌ La licencia de esta empresa se encuentra expirada o inactiva.")
-                                acceso_exitoso = True # Bloqueo intencional, no resta intentos
+                        if res_dueño.data:
+                            datos_empresa = res_dueño.data[0]
+                            
+                            # Validamos contra la nueva columna 'password' de la tabla empresas
+                            pass_db = str(datos_empresa.get("password", ""))
+                            
+                            if pass_db == password_limpio:
+                                if datos_empresa.get("licencia_activa", True):
+                                    st.session_state.autenticado = True
+                                    st.session_state.es_admin_dev = False
+                                    st.session_state.negocio_actual = usuario_limpio
+                                    st.session_state.usuario_logueado = "Propietario / Administrador"
+                                    st.session_state.rol_usuario = "Propietario"
+                                    st.session_state.modulos_permitidos = "ALL" # Acceso a TODO
+                                    st.session_state.intentos_fallidos = 0
+                                    st.session_state.nombre_empresa = datos_empresa.get("empresa_nombre", usuario_limpio)
+                                    
+                                    st.success(f"👑 ¡Bienvenido Propietario de {st.session_state.nombre_empresa}!")
+                                    acceso_exitoso = True
+                                    st.rerun()
+                                else:
+                                    st.error("❌ La licencia de esta empresa se encuentra expirada o inactiva.")
+                                    acceso_exitoso = True # Bloqueo intencional
+                    except Exception as e:
+                        pass
                     
                     # 2. VALIDACIÓN ESTRICTA EN LA NUBE: Cajeros y Operadores
                     if not acceso_exitoso:
