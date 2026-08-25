@@ -2919,6 +2919,16 @@ elif menu == "⚙️ Configuración General":
                     except Exception as e:
                         st.error(f"❌ Error al eliminar: {e}")
 
+            if not es_nuevo:
+                if st.button(f"🗑️ Eliminar usuario '{def_nombre}'", type="secondary"):
+                    try:
+                        id_db = db_usuarios[usuario_seleccionado]["id"]
+                        supabase.table("usuarios").delete().eq("id", id_db).execute()
+                        st.success("Usuario eliminado del sistema.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al eliminar: {e}")
+
     with tab2:
         st.markdown("### 💳 Configuración de Formas de Pago Aceptadas")
         with st.form("form_nueva_forma_pago"):
