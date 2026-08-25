@@ -7,23 +7,22 @@ def mostrar_modulo_produccion():
         st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
         st.rerun()
 
-    st.markdown("### 🍔 Módulo de Producción, Recetas y Materia Prima")
-    st.markdown("Administra tus insumos a granel o paquetes y diseña tus fichas técnicas o packs para el POS.")
+    st.markdown("### 🍔 Módulo de Producción, Recetas y Ensamblaje de Packs")
+    st.markdown("Diseña tus fichas técnicas y **ensambla físicamente** tus packs: descuenta los componentes individuales y aumenta el stock del pack terminado.")
 
     tenant_id = get_current_tenant()
     if not tenant_id:
         st.error("❌ No se ha identificado el negocio. Por favor, inicia sesión nuevamente.")
         return
 
-    # --- PESTAÑAS INTERNAS DEL MÓDULO ---
-    tab_recetas, tab_gestion_ing = st.tabs(["🛠️ Armado de Recetas y Packs", "🍅 Gestión y Compra de Ingredientes"])
+    tab_recetas, tab_gestion_ing = st.tabs(["🛠️ Armado y Ensamblaje de Packs", "🍅 Gestión y Compra de Ingredientes"])
 
     # ==========================================
-    # PESTAÑA 1: ARMADO DE RECETAS Y PACKS
+    # PESTAÑA 1: ARMADO Y ENSAMBLAJE DE PACKS
     # ==========================================
     with tab_recetas:
         try:
-            res_prod = supabase.table("productos").select("codigo, descripcion, costo, precio_venta").eq("rut_empresa", str(tenant_id)).execute()
+            res_prod = supabase.table("productos").select("codigo, descripcion, costo, precio_venta, stock, bodega").eq("rut_empresa", str(tenant_id)).execute()
             df_prod = pd.DataFrame(res_prod.data) if res_prod.data else pd.DataFrame()
 
             res_ing = supabase.table("ingredientes").select("codigo, descripcion, costo, bodega").eq("rut_empresa", str(tenant_id)).execute()
@@ -57,10 +56,10 @@ def mostrar_modulo_produccion():
                 codigo_final = st.text_input("Código Interno (Autogenerado, editable)", value=codigo_sugerido)
 
         if codigo_final and nombre_final:
-            st.markdown(f"--- \n### 🛠️ Armando Receta para: **{nombre_final}** (Cód: `{codigo_final}`)")
+            st.markdown(f"--- \n### 🛠️ Ficha Técnica para: **{nombre_final}** (Cód: `{codigo_final}`)")
             
             tipo_receta = st.radio(
-                "Selecciona el tipo de componentes para esta receta:",
+                "Selecciona el tipo de componentes:",
                 ["📦 Es un Pack (Usa productos terminados de inventario)", "🍅 Es una Elaboración (Usa ingredientes / materia prima)"],
                 horizontal=True
             )
@@ -84,7 +83,7 @@ def mostrar_modulo_produccion():
                         else:
                             with st.form("form_pack"):
                                 componente_sel = st.selectbox("🔍 Busca el producto terminado:", options=opciones_busqueda)
-                                cantidad_usada = st.number_input("Cantidad de unidades", min_value=0.001, value=1.000, step=1.0, format="%.2f")
+                                cantidad_usada = st.number_input("Cantidad de unidades por pack", min_value=0.001, value=1.000, step=1.0, format="%.2f")
                                 btn_g = st.form_submit_button("➕ Agregar al Pack", type="primary")
                                 
                                 if btn_g and componente_sel:
@@ -134,7 +133,7 @@ def mostrar_modulo_produccion():
                             
                         subtotal = costo_unitario * float(row['cantidad_usada'])
                         costo_total_receta += subtotal
-                        df_receta.loc[i, 'Costo Actual ($)'] = subtotal
+                        df_receta.loc[i, 'Costo Actual ($)']= subtotal
 
                     df_mostrar = df_receta[['nombre_ingrediente', 'cantidad_usada', 'Costo Actual ($)']].rename(columns={
                         'nombre_ingrediente': 'Componente / Ingrediente',
@@ -144,26 +143,6 @@ def mostrar_modulo_produccion():
                     
                     st.info(f"💰 **Costo Real de Producción / Armado: ${costo_total_receta:,.2f}**")
                     
-                    # 🚨 NUEVO: Desglose Tributario e Impuestos del Pack
-                    nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
-                    tasa_iva = 22.0 if "URUGUAY" in nombre_empresa_act or str(tenant_id) == "219449970012" else 19.0
-                    
-                    costo_neto_pack = costo_total_receta / (1.0 + (tasa_iva / 100.0))
-                    iva_credito_pack = costo_total_receta - costo_neto_pack
-                    
-                    with st.expander("🏛️ Ver Desglose Tributario del Costo (IVA y Neto)"):
-                        st.markdown(f"- **Costo Neto:** ${costo_neto_pack:,.2f}")
-                        st.markdown(f"- **IVA Crédito ({tasa_iva:g}%):** ${iva_credito_pack:,.2f}")
-                        st.markdown(f"- **Costo Bruto Total:** ${costo_total_receta:,.2f}")
-
-                    # 🚨 NUEVO: Cuadro visible de Nombre y Código del Pack antes de publicar
-                    st.markdown("##### 📝 Identificación Oficial del Pack")
-                    col_id1, col_id2 = st.columns(2)
-                    with col_id1:
-                        nombre_pack_final = st.text_input("Nombre del Pack para el POS", value=nombre_final)
-                    with col_id2:
-                        codigo_pack_final = st.text_input("Código de Barras / Interno", value=codigo_final)
-
                     id_a_borrar = st.selectbox("Eliminar componente:", ["-- Ninguno --"] + df_receta['nombre_ingrediente'].tolist())
                     if id_a_borrar != "-- Ninguno --":
                         if st.button("🗑️ Quitar Componente"):
@@ -172,23 +151,23 @@ def mostrar_modulo_produccion():
                             st.rerun()
                 else:
                     st.info("ℹ️ Aún no hay componentes en esta receta.")
-                    nombre_pack_final = nombre_final
-                    codigo_pack_final = codigo_final
+
+                st.markdown("##### 📝 Identificación Oficial del Pack")
+                col_id1, col_id2 = st.columns(2)
+                with col_id1:
+                    nombre_pack_final = st.text_input("Nombre para el POS", value=nombre_final)
+                with col_id2:
+                    codigo_pack_final = st.text_input("Código de Barras / Interno", value=codigo_final)
 
                 st.divider()
-                st.markdown("##### 🚀 Publicar en el POS")
+                st.markdown("##### 🚀 1. Publicar / Guardar Ficha en el POS")
                 precio_venta_p = st.number_input("Precio de Venta al Público ($)", min_value=0.0, value=3500.0, step=100.0)
                 
-                # Cálculo rápido de margen proyectado con el impuesto desglosado
-                if precio_venta_p > 0 and costo_total_receta > 0:
-                    margen_estimado = ((precio_venta_p - costo_total_receta) / precio_venta_p) * 100
-                    st.caption(f"📈 Margen de ganancia bruto estimado: **{margen_estimado:.1f}%**")
-
-                if st.button("💾 Guardar y Publicar en el Punto de Venta", type="primary"):
+                if st.button("💾 Guardar Producto en el Catálogo", type="primary"):
                     if precio_venta_p <= 0:
                         st.warning("⚠️ Ingresa un precio válido.")
                     elif not nombre_pack_final or not codigo_pack_final:
-                        st.warning("⚠️ El nombre y el código del pack son obligatorios.")
+                        st.warning("⚠️ El nombre y el código son obligatorios.")
                     else:
                         datos_finales = {
                             "rut_empresa": str(tenant_id),
@@ -196,16 +175,92 @@ def mostrar_modulo_produccion():
                             "descripcion": str(nombre_pack_final).strip(),
                             "costo": round(costo_total_receta, 2),
                             "precio_venta": float(precio_venta_p),
+                            "bodega": "Bodega Principal",
                             "stock": 0.0,
                             "categoria": "COMBOS / ELABORADOS",
                             "activo": "Si",
                             "disponible_venta": True
                         }
                         try:
-                            supabase.table("productos").upsert(datos_finales, on_conflict="rut_empresa,codigo").execute()
-                            st.success(f"🎉 ¡'{nombre_pack_final}' publicado con éxito! Costo real: ${costo_total_receta:,.2f}.")
+                            supabase.table("productos").upsert(datos_finales, on_conflict="rut_empresa,codigo,bodega").execute()
+                            st.success(f"🎉 ¡'{nombre_pack_final}' guardado con éxito! Costo real: ${costo_total_receta:,.2f}.")
                         except Exception as e:
                             st.error(f"❌ Error: {e}")
+
+                # 🚨 NUEVO MÓDULO DE ENSAMBLAJE / PRODUCCIÓN FÍSICA
+                st.divider()
+                st.markdown("##### 📦 2. Ensamblar Packs (Producir Stock Físico)")
+                st.info("💡 Al ensamblar, el sistema **descontará los componentes** del inventario y **sumará stock físico** al Pack.")
+
+                bodega_ensamblaje = st.text_input("🏢 Bodega donde se realiza el ensamble:", value="Bodega Principal")
+                cantidad_a_ensamblar = st.number_input("Cantidad de Packs a Armar:", min_value=1.0, value=1.0, step=1.0)
+
+                if st.button("⚙️ Ejecutar Ensamble y Actualizar Inventario", type="primary"):
+                    if df_receta.empty:
+                        st.warning("⚠️ No puedes ensamblar un pack que no tiene receta o componentes definidos.")
+                    else:
+                        try:
+                            # 1. Validar y descontar stock de cada componente en la bodega
+                            todo_ok = True
+                            mensaje_error = ""
+                            
+                            for _, r_comp in df_receta.iterrows():
+                                cod_hijo = str(r_comp['codigo_ingrediente'])
+                                req_hijo = float(r_comp['cantidad_usada']) * float(cantidad_a_ensamblar)
+                                
+                                res_stk_hijo = supabase.table("productos").select("stock, descripcion").eq("rut_empresa", str(tenant_id)).eq("codigo", cod_hijo).eq("bodega", bodega_ensamblaje).execute()
+                                
+                                if res_stk_hijo.data:
+                                    stock_disponible_hijo = float(res_stk_hijo.data[0]["stock"] or 0.0)
+                                    if stock_disponible_hijo < req_hijo:
+                                        todo_ok = False
+                                        mensaje_error = f"Stock insuficiente del componente '{res_stk_hijo.data[0]['descripcion']}'. Necesitas {req_hijo} y hay {stock_disponible_hijo}."
+                                        break
+                                else:
+                                    todo_ok = False
+                                    mensaje_error = f"El componente con código {cod_hijo} no existe en la bodega '{bodega_ensamblaje}'."
+                                    break
+
+                            if not todo_ok:
+                                st.error(f"❌ No se pudo realizar el ensamble: {mensaje_error}")
+                            else:
+                                # 2. Descontar los componentes
+                                for _, r_comp in df_receta.iterrows():
+                                    cod_hijo = str(r_comp['codigo_ingrediente'])
+                                    req_hijo = float(r_comp['cantidad_usada']) * float(cantidad_a_ensamblar)
+                                    
+                                    res_stk_hijo = supabase.table("productos").select("stock").eq("rut_empresa", str(tenant_id)).eq("codigo", cod_hijo).eq("bodega", bodega_ensamblaje).execute()
+                                    nuevo_stk_hijo = float(res_stk_hijo.data[0]["stock"]) - req_hijo
+                                    
+                                    supabase.table("productos").update({"stock": nuevo_stk_hijo}).eq("rut_empresa", str(tenant_id)).eq("codigo", cod_hijo).eq("bodega", bodega_ensamblaje).execute()
+
+                                # 3. Aumentar stock del Pack final
+                                res_stk_pack = supabase.table("productos").select("stock").eq("rut_empresa", str(tenant_id)).eq("codigo", str(codigo_final)).eq("bodega", bodega_ensamblaje).execute()
+                                
+                                if res_stk_pack.data:
+                                    stock_actual_pack = float(res_stk_pack.data[0]["stock"] or 0.0)
+                                    nuevo_stk_pack = stock_actual_pack + float(cantidad_a_ensamblar)
+                                    supabase.table("productos").update({"stock": nuevo_stk_pack}).eq("rut_empresa", str(tenant_id)).eq("codigo", str(codigo_final)).eq("bodega", bodega_ensamblaje).execute()
+                                else:
+                                    # Si no existía en esa bodega, lo creamos con stock inicial
+                                    nuevo_prod_pack = {
+                                        "rut_empresa": str(tenant_id),
+                                        "codigo": str(codigo_final).strip(),
+                                        "descripcion": str(nombre_pack_final).strip(),
+                                        "costo": round(costo_total_receta, 2),
+                                        "precio_venta": float(precio_venta_p),
+                                        "bodega": bodega_ensamblaje,
+                                        "stock": float(cantidad_a_ensamblar),
+                                        "categoria": "COMBOS / ELABORADOS",
+                                        "activo": "Si",
+                                        "disponible_venta": True
+                                    }
+                                    supabase.table("productos").insert(nuevo_prod_pack).execute()
+
+                                st.success(f"🎉 ¡Ensamble exitoso! Se armaron {cantidad_a_ensamblar} unidad(es) de '{nombre_pack_final}'. Componentes descontados e inventario de packs actualizado.")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error durante el proceso de ensamble: {e}")
 
     # ==========================================
     # PESTAÑA 2: GESTIÓN DE INGREDIENTES
