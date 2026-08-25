@@ -119,18 +119,23 @@ def mostrar_modulo_produccion():
                 costo_total_receta = 0.0
                 if not df_receta.empty:
                     for i, row in df_receta.iterrows():
-                        match_prod = df_prod[df_prod['codigo'] == row['codigo_ingrediente']]
-                        match_ing = df_ing[df_ing['codigo'] == row['codigo_ingrediente']]
-                        
                         costo_unitario = 0.0
-                        if not match_prod.empty:
-                            costo_unitario = float(match_prod['costo'].values[0])
-                        elif not match_ing.empty:
-                            costo_unitario = float(match_ing['costo'].values[0])
+                        cod_buscado = str(row['codigo_ingrediente']).strip()
+                        
+                        # 🛡️ BÚSQUEDA BLINDADA: Evita cualquier KeyError verificando existencia de columnas
+                        if not df_prod.empty and 'codigo' in df_prod.columns:
+                            match_prod = df_prod[df_prod['codigo'].astype(str).str.strip() == cod_buscado]
+                            if not match_prod.empty:
+                                costo_unitario = float(match_prod['costo'].values[0])
+                        
+                        if costo_unitario == 0.0 and not df_ing.empty and 'codigo' in df_ing.columns:
+                            match_ing = df_ing[df_ing['codigo'].astype(str).str.strip() == cod_buscado]
+                            if not match_ing.empty:
+                                costo_unitario = float(match_ing['costo'].values[0])
                             
                         subtotal = costo_unitario * float(row['cantidad_usada'])
                         costo_total_receta += subtotal
-                        df_receta.at[i, 'Costo Actual ($)'] = subtotal
+                        df_receta.loc[i, 'Costo Actual ($)'] = subtotal
 
                     df_mostrar = df_receta[['nombre_ingrediente', 'cantidad_usada', 'Costo Actual ($)']].rename(columns={
                         'nombre_ingrediente': 'Componente / Ingrediente',
@@ -175,11 +180,11 @@ def mostrar_modulo_produccion():
                             st.error(f"❌ Error: {e}")
 
     # ==========================================
-    # PESTAÑA 2: GESTIÓN DE INGREDIENTES (MOVIDO AQUÍ)
+    # PESTAÑA 2: GESTIÓN DE INGREDIENTES
     # ==========================================
     with tab_gestion_ing:
         st.markdown("#### 🍅 Registro y Control de Materia Prima e Insumos")
-        st.info("💡 Registra aquí insumos a granel o paquetes (pan, vienesas, paltas). No aparecen en el POS, se usan exclusivamente para armar las recetas.")
+        st.info("💡 Registra aquí insumos a granel o paquetes. No aparecen en el POS, se usan exclusivamente para armar las recetas.")
         
         try:
             res_ing_tab = supabase.table("ingredientes").select("*").eq("rut_empresa", str(tenant_id)).execute()
