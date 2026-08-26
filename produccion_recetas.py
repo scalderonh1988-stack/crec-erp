@@ -2,6 +2,21 @@ import streamlit as st
 import pandas as pd
 from data_manager import supabase, get_current_tenant
 
+def guardado_receta(tenant_id, codigo_final, cod_comp, nom_comp, cantidad_usada):
+    nueva_linea = {
+        "rut_empresa": str(tenant_id),
+        "codigo_producto_final": str(codigo_final).strip(),
+        "codigo_ingrediente": cod_comp,
+        "nombre_ingrediente": nom_comp,
+        "cantidad_usada": float(cantidad_usada)
+    }
+    try:
+        supabase.table("recetas").insert(nueva_linea).execute()
+        st.success(f"✅ {nom_comp} agregado con éxito.")
+        st.rerun()
+    except Exception as e:
+        st.error(f"❌ Error al guardar: {e}")
+
 def mostrar_modulo_produccion():
     if st.button("🏠 Volver al Home"):
         st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
@@ -182,12 +197,22 @@ def mostrar_modulo_produccion():
                             "disponible_venta": True
                         }
                         try:
-                            supabase.table("productos").upsert(datos_finales, on_conflict="rut_empresa,codigo,bodega").execute()
+                            res_check = supabase.table("productos").select("id").eq("rut_empresa", str(tenant_id)).eq("codigo", str(codigo_pack_final).strip()).eq("bodega", "Bodega Principal").execute()
+                            
+                            if res_check.data:
+                                supabase.table("productos").update({
+                                    "descripcion": str(nombre_pack_final).strip(),
+                                    "costo": round(costo_total_receta, 2),
+                                    "precio_venta": float(precio_venta_p)
+                                }).eq("rut_empresa", str(tenant_id)).eq("codigo", str(codigo_pack_final).strip()).eq("bodega", "Bodega Principal").execute()
+                            else:
+                                supabase.table("productos").insert(datos_finales).execute()
+
                             st.success(f"🎉 ¡'{nombre_pack_final}' guardado con éxito! Costo real: ${costo_total_receta:,.2f}.")
                         except Exception as e:
                             st.error(f"❌ Error: {e}")
 
-                # 🚨 NUEVO MÓDULO DE ENSAMBLAJE / PRODUCCIÓN FÍSICA
+                # 📦 MÓDULO DE ENSAMBLAJE / PRODUCCIÓN FÍSICA
                 st.divider()
                 st.markdown("##### 📦 2. Ensamblar Packs (Producir Stock Físico)")
                 st.info("💡 Al ensamblar, el sistema **descontará los componentes** del inventario y **sumará stock físico** al Pack.")
@@ -200,7 +225,6 @@ def mostrar_modulo_produccion():
                         st.warning("⚠️ No puedes ensamblar un pack que no tiene receta o componentes definidos.")
                     else:
                         try:
-                            # 1. Validar y descontar stock de cada componente en la bodega
                             todo_ok = True
                             mensaje_error = ""
                             
@@ -224,7 +248,6 @@ def mostrar_modulo_produccion():
                             if not todo_ok:
                                 st.error(f"❌ No se pudo realizar el ensamble: {mensaje_error}")
                             else:
-                                # 2. Descontar los componentes
                                 for _, r_comp in df_receta.iterrows():
                                     cod_hijo = str(r_comp['codigo_ingrediente'])
                                     req_hijo = float(r_comp['cantidad_usada']) * float(cantidad_a_ensamblar)
@@ -234,7 +257,6 @@ def mostrar_modulo_produccion():
                                     
                                     supabase.table("productos").update({"stock": nuevo_stk_hijo}).eq("rut_empresa", str(tenant_id)).eq("codigo", cod_hijo).eq("bodega", bodega_ensamblaje).execute()
 
-                                # 3. Aumentar stock del Pack final
                                 res_stk_pack = supabase.table("productos").select("stock").eq("rut_empresa", str(tenant_id)).eq("codigo", str(codigo_final)).eq("bodega", bodega_ensamblaje).execute()
                                 
                                 if res_stk_pack.data:
@@ -242,7 +264,6 @@ def mostrar_modulo_produccion():
                                     nuevo_stk_pack = stock_actual_pack + float(cantidad_a_ensamblar)
                                     supabase.table("productos").update({"stock": nuevo_stk_pack}).eq("rut_empresa", str(tenant_id)).eq("codigo", str(codigo_final)).eq("bodega", bodega_ensamblaje).execute()
                                 else:
-                                    # Si no existía en esa bodega, lo creamos con stock inicial
                                     nuevo_prod_pack = {
                                         "rut_empresa": str(tenant_id),
                                         "codigo": str(codigo_final).strip(),
@@ -266,8 +287,8 @@ def mostrar_modulo_produccion():
     # PESTAÑA 2: GESTIÓN DE INGREDIENTES
     # ==========================================
     with tab_gestion_ing:
-        st.markdown("#### 🍅 Registro y Control de Materia Prima e Insumos")
-        st.info("💡 Registra aquí insumos a granel o paquetes. No aparecen en el POS, se usan exclusivamente para armar las recetas.")
+        st.markdown("#### 🍅 Registro, Control y Edición de Materia Prima e Insumos")
+        st.info("💡 Registra o modifica aquí insumos a granel o paquetes. No aparecen en el POS, se usan exclusivamente para armar las recetas.")
         
         try:
             res_ing_tab = supabase.table("ingredientes").select("*").eq("rut_empresa", str(tenant_id)).execute()
@@ -278,9 +299,61 @@ def mostrar_modulo_produccion():
         if not df_insumos_tabla.empty:
             st.markdown("##### Insumos Actuales en Bodega:")
             st.dataframe(df_insumos_tabla[['codigo', 'descripcion', 'categoria', 'bodega', 'stock', 'costo']], use_container_width=True)
+            
+            st.divider()
+            st.markdown("##### ✏️ Editar o Eliminar un Insumo Existente")
+            
+            lista_insumos_editar = [f"{row['codigo']} - {row['descripcion']}" for _, row in df_insumos_tabla.iterrows()]
+            insumo_seleccionado_editar = st.selectbox("🔍 Selecciona el insumo a corregir:", ["-- Selecciona un insumo --"] + lista_insumos_editar)
+            
+            if insumo_seleccionado_editar != "-- Selecciona un insumo --":
+                cod_edit = insumo_seleccionado_editar.split(" - ")[0]
+                match_insumo = df_insumos_tabla[df_insumos_tabla['codigo'].astype(str) == str(cod_edit)]
+                
+                if not match_insumo.empty:
+                    reg_actual = match_insumo.iloc[0]
+                    
+                    with st.form("form_editar_ingrediente"):
+                        col_ed1, col_ed2 = st.columns(2)
+                        with col_ed1:
+                            nuevo_desc_ing = st.text_input("Nombre del Ingrediente", value=str(reg_actual['descripcion']))
+                            nuevo_stock_ing = st.number_input("Stock Actual Corregido", value=float(reg_actual['stock'] or 0.0), step=0.1, format="%.2f")
+                        with col_ed2:
+                            nuevo_costo_ing = st.number_input("Costo Neto Unitario ($)", value=float(reg_actual['costo'] or 0.0), step=1.0, format="%.2f")
+                            bodega_edit_val = st.text_input("Bodega", value=str(reg_actual['bodega']))
+                        
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            btn_actualizar = st.form_submit_button("💾 Guardar Cambios", type="primary")
+                        with col_btn2:
+                            btn_eliminar = st.form_submit_button("🗑️ Eliminar Insumo")
+                            
+                        if btn_actualizar:
+                            try:
+                                supabase.table("ingredientes").update({
+                                    "descripcion": nuevo_desc_ing.strip(),
+                                    "stock": float(nuevo_stock_ing),
+                                    "costo": float(nuevo_costo_ing),
+                                    "bodega": bodega_edit_val.strip()
+                                }).eq("rut_empresa", str(tenant_id)).eq("codigo", str(cod_edit)).execute()
+                                
+                                st.success(f"✅ ¡Insumo '{cod_edit}' actualizado con éxito!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al actualizar: {e}")
+                                
+                        if btn_eliminar:
+                            try:
+                                supabase.table("ingredientes").delete().eq("rut_empresa", str(tenant_id)).eq("codigo", str(cod_edit)).execute()
+                                st.warning(f"🗑️ El insumo '{cod_edit}' ha sido eliminado.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al eliminar: {e}")
         else:
             st.info("ℹ️ No hay ingredientes registrados todavía.")
 
+        st.divider()
+        st.markdown("##### ➕ Registrar Nuevo Insumo")
         with st.form("form_crear_ingrediente_produccion", clear_on_submit=True):
             col_i1, col_i2 = st.columns(2)
             with col_i1:
@@ -323,18 +396,3 @@ def mostrar_modulo_produccion():
                         st.rerun()
                     except Exception as e: 
                         st.error(f"❌ Error al guardar (¿Código duplicado?): {e}")
-
-def guardado_receta(tenant_id, codigo_final, cod_comp, nom_comp, cantidad_usada):
-    nueva_linea = {
-        "rut_empresa": str(tenant_id),
-        "codigo_producto_final": str(codigo_final).strip(),
-        "codigo_ingrediente": cod_comp,
-        "nombre_ingrediente": nom_comp,
-        "cantidad_usada": float(cantidad_usada)
-    }
-    try:
-        supabase.table("recetas").insert(nueva_linea).execute()
-        st.success(f"✅ {nom_comp} agregado con éxito.")
-        st.rerun()
-    except Exception as e:
-        st.error(f"❌ Error al guardar: {e}")
