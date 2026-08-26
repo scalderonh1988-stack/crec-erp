@@ -1617,7 +1617,7 @@ elif menu == "📊 Dashboard Ejecutivo":
         except Exception:
             pass
 
-    # 3. Cálculo de Inventario y Ganancia Potencial desde la Nube
+    # 3. Cálculo de Inventario, Margen y Ganancia Real sobre Ventas desde la Nube
     try:
         res_prod = supabase.table("productos").select("costo, precio_venta, stock").eq("rut_empresa", st.session_state.negocio_seleccionado).limit(10000).execute()
         if res_prod.data:
@@ -1630,13 +1630,28 @@ elif menu == "📊 Dashboard Ejecutivo":
             valor_venta_total = (df_prod_nube['precio_venta'] * df_prod_nube['stock']).sum()
             ganancia_potencial = valor_venta_total - inversion_total
             total_productos = len(df_prod_nube)
+
+            # Cálculos de rentabilidad y margen exactos
+            df_m = df_prod_nube[(df_prod_nube['costo'] > 0) & (df_prod_nube['precio_venta'] > 0)]
+            if not df_m.empty:
+                df_m['markup'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['costo']) * 100
+                df_m['margen'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['precio_venta']) * 100
+                markup_promedio = df_m['markup'].mean()
+                margen_promedio = df_m['margen'].mean()
+            else:
+                markup_promedio = 0.0
+                margen_promedio = 0.0
         else:
             inversion_total = valor_venta_total = ganancia_potencial = 0.0
             total_productos = 0
+            markup_promedio = margen_promedio = 0.0
     except Exception:
         inversion_total = valor_venta_total = ganancia_potencial = 0.0
         total_productos = 0
+        markup_promedio = margen_promedio = 0.0
 
+    # Ganancia real en dinero basada en las ventas del período y el margen promedio
+    ganancia_real_ventas = total_ventas_periodo * (margen_promedio / 100.0)
     utilidad_neta_estimada = total_ventas_periodo - total_gastos_periodo
 
     st.divider()
@@ -1665,52 +1680,20 @@ elif menu == "📊 Dashboard Ejecutivo":
 
     st.divider()
 
-    # --- CÁLCULO DE MARGINALIDAD, MARKUP Y GANANCIA PROMEDIO ---
-    try:
-        res_marcas = supabase.table("productos").select("costo, precio_venta, stock").eq("rut_empresa", st.session_state.negocio_seleccionado).execute()
-        if res_marcas.data:
-            df_m = pd.DataFrame(res_marcas.data)
-            df_m['costo'] = pd.to_numeric(df_m['costo'], errors='coerce').fillna(0)
-            df_m['precio_venta'] = pd.to_numeric(df_m['precio_venta'], errors='coerce').fillna(0)
-            
-            df_m = df_m[(df_m['costo'] > 0) & (df_m['precio_venta'] > 0)]
-            
-            if not df_m.empty:
-                df_m['markup'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['costo']) * 100
-                df_m['margen'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['precio_venta']) * 100
-                df_m['ganancia_unitaria'] = df_m['precio_venta'] - df_m['costo']
-                
-                markup_promedio = df_m['markup'].mean()
-                margen_promedio = df_m['margen'].mean()
-                ganancia_promedio = df_m['ganancia_unitaria'].mean()
-            else:
-                markup_promedio = 0.0
-                margen_promedio = 0.0
-                ganancia_promedio = 0.0
-        else:
-            markup_promedio = 0.0
-            margen_promedio = 0.0
-            ganancia_promedio = 0.0
-    except Exception:
-        markup_promedio = 0.0
-        margen_promedio = 0.0
-        ganancia_promedio = 0.0
-
-    st.markdown("### 📊 Indicadores de Rentabilidad y Ganancia")
+    st.markdown("### 📊 Indicadores de Rentabilidad y Ganancia Real")
     col_m1, col_m2 = st.columns(2)
     with col_m1:
         st.metric(
             label="📈 Markup Promedio (Sobre Costo)", 
             value=f"{markup_promedio:,.1f}%", 
-            delta=f"Ganancia Prom.: ${ganancia_promedio:,.2f}",
             help="Porcentaje que se le suma al costo para llegar al precio de venta."
         )
     with col_m2:
         st.metric(
-            label="🎯 Margen de Beneficio (Sobre Venta)", 
-            value=f"{margen_promedio:,.1f}%", 
-            delta=f"Utilidad Unitaria Est.",
-            help="Porcentaje de utilidad neta real contenido en el precio final de venta."
+            label="🎯 Ganancia Real en Ventas", 
+            value=f"${ganancia_real_ventas:,.2f}", 
+            delta=f"Margen: {margen_promedio:,.1f}%",
+            help="Dinero exacto de ganancia obtenido en base a las ventas del período y tu margen promedio."
         )
     
     st.divider()
@@ -1783,7 +1766,7 @@ elif menu == "📊 Dashboard Ejecutivo":
             st.info("ℹ️ No hay registros de gastos para el período seleccionado.")
 
     st.divider()
-    st.markdown("### 🔔 Alertas y Salud Financiera del Negocio")
+    st.markdown("### 🔔 Alertas y Salud Financiera del negocio")
     
     col_a1, col_a2 = st.columns(2)
     with col_a1:
@@ -1805,7 +1788,7 @@ elif menu == "📊 Dashboard Ejecutivo":
                 st.info("ℹ️ Módulo de cuentas por pagar sin registros activos.")
         else:
             st.info("ℹ️ Módulo de cuentas por pagar sin registros activos.")
-            
+
 # ----------------- SECCIÓN INVENTARIO GENERAL -----------------
 elif menu == "📦 Inventario y Productos":
     mostrar_encabezado_con_home("📦 Administración de Inventario")
