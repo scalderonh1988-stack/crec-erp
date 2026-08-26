@@ -1572,45 +1572,50 @@ elif menu == "📊 Dashboard Ejecutivo":
     archivo_cpp = os.path.join(ruta_negocio, "Cuentas_Por_Pagar.xlsx")
     archivo_cuadratura = os.path.join(ruta_negocio, "Cuadratura_Diaria.xlsx")
 
-    # 1. Cálculo de Ventas Filtradas por Período
-    archivos_v = [f for f in os.listdir(ruta_negocio) if f.startswith("Libro_Ventas_") and f.endswith(".xlsx")]
+    # 1. Cálculo de Ventas Filtradas por Período desde Supabase
     total_ventas_periodo = 0.0
-    if archivos_v:
-        for ar in archivos_v:
-            path_v = os.path.join(ruta_negocio, ar)
-            df_temp_v = pd.read_excel(path_v)
+    try:
+        res_ventas_nube = supabase.table("ventas").select("fecha, monto, folio").eq("rut_empresa", st.session_state.negocio_seleccionado).execute()
+        
+        if res_ventas_nube.data:
+            df_temp_v = pd.DataFrame(res_ventas_nube.data)
             if not df_temp_v.empty:
-                col_fecha = next((c for c in df_temp_v.columns if 'fecha' in str(c).lower() or 'timestamp' in str(c).lower()), None)
-                if col_fecha and fecha_limite is not None:
-                    df_temp_v['Fecha_Parsed'] = pd.to_datetime(df_temp_v[col_fecha], errors='coerce')
+                df_temp_v['Fecha_Parsed'] = pd.to_datetime(df_temp_v['fecha'], errors='coerce')
+                
+                if fecha_limite is not None:
                     if periodo_seleccionado == "Diaria (Hoy)":
                         df_temp_v = df_temp_v[df_temp_v['Fecha_Parsed'].dt.date == hoy_dt.date()]
                     else:
                         df_temp_v = df_temp_v[df_temp_v['Fecha_Parsed'] >= fecha_limite]
                 
-                col_tot = next((c for c in df_temp_v.columns if 'total' in str(c).lower()), None)
-                if col_tot and not df_temp_v.empty:
-                    if "TransaccionID" in df_temp_v.columns:
-                        total_ventas_periodo += df_temp_v.drop_duplicates(subset=["TransaccionID"])[col_tot].sum()
+                if 'monto' in df_temp_v.columns:
+                    if "folio" in df_temp_v.columns:
+                        total_ventas_periodo = df_temp_v.drop_duplicates(subset=["folio"])['monto'].sum()
                     else:
-                        total_ventas_periodo += df_temp_v[col_tot].sum()
+                        total_ventas_periodo = df_temp_v['monto'].sum()
+    except Exception as e:
+        print(f"Error cargando ventas desde Supabase para el dashboard: {e}")
+        total_ventas_periodo = 0.0
 
     # 2. Cálculo de Gastos Filtrados por Período
     total_gastos_periodo = 0.0
     df_g_filtrado = pd.DataFrame()
     if os.path.exists(archivo_gastos):
-        df_g = pd.read_excel(archivo_gastos)
-        if not df_g.empty and 'Monto' in df_g.columns:
-            if 'Fecha' in df_g.columns and fecha_limite is not None:
-                df_g['Fecha_Parsed'] = pd.to_datetime(df_g['Fecha'], errors='coerce')
-                if periodo_seleccionado == "Diaria (Hoy)":
-                    df_g_filtrado = df_g[df_g['Fecha_Parsed'].dt.date == hoy_dt.date()]
+        try:
+            df_g = pd.read_excel(archivo_gastos)
+            if not df_g.empty and 'Monto' in df_g.columns:
+                if 'Fecha' in df_g.columns and fecha_limite is not None:
+                    df_g['Fecha_Parsed'] = pd.to_datetime(df_g['Fecha'], errors='coerce')
+                    if periodo_seleccionado == "Diaria (Hoy)":
+                        df_g_filtrado = df_g[df_g['Fecha_Parsed'].dt.date == hoy_dt.date()]
+                    else:
+                        df_g_filtrado = df_g[df_g['Fecha_Parsed'] >= fecha_limite]
                 else:
-                    df_g_filtrado = df_g[df_g['Fecha_Parsed'] >= fecha_limite]
-            else:
-                df_g_filtrado = df_g.copy()
-            
-            total_gastos_periodo = df_g_filtrado['Monto'].sum()
+                    df_g_filtrado = df_g.copy()
+                
+                total_gastos_periodo = df_g_filtrado['Monto'].sum()
+        except Exception:
+            pass
 
     # 3. Cálculo de Inventario y Ganancia Potencial desde la Nube
     try:
@@ -1628,7 +1633,7 @@ elif menu == "📊 Dashboard Ejecutivo":
         else:
             inversion_total = valor_venta_total = ganancia_potencial = 0.0
             total_productos = 0
-    except Exception as e:
+    except Exception:
         inversion_total = valor_venta_total = ganancia_potencial = 0.0
         total_productos = 0
 
@@ -1666,21 +1671,24 @@ elif menu == "📊 Dashboard Ejecutivo":
     with col_g1:
         st.markdown("#### 📈 Evolución Diaria de Ingresos (Cuadratura)")
         if os.path.exists(archivo_cuadratura):
-            df_cuat = pd.read_excel(archivo_cuadratura)
-            if not df_cuat.empty and 'Fecha' in df_cuat.columns and 'VentaTotal' in df_cuat.columns:
-                if fecha_limite is not None and periodo_seleccionado != "Histórico Completo":
-                    df_cuat['Fecha_Parsed'] = pd.to_datetime(df_cuat['Fecha'], errors='coerce')
-                    if periodo_seleccionado == "Diaria (Hoy)":
-                        df_cuat = df_cuat[df_cuat['Fecha_Parsed'].dt.date == hoy_dt.date()]
+            try:
+                df_cuat = pd.read_excel(archivo_cuadratura)
+                if not df_cuat.empty and 'Fecha' in df_cuat.columns and 'VentaTotal' in df_cuat.columns:
+                    if fecha_limite is not None and periodo_seleccionado != "Histórico Completo":
+                        df_cuat['Fecha_Parsed'] = pd.to_datetime(df_cuat['Fecha'], errors='coerce')
+                        if periodo_seleccionado == "Diaria (Hoy)":
+                            df_cuat = df_cuat[df_cuat['Fecha_Parsed'].dt.date == hoy_dt.date()]
+                        else:
+                            df_cuat = df_cuat[df_cuat['Fecha_Parsed'] >= fecha_limite]
+                    
+                    if not df_cuat.empty:
+                        st.line_chart(df_cuat.set_index('Fecha')['VentaTotal'])
                     else:
-                        df_cuat = df_cuat[df_cuat['Fecha_Parsed'] >= fecha_limite]
-                
-                if not df_cuat.empty:
-                    st.line_chart(df_cuat.set_index('Fecha')['VentaTotal'])
+                        st.info("ℹ️ No hay registros de cuadratura en este período.")
                 else:
-                    st.info("ℹ️ No hay registros de cuadratura en este período.")
-            else:
-                st.info("ℹ️ Sin datos de cuadratura diarios.")
+                    st.info("ℹ️ Sin datos de cuadratura diarios.")
+            except Exception:
+                st.info("ℹ️ Error leyendo archivo de cuadratura.")
         else:
             st.info("ℹ️ Archivo de cuadratura no encontrado.")
 
@@ -1736,15 +1744,18 @@ elif menu == "📊 Dashboard Ejecutivo":
             
     with col_a2:
         if os.path.exists(archivo_cpp):
-            df_prov_pend = pd.read_excel(archivo_cpp)
-            pendientes = df_prov_pend[df_prov_pend.get('Estado', '') == 'PENDIENTE'] if 'Estado' in df_prov_pend.columns else pd.DataFrame()
-            if not pendientes.empty:
-                st.warning(f"⚠️ Tienes **{len(pendientes)} factura(s) pendiente(s)** de pago a proveedores.")
-            else:
-                st.info("ℹ️ No hay facturas de proveedores pendientes de pago.")
+            try:
+                df_prov_pend = pd.read_excel(archivo_cpp)
+                pendientes = df_prov_pend[df_prov_pend.get('Estado', '') == 'PENDIENTE'] if 'Estado' in df_prov_pend.columns else pd.DataFrame()
+                if not pendientes.empty:
+                    st.warning(f"⚠️ Tienes **{len(pendientes)} factura(s) pendiente(s)** de pago a proveedores.")
+                else:
+                    st.info("ℹ️ No hay facturas de proveedores pendientes de pago.")
+            except Exception:
+                st.info("ℹ️ Módulo de cuentas por pagar sin registros activos.")
         else:
             st.info("ℹ️ Módulo de cuentas por pagar sin registros activos.")
-
+            
 # ----------------- SECCIÓN INVENTARIO GENERAL -----------------
 elif menu == "📦 Inventario y Productos":
     mostrar_encabezado_con_home("📦 Administración de Inventario")
