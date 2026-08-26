@@ -2478,7 +2478,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
             # --- CARGA DE PROVEEDORES DIRECTO DESDE LA NUBE (SUPABASE) ---
             lista_proveedores = []
             try:
-                res_prov_nube = supabase.table("proveedores").select("nombre").eq("id_negocio", rut_actual).execute()
+                res_prov_nube = supabase.table("proveedores").select("nombre").eq("rut_empresa", rut_actual).execute()
                 if res_prov_nube.data:
                     lista_proveedores = [p["nombre"] for p in res_prov_nube.data if p.get("nombre")]
             except Exception as e:
@@ -2487,7 +2487,33 @@ elif menu == "🛒 Registrar Compra (CPP)":
             if not lista_proveedores:
                 lista_proveedores = ["Proveedor General"]
 
-            col_f1, col_f2, col_f3 = st.columns(3)
+            # 🚨 CARGAR BODEGAS DESDE SUPABASE PARA LA GRC
+            bodegas_grc_opc = ["Bodega Principal"]
+            try:
+                res_bod_grc = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_actual).execute()
+                if res_bod_grc.data:
+                    for rb in res_bod_grc.data:
+                        nb_g = str(rb.get("nombre", "")).strip(' "\'')
+                        if nb_g and nb_g not in bodegas_grc_opc:
+                            bodegas_grc_opc.append(nb_g)
+            except Exception:
+                pass
+
+            # 🚨 CARGAR INGREDIENTES ADEMÁS DE PRODUCTOS PARA EL BUSCADOR DE GRC
+            opciones_items_grc = []
+            try:
+                res_ing_grc = supabase.table("ingredientes").select("codigo, descripcion").eq("rut_empresa", rut_actual).execute()
+                if res_ing_grc.data:
+                    for ri in res_ing_grc.data:
+                        opciones_items_grc.append(f"🍅 [Insumo] {ri['codigo']} - {ri['descripcion']}")
+            except Exception:
+                pass
+
+            if not df_base.empty:
+                for _, row_p in df_base.iterrows():
+                    opciones_items_grc.append(f"📦 [Producto] {row_p[col_cod]} - {row_p[col_desc]}")
+
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             with col_f1:
                 proveedor_factura = st.selectbox("Nombre del Proveedor", options=lista_proveedores)
                 num_factura = st.text_input("Número de Factura / Folio GRC")
@@ -2495,6 +2521,8 @@ elif menu == "🛒 Registrar Compra (CPP)":
                 fecha_compra = st.date_input("Fecha de Recepción GRC", value=date.today())
                 condicion_pago = st.selectbox("Condición de Pago", ["Contado", "Crédito", "Cheque"])
             with col_f3:
+                bodega_destino_grc = st.selectbox("🏢 Bodega de Destino:", options=bodegas_grc_opc)
+            with col_f4:
                 col_imp_esp = next((c for c in df_base.columns if 'impuesto' in str(c).lower() or 'específico' in str(c).lower() or ' ila ' in str(c).lower() or 'iaba' in str(c).lower()), None)
                 st.write("")
                 st.write(f"🔍 Columna de Impuestos: **{'Detectada' if col_imp_esp else 'No detectada'}**")
@@ -2515,27 +2543,16 @@ elif menu == "🛒 Registrar Compra (CPP)":
                     banco_cheque = st.text_input("Banco Emisor")
 
             st.divider()
-            st.markdown("#### 🔍 Agregar Productos de la GRC")
+            st.markdown("#### 🔍 Agregar Productos o Insumos de la GRC")
 
             if 'carrito_factura_compras' not in st.session_state:
                 st.session_state.carrito_factura_compras = []
 
-            metodo_entrada_prod = st.radio("Método para buscar producto:", ["⌨️ Escáner / Pistola Láser (Código)", "🔎 Buscar por Nombre / Palabra Clave"], horizontal=True, key="metodo_busq_grc")
-        
             prod_seleccionado_item = None
-            opciones_productos = ["-- Selecciona un producto --"] + [f"{row[col_cod]} - {row[col_desc]}" for idx, row in df_base.iterrows()]
+            if not opciones_items_grc:
+                opciones_items_grc = ["-- No hay productos ni insumos registrados --"]
 
-            if metodo_entrada_prod == "⌨️ Escáner / Pistola Láser (Código)":
-                codigo_buscado = st.text_input("Pistola láser / Digitar Código EAN:", key="input_pistola_compra_grc")
-                if codigo_buscado:
-                    match_p = df_base[df_base[col_cod].astype(str) == str(codigo_buscado)]
-                    if not match_p.empty:
-                        prod_seleccionado_item = f"{match_p.iloc[0][col_cod]} - {match_p.iloc[0][col_desc]}"
-                        st.success(f"✔️ Producto encontrado: {prod_seleccionado_item}")
-                    else:
-                        st.warning("⚠️ No se encontró ningún producto con ese código.")
-            else:
-                prod_seleccionado_item = st.selectbox("Selecciona o busca por palabra clave:", options=opciones_productos, key="select_palabra_clave_compra_grc")
+            prod_seleccionado_item = st.selectbox("Selecciona Producto o Insumo para la GRC:", options=["-- Selecciona un ítem --"] + opciones_items_grc, key="select_item_grc_unificado")
 
             col_item1, col_item2, col_item3 = st.columns(3)
             with col_item1:
@@ -2558,15 +2575,20 @@ elif menu == "🛒 Registrar Compra (CPP)":
                     venc_item = str(venc_item_date)
 
             if st.button("➕ Agregar Línea a la GRC", type="primary", key="btn_add_grc"):
-                if not prod_seleccionado_item or prod_seleccionado_item == "-- Selecciona un producto --":
-                    st.warning("⚠️ Debes seleccionar o escanear un producto válido.")
+                if not prod_seleccionado_item or prod_seleccionado_item == "-- Selecciona un ítem --":
+                    st.warning("⚠️ Debes seleccionar un producto o insumo válido.")
                 elif neto_unit_item <= 0:
                     st.warning("⚠️ El valor neto unitario debe ser mayor a 0.")
                 elif maneja_lote == "Sí" and not lote_item:
                     st.warning("⚠️ Debes ingresar el número de lote.")
                 else:
-                    codigo_p = prod_seleccionado_item.split(" - ")[0]
-                    match_m = df_base[df_base[col_cod].astype(str) == str(codigo_p)]
+                    # Detectar si es insumo o producto
+                    es_insumo_linea = "[Insumo]" in prod_seleccionado_item
+                    limpio_str = prod_seleccionado_item.replace("📦 [Producto] ", "").replace("🍅 [Insumo] ", "")
+                    codigo_p = limpio_str.split(" - ")[0]
+                    descripcion_p = limpio_str.split(" - ")[1]
+
+                    match_m = df_base[df_base[col_cod].astype(str) == str(codigo_p)] if not df_base.empty else pd.DataFrame()
                     porcentaje_ila = 0.0
                 
                     if col_imp_esp and not match_m.empty:
@@ -2584,8 +2606,9 @@ elif menu == "🛒 Registrar Compra (CPP)":
 
                     st.session_state.carrito_factura_compras.append({
                         "TipoDoc": "GRC",
+                        "EsInsumo": es_insumo_linea,
                         "Código": codigo_p,
-                        "Descripción": prod_seleccionado_item.split(" - ")[1],
+                        "Descripción": descripcion_p,
                         "Cantidad": cant_item,
                         "NetoUnitario": neto_unit_item,
                         "SubtotalNeto": subtotal_neto,
@@ -2595,19 +2618,21 @@ elif menu == "🛒 Registrar Compra (CPP)":
                         "CostoUnitarioFinal": costo_unitario_final,
                         "ManejaLote": maneja_lote,
                         "Lote": lote_item if maneja_lote == "Sí" else "N/A",
-                        "FechaVencimiento": venc_item if maneja_lote == "Sí" else "N/A"
+                        "FechaVencimiento": venc_item if maneja_lote == "Sí" else "N/A",
+                        "BodegaDestino": bodega_destino_grc
                     })
                     st.success(f"✅ ¡Línea agregada a la GRC!")
                     st.rerun()
 
             if st.session_state.carrito_factura_compras:
-                st.markdown("#### 📦 Productos Agregados en esta GRC")
+                st.markdown("#### 📦 Ítems Agregados en esta GRC")
             
                 for idx_c, item in enumerate(st.session_state.carrito_factura_compras):
                     if item.get("TipoDoc", "GRC") == "GRC":
+                        etiqueta_tipo = "🍅 [Insumo]" if item.get("EsInsumo") else "📦 [Producto]"
                         c_col1, c_col2 = st.columns([8, 1])
                         with c_col1:
-                            st.info(f"**{item['Cantidad']}x** {item['Descripción']} | Neto: ${item['NetoUnitario']:,.0f} | **Costo Unit. c/Imp: ${item['CostoUnitarioFinal']:,.0f}** | Total: ${item['CostoTotal']:,.0f} | Lote: {item['Lote']} ({item['FechaVencimiento']})")
+                            st.info(f"{etiqueta_tipo} **{item['Cantidad']}x** {item['Descripción']} | Bodega: {item.get('BodegaDestino', 'Bodega Principal')} | Neto: ${item['NetoUnitario']:,.0f} | **Costo Unit. c/Imp: ${item['CostoUnitarioFinal']:,.0f}** | Total: ${item['CostoTotal']:,.0f}")
                         with c_col2:
                             if st.button("❌", key=f"del_linea_grc_{idx_c}", help="Eliminar esta línea"):
                                 st.session_state.carrito_factura_compras.pop(idx_c)
@@ -2643,7 +2668,8 @@ elif menu == "🛒 Registrar Compra (CPP)":
                             lineas_detalle_grc = ""
                             for item in st.session_state.carrito_factura_compras:
                                 if item.get("TipoDoc", "GRC") == "GRC":
-                                    lineas_detalle_grc += f"- {item['Descripción']} (x{item['Cantidad']}) | Costo Unit: ${item['CostoUnitarioFinal']:,.2f} | Subtotal: ${item['CostoTotal']:,.2f} | Lote: {item['Lote']}\n"
+                                    tipo_etiqueta = "Insumo" if item.get("EsInsumo") else "Producto"
+                                    lineas_detalle_grc += f"- [{tipo_etiqueta}] {item['Descripción']} (x{item['Cantidad']}) | Costo Unit: ${item['CostoUnitarioFinal']:,.2f} | Subtotal: ${item['CostoTotal']:,.2f} | Bodega: {item.get('BodegaDestino', 'Bodega Principal')}\n"
                                     
                                     # 1. Registro directo en la tabla 'compras' de Supabase con aislamiento por negocio
                                     nuevo_reg_compra_nube = {
@@ -2652,7 +2678,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                         "proveedor": str(prov_final),
                                         "factura": str(num_factura),
                                         "codigo": str(item["Código"]),
-                                        "descripcion": str(item["Descripción"]),
+                                        "descripcion": f"[{tipo_etiqueta}] {str(item['Descripción'])}",
                                         "cantidad": float(item["Cantidad"]),
                                         "neto_unitario": float(item["NetoUnitario"]),
                                         "costo_total": float(item["CostoTotal"]),
@@ -2667,17 +2693,45 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                     except Exception as e:
                                         print(f"⚠️ Error guardando compra en Supabase: {e}")
 
-                                    # 2. Actualizar Stock del producto en Supabase en tiempo real
-                                    try:
-                                        res_stk = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
-                                        if res_stk.data:
-                                            stk_actual = float(res_stk.data[0]["stock"] or 0.0)
-                                            nuevo_stk = stk_actual + float(item["Cantidad"])
-                                            supabase.table("productos").update({"stock": nuevo_stk}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
-                                    except Exception as e:
-                                        print(f"⚠️ Error actualizando stock en Supabase: {e}")
+                                    # 2. Actualizar Stock según sea Producto o Insumo en la bodega destino elegida
+                                    bodega_linea = item.get("BodegaDestino", "Bodega Principal")
+                                    if item.get("EsInsumo"):
+                                        try:
+                                            res_stk_ing = supabase.table("ingredientes").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
+                                            if res_stk_ing.data:
+                                                stk_actual_ing = float(res_stk_ing.data[0]["stock"] or 0.0)
+                                                nuevo_stk_ing = stk_actual_ing + float(item["Cantidad"])
+                                                supabase.table("ingredientes").update({"stock": nuevo_stk_ing}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
+                                            else:
+                                                # Si no existe en esa bodega, buscamos el maestro base para copiarlo
+                                                res_ing_gen = supabase.table("ingredientes").select("*").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).limit(1).execute()
+                                                if res_ing_gen.data:
+                                                    ing_nuevo = res_ing_gen.data[0].copy()
+                                                    if 'id' in ing_nuevo: del ing_nuevo['id']
+                                                    ing_nuevo['bodega'] = bodega_linea
+                                                    ing_nuevo['stock'] = float(item["Cantidad"])
+                                                    supabase.table("ingredientes").insert(ing_nuevo).execute()
+                                        except Exception as e:
+                                            print(f"⚠️ Error actualizando stock de ingrediente en Supabase: {e}")
+                                    else:
+                                        try:
+                                            res_stk = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
+                                            if res_stk.data:
+                                                stk_actual = float(res_stk.data[0]["stock"] or 0.0)
+                                                nuevo_stk = stk_actual + float(item["Cantidad"])
+                                                supabase.table("productos").update({"stock": nuevo_stk}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
+                                            else:
+                                                res_general = supabase.table("productos").select("*").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).limit(1).execute()
+                                                if res_general.data:
+                                                    prod_nuevo = res_general.data[0].copy()
+                                                    if 'id' in prod_nuevo: del prod_nuevo['id']
+                                                    prod_nuevo['bodega'] = bodega_linea
+                                                    prod_nuevo['stock'] = float(item["Cantidad"])
+                                                    supabase.table("productos").insert(prod_nuevo).execute()
+                                        except Exception as e:
+                                            print(f"⚠️ Error actualizando stock en Supabase: {e}")
 
-                                    # 3. Registrar el lote directamente en la tabla 'lotes' de Supabase
+                                    # 3. Registrar el lote directamente en la tabla 'lotes' de Supabase (si aplica)
                                     if item.get("ManejaLote") == "Sí" and item.get("Lote") and item.get("Lote") != "N/A":
                                         nuevo_reg_lote_nube = {
                                             "codigo": str(item["Código"]),
@@ -2686,7 +2740,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                             "cantidad_disponible": float(item["Cantidad"]),
                                             "fecha_vencimiento": str(item["FechaVencimiento"]),
                                             "costo_unitario_final": float(item["CostoUnitarioFinal"]),
-                                            "rut_empresa": str(rut_actual).strip()  # <-- Aquí usas rut_empresa en lugar de id_negocio
+                                            "rut_empresa": str(rut_actual).strip()
                                         }
                                         try:
                                             supabase.table("lotes").insert(nuevo_reg_lote_nube).execute()
@@ -2749,7 +2803,7 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
                                 print(f"Error archivando GRC: {e}")
 
                             st.session_state.carrito_factura_compras = [i for i in st.session_state.carrito_factura_compras if i.get("TipoDoc") != "GRC"]
-                            st.success(f"✅ ¡GRC #{num_factura} procesada con éxito! Stock actualizado, lotes guardados en la nube y finanzas sincronizadas.")
+                            st.success(f"✅ ¡GRC #{num_factura} procesada con éxito! Inventario (productos/insumos), lotes y finanzas actualizados.")
                             st.rerun()
 
         # --- 2. REGISTRO GRI (Guía de Recepción Interna - Ajustes / Producción / Hallazgos) ---
