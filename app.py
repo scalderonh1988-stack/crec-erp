@@ -1665,7 +1665,7 @@ elif menu == "📊 Dashboard Ejecutivo":
 
     st.divider()
 
-    # --- CÁLCULO DE MARGINALIDAD Y MARKUP PROMEDIO ---
+    # --- CÁLCULO DE MARGINALIDAD, MARKUP Y GANANCIA PROMEDIO ---
     try:
         res_marcas = supabase.table("productos").select("costo, precio_venta, stock").eq("rut_empresa", st.session_state.negocio_seleccionado).execute()
         if res_marcas.data:
@@ -1678,25 +1678,40 @@ elif menu == "📊 Dashboard Ejecutivo":
             if not df_m.empty:
                 df_m['markup'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['costo']) * 100
                 df_m['margen'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['precio_venta']) * 100
+                df_m['ganancia_unitaria'] = df_m['precio_venta'] - df_m['costo']
                 
                 markup_promedio = df_m['markup'].mean()
                 margen_promedio = df_m['margen'].mean()
+                ganancia_promedio = df_m['ganancia_unitaria'].mean()
             else:
                 markup_promedio = 0.0
                 margen_promedio = 0.0
+                ganancia_promedio = 0.0
         else:
             markup_promedio = 0.0
             margen_promedio = 0.0
+            ganancia_promedio = 0.0
     except Exception:
         markup_promedio = 0.0
         margen_promedio = 0.0
+        ganancia_promedio = 0.0
 
-    st.markdown("### 📊 Indicadores de Rentabilidad (Markup y Margen)")
+    st.markdown("### 📊 Indicadores de Rentabilidad y Ganancia")
     col_m1, col_m2 = st.columns(2)
     with col_m1:
-        st.metric(label="📈 Markup Promedio (Sobre Costo)", value=f"{markup_promedio:,.1f}%", help="Porcentaje que se le suma al costo para llegar al precio de venta.")
+        st.metric(
+            label="📈 Markup Promedio (Sobre Costo)", 
+            value=f"{markup_promedio:,.1f}%", 
+            delta=f"Ganancia Prom.: ${ganancia_promedio:,.2f}",
+            help="Porcentaje que se le suma al costo para llegar al precio de venta."
+        )
     with col_m2:
-        st.metric(label="🎯 Margen de Beneficio (Sobre Venta)", value=f"{margen_promedio:,.1f}%", help="Porcentaje de utilidad neta real contenido en el precio final de venta.")
+        st.metric(
+            label="🎯 Margen de Beneficio (Sobre Venta)", 
+            value=f"{margen_promedio:,.1f}%", 
+            delta=f"Utilidad Unitaria Est.",
+            help="Porcentaje de utilidad neta real contenido en el precio final de venta."
+        )
     
     st.divider()
 
@@ -1790,7 +1805,7 @@ elif menu == "📊 Dashboard Ejecutivo":
                 st.info("ℹ️ Módulo de cuentas por pagar sin registros activos.")
         else:
             st.info("ℹ️ Módulo de cuentas por pagar sin registros activos.")
-
+            
 # ----------------- SECCIÓN INVENTARIO GENERAL -----------------
 elif menu == "📦 Inventario y Productos":
     mostrar_encabezado_con_home("📦 Administración de Inventario")
