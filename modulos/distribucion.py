@@ -7,24 +7,21 @@ def mostrar_modulo_distribucion(supabase_client=None):
     
     tipo_usuario = st.session_state.get("tipo_usuario", "Propietario")
     negocio_actual = st.session_state.get("negocio_actual", "general")
+    nombre_mostrar = st.session_state.get('nombre_empresa', negocio_actual)
     
-    # --- 🏠 ENCABEZADO ESTÁNDAR CON BOTÓN VOLVER AL HOME ---
-    col_titulo, col_btn = st.columns([4, 1])
-    with col_titulo:
-        nombre_mostrar = st.session_state.get('nombre_empresa', negocio_actual)
-        st.subheader(f"🚚 Logística y Distribución (Negocio: {nombre_mostrar})")
-    with col_btn:
-        st.write("")
-        if st.button("🏠 Volver al Home", use_container_width=True, key="btn_home_distribucion_top"):
-            st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
-            st.rerun()
-            
+    # --- 🏠 BOTÓN DE RETORNO AL HOME (Arriba del todo) ---
+    if st.button("🏠 Volver al Home", key="btn_home_distribucion_top"):
+        st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
+        st.rerun()
+        
     st.divider()
 
     if tipo_usuario == "Vendedor":
-        st.info("📱 Módulo de Preventa en Terreno (Vendedor)")
+        st.subheader(f"📱 Módulo de Preventa en Terreno (Negocio: {nombre_mostrar})")
         renderizar_pestana_vendedor(supabase, negocio_actual)
     else:
+        st.subheader(f"🚚 Módulo de Logística, Preventa y Distribución (Negocio: {nombre_mostrar})")
+        
         tab_vendedor, tab_bodega, tab_facturacion = st.tabs([
             "📱 1. Vendedor (Notas de Pedido)", 
             "📦 2. Bodega (Picking y Checklist)", 
