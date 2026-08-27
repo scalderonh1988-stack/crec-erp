@@ -1030,23 +1030,39 @@ if "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
 if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
+        
+        # --- CARGAR NEGOCIOS DIRECTAMENTE DESDE SUPABASE ---
+        negocios_disponibles = []
+        try:
+            supabase_cli = st.session_state.get("supabase", None)
+            if supabase_cli:
+                res_empresas = supabase_cli.table("empresas").select("rut_empresa").execute()
+                if res_empresas.data:
+                    negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data]
+        except Exception as e:
+            pass
+            
+        if not negocios_disponibles:
+            negocios_disponibles = ["15382273-5"]
+
         tab_lic, tab_crear, tab_mant = st.tabs(["⚙️ Licencias", "➕ Crear Negocio", "🧹 Mantenimiento"])
         
         with tab_lic:
             negocio_a_modificar = st.selectbox("Selecciona Negocio:", negocios_disponibles, key="sel_dev_negocio_nico")
-            db_permisos = cargar_permisos()
+            db_permisos = cargar_permisos() if 'cargar_permisos' in globals() else {}
             if negocio_a_modificar not in db_permisos:
-                db_permisos[negocio_a_modificar] = {mod: True for mod in modulos_totales}
+                db_permisos[negocio_a_modificar] = {mod: True for mod in (modulos_totales if 'modulos_totales' in globals() else [])}
            
             with st.form(f"form_licencia_dev_{negocio_a_modificar}"):
                 permisos_temporales = {}
-                for mod in modulos_totales:
+                for mod in (modulos_totales if 'modulos_totales' in globals() else []):
                     estado_actual = db_permisos[negocio_a_modificar].get(mod, True)
                     permisos_temporales[mod] = st.checkbox(mod, value=estado_actual, key=f"chk_dev_{negocio_a_modificar}_{mod}")
                
                 if st.form_submit_button("💾 Guardar Licencia"):
                     db_permisos[negocio_a_modificar] = permisos_temporales
-                    guardar_permisos(db_permisos)
+                    if 'guardar_permisos' in globals():
+                        guardar_permisos(db_permisos)
                     st.success("✅ ¡Licencia actualizada!")
                     st.rerun()
 
@@ -1068,21 +1084,24 @@ if st.session_state.get("es_admin_dev", False):
                             "password": password_cliente,
                             "fecha_expiracion": str(fecha_exp),
                             "activo": True,
-                            "modulos": {mod: True for mod in modulos_totales}
+                            "modulos": {mod: True for mod in (modulos_totales if 'modulos_totales' in globals() else [])}
                         }
-                        guardar_nuevo_cliente(id_negocio, datos_nuevo)
+                        if 'guardar_nuevo_cliente' in globals():
+                            guardar_nuevo_cliente(id_negocio, datos_nuevo)
                         
-                        db_permisos = cargar_permisos()
-                        db_permisos[id_negocio] = {mod: True for mod in modulos_totales}
-                        guardar_permisos(db_permisos)
+                        db_permisos = cargar_permisos() if 'cargar_permisos' in globals() else {}
+                        db_permisos[id_negocio] = {mod: True for mod in (modulos_totales if 'modulos_totales' in globals() else [])}
+                        if 'guardar_permisos' in globals():
+                            guardar_permisos(db_permisos)
                         
                         try:
-                            supabase.table("empresas").insert({
-                                "rut_empresa": id_negocio,
-                                "empresa_nombre": nombre_comercial,
-                                "fecha_expiracion": str(fecha_exp),
-                                "licencia_activa": True
-                            }).execute()
+                            if 'supabase' in st.session_state and st.session_state.supabase:
+                                st.session_state.supabase.table("empresas").insert({
+                                    "rut_empresa": id_negocio,
+                                    "empresa_nombre": nombre_comercial,
+                                    "fecha_expiracion": str(fecha_exp),
+                                    "licencia_activa": True
+                                }).execute()
                         except Exception as e:
                             pass 
                         
@@ -1092,6 +1111,7 @@ if st.session_state.get("es_admin_dev", False):
         with tab_mant:
             st.markdown("#### 🧹 Reseteo y Limpieza Remota")
             negocio_a_limpiar = st.selectbox("Selecciona Negocio a Gestionar:", negocios_disponibles, key="limpiar_negocio_sel_nico")
+            CLIENTES_DIR = globals().get('CLIENTES_DIR', 'clientes')
             dir_cliente_objetivo = os.path.join(CLIENTES_DIR, negocio_a_limpiar)
             st.warning("⚠️ **Zona de Peligro:** La opción de fábrica eliminará todos los registros locales.")
             confirmar_borrado = st.checkbox("Confirmo que deseo restablecer este negocio a versión de fábrica", key="chk_confirmar_fabrica")
@@ -1102,14 +1122,15 @@ if st.session_state.get("es_admin_dev", False):
                 else:
                     try:
                         import shutil
-                        for archivo in os.listdir(dir_cliente_objetivo):
-                            ruta_archivo = os.path.join(dir_cliente_objetivo, archivo)
-                            if os.path.isfile(ruta_archivo) and archivo != "logo_empresa.png":
-                                os.remove(ruta_archivo)
-                        for carpeta_sub in ["archivador_ventas", "archivador_compras"]:
-                            dir_sub = os.path.join(dir_cliente_objetivo, carpeta_sub)
-                            if os.path.exists(dir_sub):
-                                shutil.rmtree(dir_sub)
+                        if os.path.exists(dir_cliente_objetivo):
+                            for archivo in os.listdir(dir_cliente_objetivo):
+                                ruta_archivo = os.path.join(dir_cliente_objetivo, archivo)
+                                if os.path.isfile(ruta_archivo) and archivo != "logo_empresa.png":
+                                    os.remove(ruta_archivo)
+                            for carpeta_sub in ["archivador_ventas", "archivador_compras"]:
+                                dir_sub = os.path.join(dir_cliente_objetivo, carpeta_sub)
+                                if os.path.exists(dir_sub):
+                                    shutil.rmtree(dir_sub)
                         st.success(f"✨ ¡Negocio '{negocio_a_limpiar}' restablecido a versión de fábrica con éxito!")
                         st.rerun()
                     except Exception as e:
@@ -1137,6 +1158,8 @@ if "formas_pago_erp" not in st.session_state:
         "Transferencia Electrónica", "Cheque", "Cuenta Corriente / Crédito Directo"
     ]
 
+lista_modulos_permitidos = globals().get('lista_modulos_permitidos', ["🏠 Home / Bienvenida"])
+
 menu = st.sidebar.selectbox(
     "🧭 Selecciona un Módulo:",
     lista_modulos_permitidos,
@@ -1159,7 +1182,8 @@ def cargar_datos(path_db):
         return df
     return None
 
-df_base = cargar_datos(archivo_base) if ('archivo_base' in globals() and archivo_base) else None
+archivo_base = globals().get('archivo_base', '')
+df_base = cargar_datos(archivo_base) if archivo_base else None
 
 def mostrar_encabezado_con_home(titulo_modulo):
     col_titulo, col_btn = st.columns([4, 1])
@@ -1168,7 +1192,7 @@ def mostrar_encabezado_con_home(titulo_modulo):
         st.subheader(f"{titulo_modulo} (Negocio: {nombre_mostrar})")
     with col_btn:
         st.write("")
-        if st.button("🏠 Volver al Home", use_container_width=True):
+        if st.button("🏠 Volver al Home", use_container_width=True, key=f"btn_home_{titulo_modulo}"):
             st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
             st.rerun()
 
