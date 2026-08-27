@@ -1034,14 +1034,13 @@ if st.session_state.get("es_admin_dev", False):
         # --- CARGAR EXCLUSIVAMENTE DESDE LA TABLA EMPRESAS DE SUPABASE ---
         negocios_disponibles = []
         try:
-            # Buscamos la instancia de Supabase de forma global o en st.session_state
             supabase_cli = globals().get('supabase', None) or st.session_state.get("supabase", None)
             if supabase_cli:
                 res_empresas = supabase_cli.table("empresas").select("rut_empresa").execute()
                 if res_empresas and res_empresas.data:
                     negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data if emp.get("rut_empresa")]
         except Exception as e:
-            st.error(f"Error al conectar con Supabase: {e}")
+            pass
             
         if not negocios_disponibles:
             negocios_disponibles = ["15382273-5"]
@@ -1062,9 +1061,23 @@ if st.session_state.get("es_admin_dev", False):
                
                 if st.form_submit_button("💾 Guardar Licencia"):
                     db_permisos[negocio_a_modificar] = permisos_temporales
+                    
+                    # Guardamos de forma persistente con la función del sistema
                     if 'guardar_permisos' in globals():
                         guardar_permisos(db_permisos)
-                    st.success("✅ ¡Licencia actualizada!")
+                    
+                    # ACTUALIZACIÓN INMEDIATA: Filtramos los módulos permitidos para que la UI los tome al instante
+                    modulos_totales_local = globals().get('modulos_totales', [])
+                    mods_activos_nuevos = [m for m, activo in permisos_temporales.items() if activo]
+                    
+                    # Asegurarnos de mantener el Home siempre disponible si existía
+                    if "🏠 Home / Bienvenida" in modulos_totales_local and "🏠 Home / Bienvenida" not in mods_activos_nuevos:
+                        mods_activos_nuevos.insert(0, "🏠 Home / Bienvenida")
+                        
+                    globals()['lista_modulos_permitidos'] = mods_activos_nuevos
+                    st.session_state['lista_modulos_permitidos'] = mods_activos_nuevos
+                    
+                    st.success("✅ ¡Licencia actualizada y reflejada al instante!")
                     st.rerun()
 
         with tab_crear:
@@ -1197,7 +1210,7 @@ def mostrar_encabezado_con_home(titulo_modulo):
         if st.button("🏠 Volver al Home", use_container_width=True, key=f"btn_home_{titulo_modulo}"):
             st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
             st.rerun()
-
+            
 # --- 8. RENDERIZADO DEL HOME FIJO Y MÓDULOS ---
 if menu == "🏠 Home / Bienvenida":
     st.markdown(f"<p class='main-title'>🪙 CREC-ERP: {st.session_state.nombre_empresa if 'nombre_empresa' in st.session_state else 'GENERAL'}</p>", unsafe_allow_html=True)
