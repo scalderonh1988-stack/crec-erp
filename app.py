@@ -1031,17 +1031,18 @@ if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
         
-        # --- CARGAR NEGOCIOS DESDE LA TABLA EMPRESAS DE SUPABASE ---
+        # --- CARGAR NEGOCIOS DIRECTAMENTE DESDE SUPABASE (MODO DEBUG) ---
         negocios_disponibles = []
         try:
             supabase_cli = st.session_state.get("supabase", None)
             if supabase_cli:
-                # Añadimos .range(0, 999) para traer todos los registros de la tabla sin recortes
                 res_empresas = supabase_cli.table("empresas").select("rut_empresa").range(0, 999).execute()
                 if res_empresas.data:
                     negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data if emp.get("rut_empresa")]
+            else:
+                st.sidebar.error("⚠️ No hay cliente de Supabase en st.session_state")
         except Exception as e:
-            pass
+            st.sidebar.error(f"❌ Error Supabase: {e}")
             
         if not negocios_disponibles:
             negocios_disponibles = ["15382273-5", "77297004-8"]
