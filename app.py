@@ -3451,12 +3451,23 @@ elif menu == "💰 Módulo de Ventas (POS)":
     bodega_actual = st.selectbox("🏢 Selecciona la Bodega / Sucursal de origen:", bodegas_pos)
     st.markdown("---")
 
-    # --- 1. CABECERA ---
-    col_doc1, col_doc2 = st.columns(2)
+    # --- 1. CABECERA (Modificada con Selector de Tipo de Emisión) ---
+    col_doc1, col_doc2, col_doc3 = st.columns(3)
     with col_doc1:
-        tipo_documento = st.selectbox("📄 Selecciona el documento:", ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho"])
+        tipo_documento = st.selectbox("📄 Selecciona el documento:", ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"])
     with col_doc2:
         fecha_emision_venta = st.date_input("📅 Fecha de Emisión del Documento")
+    with col_doc3:
+        # ⚙️ NUEVO: Selector para elegir entre Control Interno o SII Oficial
+        modo_operacion = st.radio(
+            "⚙️ Tipo de Emisión:",
+            ["Control Interno (Libre)", "Oficial (SII)"],
+            horizontal=True,
+            key="radio_modo_emision"
+        )
+    
+    # Convertimos el texto del radio a formato limpio para la base de datos
+    modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
 
     # --- 2. LÓGICA: FACTURAR DESDE UNA GUÍA PREVIA ---
     if tipo_documento == "Factura Electrónica":
@@ -3464,7 +3475,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
         if viene_de_guia:
             col_g1, col_g2 = st.columns([3, 1])
             with col_g1:
-                folio_guia_a_facturar = st.text_input("🔎 Ingresa el Folio de la Guía (Ej: TX_20260821...):")
+                folio_guia_a_facturar = st.text_input("🔎 Ingresa el Folio de la Guía (Ej: 1 o FOLIO_1):")
             with col_g2:
                 st.write("")
                 if st.button("📥 Cargar Guía", use_container_width=True):
@@ -3579,7 +3590,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.items_recibo_actual = None
                 st.session_state.carrito_ventas = []
                 st.session_state.pop("cliente_preseleccionado", None)
-                st.session_state.pop("folio_guia_origen", None) # Limpiamos la memoria de la guía
+                st.session_state.pop("folio_guia_origen", None) 
                 st.rerun()
 
     # --- PANTALLA DE PAGO ---
@@ -3624,18 +3635,39 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         st.warning("⚠️ Monto insuficiente para procesar la venta.")
                     else:
                         fecha_hora_actual = datetime.now()
-                        transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
+                        
+                        # ==========================================================
+                        # 🔢 GENERACIÓN INTELIGENTE DE FOLIO CORRELATIVO (SUPABASE)
+                        # ==========================================================
+                        try:
+                            res_f = supabase.table("folios_empresa").select("ultimo_folio_usado").eq("rut_empresa", rut_actual).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
+                            if res_f.data and len(res_f.data) > 0:
+                                numero_folio_actual = int(res_f.data[0]["ultimo_folio_usado"]) + 1
+                                supabase.table("folios_empresa").update({"ultimo_folio_usado": numero_folio_actual}).eq("rut_empresa", rut_actual).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
+                            else:
+                                numero_folio_actual = 1
+                                supabase.table("folios_empresa").insert({
+                                    "rut_empresa": rut_actual,
+                                    "tipo_documento": tipo_documento,
+                                    "modo": modo_str,
+                                    "ultimo_folio_usado": numero_folio_actual
+                                }).execute()
+                        except Exception:
+                            # Fallback de seguridad si falla la tabla de folios
+                            numero_folio_actual = int(datetime.now().strftime("%H%M%S"))
+
+                        transaccion_id_actual = str(numero_folio_actual)
                         lineas_productos = ""
                         venta_exitosa = True
                         
-                        # 🚨 LA MAGIA: Si viene de una Guía, borramos la original para no duplicar
+                        # Si viene de una Guía, borramos la original para no duplicar
                         folio_origen = st.session_state.get("folio_guia_origen")
                         if folio_origen and tipo_documento == "Factura Electrónica":
                             try:
                                 supabase.table("ventas").delete().eq("rut_empresa", rut_actual).eq("folio", folio_origen).execute()
                                 supabase.table("cuentas_por_cobrar").delete().eq("rut_empresa", rut_actual).eq("folio_venta", folio_origen).execute()
                             except Exception:
-                                pass # Si no existe, ignoramos y seguimos
+                                pass 
                         
                         cfg_actual = st.session_state.get("config_ticket", {})
                         nombre_empresa_sesion = str(st.session_state.get("nombre_empresa", "")).upper()
@@ -3655,11 +3687,9 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                     codigo_vendido = str(item["Código"])
                                     cantidad_vendida = float(item["Cantidad"])
 
-                                    # 🚨 1. VERIFICAR SI EL PRODUCTO ES UN PACK / TIENE RECETA
                                     res_receta_pos = supabase.table("recetas").select("*").eq("rut_empresa", rut_actual).eq("codigo_producto_final", codigo_vendido).execute()
                                     
                                     if res_receta_pos.data:
-                                        # 📦 ES UN PACK: Descuenta el stock de cada componente (padre) de la receta
                                         for componente in res_receta_pos.data:
                                             cod_componente = str(componente["codigo_ingrediente"])
                                             cant_por_pack = float(componente["cantidad_usada"])
@@ -3673,7 +3703,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                                 
                                                 supabase.table("productos").update({"stock": nuevo_stock_comp}).eq("rut_empresa", rut_actual).eq("codigo", cod_componente).eq("bodega", bodega_actual).execute()
                                     else:
-                                        # 🟢 ES UN PRODUCTO NORMAL: Descuenta su propio stock normalmente
                                         res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", codigo_vendido).eq("bodega", bodega_actual).execute()
                                         if res_stock.data:
                                             stock_actual = float(res_stock.data[0]["stock"] or 0.0)
@@ -3708,7 +3737,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "metodo_pago": forma_pago,
                                 "neto": round(neto_calculado, 2),
                                 "iva": round(iva_calculado, 2),
-                                "impuesto_especifico": round(ila_calculado, 2)
+                                "impuesto_especifico": round(ila_calculado, 2),
+                                "modo_emision": modo_str # 👈 Guardamos si es INTERNO u OFICIAL
                             }
                             
                             try:
@@ -3755,7 +3785,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
        RUT: {cfg_actual.get('rut_empresa', '00.000.000-0')}
        {cfg_actual.get('direccion', 'Santiago')}
 ========================================
-DOCUMENTO: {tipo_documento.upper()}
+DOCUMENTO: {tipo_documento.upper()} [{modo_operacion.upper()}]
+FOLIO N°: {numero_folio_actual}
 FECHA EMISIÓN: {fecha_emision_venta.strftime('%d/%m/%Y')}
 TERMINAL: {caja_actual}
 ----------------------------------------
@@ -3779,7 +3810,6 @@ PAGO: {forma_pago.upper()}
     else:
         df_nube = pd.DataFrame()
         try:
-            # 🚨 LEE EL INVENTARIO SOLO DE LA BODEGA SELECCIONADA EN EL POS
             res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", rut_actual).eq("bodega", bodega_actual).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
@@ -3922,7 +3952,7 @@ PAGO: {forma_pago.upper()}
                 if st.button("🗑️ Vaciar Carrito", use_container_width=True):
                     st.session_state.carrito_ventas = []
                     st.session_state.pop("cliente_preseleccionado", None)
-                    st.session_state.pop("folio_guia_origen", None) # Limpia la memoria de la guía al vaciar
+                    st.session_state.pop("folio_guia_origen", None) 
                     st.rerun()
             with col_b2:
                 if st.button("[F12] 💳 Cobrar", use_container_width=True, key="btn_cobrar_principal") or st.session_state.get('ejecutar_cobro', False):
