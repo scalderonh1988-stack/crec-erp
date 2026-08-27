@@ -1026,7 +1026,7 @@ else:
 if "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
     lista_modulos_permitidos.insert(0, "🏠 Home / Bienvenida")
 
-# --- 🛠️ PANEL DE DESARROLLADOR MAESTRO ---
+# --- 🛠️ PANEL DE DESARROLLADOR MAESTRO (Y FILTRADO DE MÓDULOS) ---
 if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
@@ -1061,23 +1061,9 @@ if st.session_state.get("es_admin_dev", False):
                
                 if st.form_submit_button("💾 Guardar Licencia"):
                     db_permisos[negocio_a_modificar] = permisos_temporales
-                    
-                    # Guardamos de forma persistente con la función del sistema
                     if 'guardar_permisos' in globals():
                         guardar_permisos(db_permisos)
-                    
-                    # ACTUALIZACIÓN INMEDIATA: Filtramos los módulos permitidos para que la UI los tome al instante
-                    modulos_totales_local = globals().get('modulos_totales', [])
-                    mods_activos_nuevos = [m for m, activo in permisos_temporales.items() if activo]
-                    
-                    # Asegurarnos de mantener el Home siempre disponible si existía
-                    if "🏠 Home / Bienvenida" in modulos_totales_local and "🏠 Home / Bienvenida" not in mods_activos_nuevos:
-                        mods_activos_nuevos.insert(0, "🏠 Home / Bienvenida")
-                        
-                    globals()['lista_modulos_permitidos'] = mods_activos_nuevos
-                    st.session_state['lista_modulos_permitidos'] = mods_activos_nuevos
-                    
-                    st.success("✅ ¡Licencia actualizada y reflejada al instante!")
+                    st.success("✅ ¡Licencia y atribuciones del desarrollador actualizadas!")
                     st.rerun()
 
         with tab_crear:
@@ -1120,7 +1106,7 @@ if st.session_state.get("es_admin_dev", False):
                         except Exception as e:
                             pass 
                         
-                        st.success(f"✨ ¡Negocio '{nombre_comercial}' creado y sincronizado con Supabase!")
+                        st.success(f"✨ ¡Negocio '{nombre_comercial}' creado y sincronizado!")
                         st.rerun()
 
         with tab_mant:
@@ -1156,7 +1142,7 @@ st.sidebar.markdown("© 2026 CREC-ERP")
 st.sidebar.markdown("Desarrollado por **Sebastián Calderón**")
 
 
-# --- 7. INICIALIZACIÓN DE ESTADOS DE SESIÓN ---
+# --- 7. INICIALIZACIÓN Y APLICACIÓN ESTRICTA DE JERARQUÍA DE MÓDULOS ---
 if "menu_seleccionado" not in st.session_state:
     st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
 if "carrito_ventas" not in st.session_state:
@@ -1173,7 +1159,22 @@ if "formas_pago_erp" not in st.session_state:
         "Transferencia Electrónica", "Cheque", "Cuenta Corriente / Crédito Directo"
     ]
 
-lista_modulos_permitidos = globals().get('lista_modulos_permitidos', ["🏠 Home / Bienvenida"])
+# OBTENER MÓDULOS PERMITIDOS SEGÚN LA LICENCIA ESTABLECIDA POR EL DESARROLLADOR
+modulos_totales_sistema = globals().get('modulos_totales', ["🏠 Home / Bienvenida"])
+db_permisos_actuales = cargar_permisos() if 'cargar_permisos' in globals() else {}
+negocio_actual_sesion = st.session_state.get('negocio_seleccionado', st.session_state.get('rut_empresa', ''))
+
+# REGLA DE ORO: El propietario tiene acceso a todo... PERO limitado estrictamente por la licencia del desarrollador
+if negocio_actual_sesion in db_permisos_actuales:
+    permisos_negocio = db_permisos_actuales[negocio_actual_sesion]
+    # Filtramos los módulos totales dejando únicamente los que el desarrollador marcó como True para este negocio
+    lista_modulos_permitidos = [mod for mod in modulos_totales_sistema if permisos_negocio.get(mod, True)]
+else:
+    lista_modulos_permitidos = globals().get('lista_modulos_permitidos', modulos_totales_sistema)
+
+# Garantizar que el Home siempre esté disponible si existe en el sistema
+if "🏠 Home / Bienvenida" in modulos_totales_sistema and "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
+    lista_modulos_permitidos.insert(0, "🏠 Home / Bienvenida")
 
 menu = st.sidebar.selectbox(
     "🧭 Selecciona un Módulo:",
@@ -1210,7 +1211,7 @@ def mostrar_encabezado_con_home(titulo_modulo):
         if st.button("🏠 Volver al Home", use_container_width=True, key=f"btn_home_{titulo_modulo}"):
             st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
             st.rerun()
-            
+
 # --- 8. RENDERIZADO DEL HOME FIJO Y MÓDULOS ---
 if menu == "🏠 Home / Bienvenida":
     st.markdown(f"<p class='main-title'>🪙 CREC-ERP: {st.session_state.nombre_empresa if 'nombre_empresa' in st.session_state else 'GENERAL'}</p>", unsafe_allow_html=True)
