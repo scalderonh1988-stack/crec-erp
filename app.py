@@ -1031,26 +1031,20 @@ if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
         
-        # --- CARGAR NEGOCIOS DESDE SUPABASE O CARPETAS LOCALES ---
+        # --- CARGAR EXCLUSIVAMENTE DESDE LA TABLA EMPRESAS DE SUPABASE ---
         negocios_disponibles = []
         try:
-            supabase_cli = st.session_state.get("supabase", None)
+            # Buscamos la instancia de Supabase de forma global o en st.session_state
+            supabase_cli = globals().get('supabase', None) or st.session_state.get("supabase", None)
             if supabase_cli:
-                res_empresas = supabase_cli.table("empresas").select("rut_empresa").limit(1000).execute()
-                if res_empresas.data:
+                res_empresas = supabase_cli.table("empresas").select("rut_empresa").execute()
+                if res_empresas and res_empresas.data:
                     negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data if emp.get("rut_empresa")]
         except Exception as e:
-            pass
+            st.error(f"Error al conectar con Supabase: {e}")
             
-        # Si Supabase no devolvió datos en este punto, leemos las carpetas reales del directorio de clientes
         if not negocios_disponibles:
-            CLIENTES_DIR = globals().get('CLIENTES_DIR', 'clientes')
-            if os.path.exists(CLIENTES_DIR):
-                negocios_disponibles = [d for d in os.listdir(CLIENTES_DIR) if os.path.isdir(os.path.join(CLIENTES_DIR, d))]
-        
-        # Último respaldo si todo lo demás falla
-        if not negocios_disponibles:
-            negocios_disponibles = ["15382273-5", "77297004-8"]
+            negocios_disponibles = ["15382273-5"]
 
         tab_lic, tab_crear, tab_mant = st.tabs(["⚙️ Licencias", "➕ Crear Negocio", "🧹 Mantenimiento"])
         
@@ -1102,8 +1096,9 @@ if st.session_state.get("es_admin_dev", False):
                             guardar_permisos(db_permisos)
                         
                         try:
-                            if 'supabase' in st.session_state and st.session_state.supabase:
-                                st.session_state.supabase.table("empresas").insert({
+                            supabase_cli = globals().get('supabase', None) or st.session_state.get("supabase", None)
+                            if supabase_cli:
+                                supabase_cli.table("empresas").insert({
                                     "rut_empresa": id_negocio,
                                     "empresa_nombre": nombre_comercial,
                                     "fecha_expiracion": str(fecha_exp),
