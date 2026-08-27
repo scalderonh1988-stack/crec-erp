@@ -980,7 +980,7 @@ if st.session_state.get("autenticado", False):
 
 if not st.session_state.get("es_admin_dev", False):
     st.sidebar.write("") 
-    st.sidebar.link_button("💳 Renovar Licencia Mensual", "https://mpago.la/12ae7ej", type="primary", use_container_width=True)
+    st.sidebar.link_button("💳 Renovar Licencia Mensual", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
 
 if not st.session_state.get("es_admin_dev", False):
     try:
