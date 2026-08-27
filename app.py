@@ -1031,24 +1031,27 @@ if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
         
-        # --- CARGAR NEGOCIOS DESDE LOS PERMISOS LOCALES/GLOBALES DE LA APP ---
-        db_permisos = cargar_permisos() if 'cargar_permisos' in globals() else {}
-        
-        # Si la función existe, extraemos las llaves reales de los negocios configurados
-        if db_permisos and isinstance(db_permisos, dict):
-            negocios_disponibles = list(db_permisos.keys())
-        else:
-            # Respaldo con los RUTs exactos que maneja tu base de datos
-            negocios_disponibles = [
-                "77297004-8", "78024993-5", "18643707-1", "16990652-1", 
-                "10038522-8", "219449970012", "15382273-5", "78343689-2", 
-                "19449963-9", "76328979-6"
-            ]
+        # --- CARGAR LOS RUTs DIRECTAMENTE DESDE LA COLUMNA rut_empresa DE SUPABASE ---
+        negocios_disponibles = []
+        try:
+            supabase_cli = st.session_state.get("supabase", None)
+            if supabase_cli:
+                # Consultamos la tabla empresas y seleccionamos explícitamente rut_empresa
+                res_empresas = supabase_cli.table("empresas").select("rut_empresa").execute()
+                if res_empresas.data:
+                    # Filtramos y aseguramos que cada RUT sea un texto válido obtenido de Supabase
+                    negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data if emp.get("rut_empresa")]
+        except Exception as e:
+            pass
+            
+        if not negocios_disponibles:
+            negocios_disponibles = ["15382273-5"]
 
         tab_lic, tab_crear, tab_mant = st.tabs(["⚙️ Licencias", "➕ Crear Negocio", "🧹 Mantenimiento"])
         
         with tab_lic:
             negocio_a_modificar = st.selectbox("Selecciona Negocio:", negocios_disponibles, key="sel_dev_negocio_nico")
+            db_permisos = cargar_permisos() if 'cargar_permisos' in globals() else {}
             if negocio_a_modificar not in db_permisos:
                 db_permisos[negocio_a_modificar] = {mod: True for mod in (modulos_totales if 'modulos_totales' in globals() else [])}
            
@@ -1104,7 +1107,7 @@ if st.session_state.get("es_admin_dev", False):
                         except Exception as e:
                             pass 
                         
-                        st.success(f"✨ ¡Negocio '{nombre_comercial}' creado y sincronizado!")
+                        st.success(f"✨ ¡Negocio '{nombre_comercial}' creado y sincronizado con Supabase!")
                         st.rerun()
 
         with tab_mant:
@@ -1149,7 +1152,14 @@ if "ejecutar_cobro" not in st.session_state:
     st.session_state.ejecutar_cobro = False
 if "estado_pago" not in st.session_state:
     st.session_state.estado_pago = False
-    
+if "ultimo_recibo" not in st.session_state:
+    st.session_state.ultimo_recibo = None
+if "formas_pago_erp" not in st.session_state:
+    st.session_state.formas_pago_erp = [
+        "Efectivo", "Tarjeta de Débito", "Tarjeta de Crédito", 
+        "Transferencia Electrónica", "Cheque", "Cuenta Corriente / Crédito Directo"
+    ]
+
 lista_modulos_permitidos = globals().get('lista_modulos_permitidos', ["🏠 Home / Bienvenida"])
 
 menu = st.sidebar.selectbox(
