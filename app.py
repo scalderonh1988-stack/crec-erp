@@ -1031,19 +1031,20 @@ if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
         
-        # --- CARGAR NEGOCIOS DIRECTAMENTE DESDE SUPABASE ---
+        # --- CARGAR NEGOCIOS DESDE LA TABLA EMPRESAS DE SUPABASE ---
         negocios_disponibles = []
         try:
             supabase_cli = st.session_state.get("supabase", None)
             if supabase_cli:
                 res_empresas = supabase_cli.table("empresas").select("rut_empresa").execute()
                 if res_empresas.data:
-                    negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data]
+                    # Extraemos directamente los valores de rut_empresa que se ven en tu tabla
+                    negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data if emp.get("rut_empresa")]
         except Exception as e:
             pass
             
         if not negocios_disponibles:
-            negocios_disponibles = ["15382273-5"]
+            negocios_disponibles = ["15382273-5", "77297004-8"]
 
         tab_lic, tab_crear, tab_mant = st.tabs(["⚙️ Licencias", "➕ Crear Negocio", "🧹 Mantenimiento"])
         
@@ -1150,14 +1151,7 @@ if "ejecutar_cobro" not in st.session_state:
     st.session_state.ejecutar_cobro = False
 if "estado_pago" not in st.session_state:
     st.session_state.estado_pago = False
-if "ultimo_recibo" not in st.session_state:
-    st.session_state.ultimo_recibo = None
-if "formas_pago_erp" not in st.session_state:
-    st.session_state.formas_pago_erp = [
-        "Efectivo", "Tarjeta de Débito", "Tarjeta de Crédito", 
-        "Transferencia Electrónica", "Cheque", "Cuenta Corriente / Crédito Directo"
-    ]
-
+    
 lista_modulos_permitidos = globals().get('lista_modulos_permitidos', ["🏠 Home / Bienvenida"])
 
 menu = st.sidebar.selectbox(
