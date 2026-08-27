@@ -1036,9 +1036,9 @@ if st.session_state.get("es_admin_dev", False):
         try:
             supabase_cli = st.session_state.get("supabase", None)
             if supabase_cli:
-                res_empresas = supabase_cli.table("empresas").select("rut_empresa").execute()
+                # Añadimos .range(0, 999) para traer todos los registros de la tabla sin recortes
+                res_empresas = supabase_cli.table("empresas").select("rut_empresa").range(0, 999).execute()
                 if res_empresas.data:
-                    # Extraemos directamente los valores de rut_empresa que se ven en tu tabla
                     negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data if emp.get("rut_empresa")]
         except Exception as e:
             pass
