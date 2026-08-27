@@ -16,6 +16,7 @@ from cuadratura import mostrar_modulo_cuadratura_diaria
 from historial_ventas import mostrar_modulo_historial_ventas
 from notas_credito import mostrar_modulo_notas_credito
 from cuentas_por_pagar import mostrar_modulo_cuentas_por_pagar
+from modulos.distribucion import mostrar_modulo_distribucion
 from produccion_recetas import mostrar_modulo_produccion
 # Ocultar el menú predeterminado y la marca de agua de Streamlit
 hide_st_style = """
@@ -788,13 +789,15 @@ if "intentos_fallidos" not in st.session_state:
     st.session_state.intentos_fallidos = 0
 if "modulos_permitidos" not in st.session_state:
     st.session_state.modulos_permitidos = ["🏠 Home / Bienvenida"]
+if "tipo_usuario" not in st.session_state:
+    st.session_state.tipo_usuario = "Propietario"
 
 if not st.session_state.autenticado:
     st.markdown('<p class="main-title">🔐 CREC-ERP - Acceso Blindado</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-title">Sistema protegido de gestión empresarial</p>', unsafe_allow_html=True)
  
     if st.session_state.intentos_fallidos >= 3:
-        st.error("🚨 **Demasiados intentos fallidos.** El acceso temporalmente restringido por seguridad.")
+        st.error("🚨 **Demasiados intentos fallidos.** El acceso está temporalmente restringido por seguridad.")
         st.stop()
 
     col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
@@ -819,6 +822,7 @@ if not st.session_state.autenticado:
                     st.session_state.negocio_actual = "admin_general"
                     st.session_state.nombre_empresa = "CREC-ERP Master"
                     st.session_state.rol_usuario = "Administrador"
+                    st.session_state.tipo_usuario = "Propietario"
                     st.session_state.modulos_permitidos = "ALL"
                     st.session_state.intentos_fallidos = 0
                     st.success("🛠️ ¡Acceso Maestro Autorizado!")
@@ -826,15 +830,12 @@ if not st.session_state.autenticado:
                 else:
                     acceso_exitoso = False
                     
-                    # 🚨 1.5 NUEVO: VALIDACIÓN DEL PROPIETARIO 100% EN LA NUBE (Supabase)
+                    # 🚨 1.5 VALIDACIÓN DEL PROPIETARIO EN LA NUBE (Supabase)
                     try:
-                        # Buscamos si el RUT ingresado pertenece a una Empresa dueña
                         res_dueño = supabase.table("empresas").select("*").eq("rut_empresa", usuario_limpio).execute()
                         
                         if res_dueño.data:
                             datos_empresa = res_dueño.data[0]
-                            
-                            # Validamos contra la nueva columna 'password' de la tabla empresas
                             pass_db = str(datos_empresa.get("password", ""))
                             
                             if pass_db == password_limpio:
@@ -844,7 +845,8 @@ if not st.session_state.autenticado:
                                     st.session_state.negocio_actual = usuario_limpio
                                     st.session_state.usuario_logueado = "Propietario / Administrador"
                                     st.session_state.rol_usuario = "Propietario"
-                                    st.session_state.modulos_permitidos = "ALL" # Acceso a TODO
+                                    st.session_state.tipo_usuario = "Propietario"
+                                    st.session_state.modulos_permitidos = "ALL"
                                     st.session_state.intentos_fallidos = 0
                                     st.session_state.nombre_empresa = datos_empresa.get("empresa_nombre", usuario_limpio)
                                     
@@ -853,11 +855,11 @@ if not st.session_state.autenticado:
                                     st.rerun()
                                 else:
                                     st.error("❌ La licencia de esta empresa se encuentra expirada o inactiva.")
-                                    acceso_exitoso = True # Bloqueo intencional
+                                    acceso_exitoso = True
                     except Exception as e:
                         pass
                     
-                    # 2. VALIDACIÓN ESTRICTA EN LA NUBE: Cajeros y Operadores
+                    # 2. VALIDACIÓN ESTRICTA EN LA NUBE: Cajeros, Operadores y Vendedores en Ruta
                     if not acceso_exitoso:
                         try:
                             res_usr = supabase.table("usuarios").select("*").eq("rut_usuario", usuario_limpio).execute()
@@ -865,87 +867,64 @@ if not st.session_state.autenticado:
                             if res_usr.data:
                                 datos_usr = res_usr.data[0]
                                 
-                                # BARRERA DE SEGURIDAD 1: La contraseña debe ser EXACTA
                                 if str(datos_usr.get("password_hash")) == password_limpio:
-                                    
                                     id_empresa = datos_usr.get("empresa_id")
                                     res_emp = supabase.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa").eq("id", id_empresa).execute()
                                     
                                     if res_emp.data:
                                         datos_empresa = res_emp.data[0]
                                         
-                                        # BARRERA DE SEGURIDAD 2: La empresa debe estar al día
                                         if datos_empresa.get("licencia_activa", True):
                                             rut_negocio = datos_empresa.get("rut_empresa")
                                             nombre_negocio = datos_empresa.get("empresa_nombre")
                                             
-                                            modulos_str = datos_usr.get("modulos", "")
-                                            modulos_operador = [m.strip() for m in modulos_str.split(",") if m.strip()]
+                                            rol_encontrado = str(datos_usr.get("rol", "Cajero / Vendedor"))
                                             
-                                            # BARRERA DE SEGURIDAD 3: Debe tener módulos asignados
-                                            if not modulos_operador:
-                                                st.error("❌ Tu usuario no tiene módulos asignados. Acceso denegado.")
-                                                acceso_exitoso = True 
-                                            else:
-                                                # ACCESO APROBADO A CAJERO
+                                            # 📱 DETECCIÓN DEL ROL VENDEDOR EN RUTA
+                                            if "vendedor" in rol_encontrado.lower():
                                                 st.session_state.autenticado = True
                                                 st.session_state.es_admin_dev = False
                                                 st.session_state.negocio_actual = rut_negocio
                                                 st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
-                                                st.session_state.rol_usuario = datos_usr.get("rol", "Cajero / Vendedor")
-                                                st.session_state.modulos_permitidos = modulos_operador
+                                                st.session_state.rol_usuario = rol_encontrado
+                                                st.session_state.tipo_usuario = "Vendedor"
+                                                st.session_state.modulos_permitidos = ["Logística y Distribución (Preventa)"]
+                                                st.session_state.menu_seleccionado = "Logística y Distribución (Preventa)"
                                                 st.session_state.intentos_fallidos = 0
                                                 st.session_state.nombre_empresa = nombre_negocio
                                                 
-                                                st.success(f"🟢 ¡Bienvenido {st.session_state.usuario_logueado}!")
+                                                st.success(f"📱 ¡Bienvenido Vendedor en Ruta {st.session_state.usuario_logueado}!")
                                                 acceso_exitoso = True
                                                 st.rerun()
+                                            else:
+                                                # Validaciones normales para Cajeros / Operadores
+                                                modulos_str = datos_usr.get("modulos", "")
+                                                modulos_operador = [m.strip() for m in modulos_str.split(",") if m.strip()]
+                                                
+                                                if not modulos_operador:
+                                                    st.error("❌ Tu usuario no tiene módulos asignados. Acceso denegado.")
+                                                    acceso_exitoso = True 
+                                                else:
+                                                    st.session_state.autenticado = True
+                                                    st.session_state.es_admin_dev = False
+                                                    st.session_state.negocio_actual = rut_negocio
+                                                    st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
+                                                    st.session_state.rol_usuario = rol_encontrado
+                                                    st.session_state.tipo_usuario = "Propietario"
+                                                    st.session_state.modulos_permitidos = modulos_operador
+                                                    st.session_state.intentos_fallidos = 0
+                                                    st.session_state.nombre_empresa = nombre_negocio
+                                                    
+                                                    st.success(f"🟢 ¡Bienvenido {st.session_state.usuario_logueado}!")
+                                                    acceso_exitoso = True
+                                                    st.rerun()
                                         else:
                                             st.error("❌ La licencia de la empresa se encuentra expirada o inactiva.")
                                             acceso_exitoso = True
                         except Exception as e:
                             pass
                         
-                    # 3. FALLBACK LOCAL: Por si hay cajeros en el archivo JSON antiguo
-                    if not acceso_exitoso:
-                        for neg_folder in os.listdir(CLIENTES_DIR):
-                            folder_path = os.path.join(CLIENTES_DIR, neg_folder)
-                            if os.path.isdir(folder_path):
-                                arch_usr = os.path.join(folder_path, "usuarios_negocio.json")
-                                if os.path.exists(arch_usr):
-                                    with open(arch_usr, "r", encoding="utf-8") as f:
-                                        diccionario_users = json.load(f)
-                                        if usuario_limpio in diccionario_users:
-                                            datos_usr = diccionario_users[usuario_limpio]
-                                            
-                                            if str(datos_usr.get("password")) == password_limpio:
-                                                modulos_str = datos_usr.get("modulos", "")
-                                                modulos_operador = [m.strip() for m in modulos_str.split(",") if m.strip()] if isinstance(modulos_str, str) else modulos_str
-                                                
-                                                if not modulos_operador:
-                                                    st.error("❌ Tu usuario no tiene módulos asignados. Acceso denegado.")
-                                                    acceso_exitoso = True
-                                                else:
-                                                    st.session_state.autenticado = True
-                                                    st.session_state.es_admin_dev = False
-                                                    st.session_state.negocio_actual = neg_folder
-                                                    st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
-                                                    st.session_state.rol_usuario = datos_usr.get("rol", "Cajero / Vendedor")
-                                                    st.session_state.modulos_permitidos = modulos_operador
-                                                    st.session_state.intentos_fallidos = 0
-                                                    
-                                                    # Validación segura de empresas_data si existe
-                                                    if 'empresas_data' in globals():
-                                                        emp_info = next((emp for emp in empresas_data if str(emp.get("rut_empresa")) == neg_folder), None)
-                                                        st.session_state.nombre_empresa = emp_info.get("empresa_nombre") if emp_info else neg_folder
-                                                    else:
-                                                        st.session_state.nombre_empresa = neg_folder
-                                                        
-                                                    st.success(f"🟢 ¡Bienvenido {st.session_state.usuario_logueado}!")
-                                                    acceso_exitoso = True
-                                                    st.rerun()
-                    
-                    # 4. RECHAZO TOTAL
+                    # 3. RECHAZO TOTAL SI NINGUNA VALIDACIÓN FUNCIONÓ
                     if not acceso_exitoso:
                         st.session_state.intentos_fallidos += 1
                         intentos_restantes = 3 - st.session_state.intentos_fallidos
@@ -1032,6 +1011,7 @@ modulos_totales = [
     "📚 Historial de Ventas",
     "🔄 Notas de Crédito",
     "🏦 Conciliación y Retiros Seguros",
+    "🚚 Logística y Distribución (Preventa)", # 🚨 NUEVO MÓDULO AGREGADO AQUÍ
     "⚙️ Configuración General"
 ]
 if st.session_state.get("es_admin_dev", False):
@@ -1208,7 +1188,7 @@ if menu == "🏠 Home / Bienvenida":
     modulos_disponibles_home = [
         {"id": "dash", "nombre_ref": "Dashboard Ejecutivo", "label": "📊 Dashboard Ejecutivo"},
         {"id": "inv", "nombre_ref": "Inventario y Productos", "label": "📦 Inventario y Productos"},
-        {"id": "prod", "nombre_ref": "Producción y Recetas", "label": "🍔 Producción y Recetas"}, # 🚨 NUEVO BOTÓN AGREGADO AQUÍ
+        {"id": "prod", "nombre_ref": "Producción y Recetas", "label": "🍔 Producción y Recetas"},
         {"id": "pos", "nombre_ref": "Módulo de Ventas (POS)", "label": "💰 Módulo de Ventas (POS)"},
         {"id": "nc", "nombre_ref": "Notas de Crédito", "label": "🔄 Notas de Crédito"},
         {"id": "comp", "nombre_ref": "Registrar Compra (CPP)", "label": "🛒 Registrar Compra (CPP)"},
@@ -1221,6 +1201,7 @@ if menu == "🏠 Home / Bienvenida":
         {"id": "conci", "nombre_ref": "Conciliación y Retiros Seguros", "label": "🏦 Conciliación y Retiros Seguros"},
         {"id": "historial", "nombre_ref": "Historial de Ventas", "label": "📚 Historial de Ventas"},
         {"id": "report", "nombre_ref": "Reportes y Analítica", "label": "📈 Reportes y Analítica"},
+        {"id": "distribucion", "nombre_ref": "Logística y Distribución (Preventa)", "label": "🚚 Logística y Distribución (Preventa)"}, # 🚨 NUEVO BOTÓN AGREGADO AQUÍ
         {"id": "conf", "nombre_ref": "Configuración General", "label": "⚙️ Configuración General"}
     ]
 
@@ -4080,3 +4061,6 @@ elif menu == "🔄 Notas de Crédito" or st.session_state.get("modulo_activo") =
 elif menu == "🍔 Producción y Recetas":
     # Llamamos a la función que importaste al inicio
     mostrar_modulo_produccion()
+
+elif menu == "🚚 Logística y Distribución (Preventa)":
+    mostrar_modulo_distribucion()
