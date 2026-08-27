@@ -1031,21 +1031,26 @@ if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
         
-        # --- CARGAR LOS RUTs DIRECTAMENTE DESDE LA COLUMNA rut_empresa DE SUPABASE ---
+        # --- CARGAR NEGOCIOS DESDE SUPABASE O CARPETAS LOCALES ---
         negocios_disponibles = []
         try:
             supabase_cli = st.session_state.get("supabase", None)
             if supabase_cli:
-                # Consultamos la tabla empresas y seleccionamos explícitamente rut_empresa
-                res_empresas = supabase_cli.table("empresas").select("rut_empresa").execute()
+                res_empresas = supabase_cli.table("empresas").select("rut_empresa").limit(1000).execute()
                 if res_empresas.data:
-                    # Filtramos y aseguramos que cada RUT sea un texto válido obtenido de Supabase
                     negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data if emp.get("rut_empresa")]
         except Exception as e:
             pass
             
+        # Si Supabase no devolvió datos en este punto, leemos las carpetas reales del directorio de clientes
         if not negocios_disponibles:
-            negocios_disponibles = ["15382273-5"]
+            CLIENTES_DIR = globals().get('CLIENTES_DIR', 'clientes')
+            if os.path.exists(CLIENTES_DIR):
+                negocios_disponibles = [d for d in os.listdir(CLIENTES_DIR) if os.path.isdir(os.path.join(CLIENTES_DIR, d))]
+        
+        # Último respaldo si todo lo demás falla
+        if not negocios_disponibles:
+            negocios_disponibles = ["15382273-5", "77297004-8"]
 
         tab_lic, tab_crear, tab_mant = st.tabs(["⚙️ Licencias", "➕ Crear Negocio", "🧹 Mantenimiento"])
         
