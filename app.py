@@ -3207,14 +3207,21 @@ elif menu == "⚙️ Configuración General":
 
         rut_actual = st.session_state.get("negocio_seleccionado")
 
-        # --- 0. OBTENER EL ID INTERNO DE LA EMPRESA ---
+        # --- 0. OBTENER EL ID INTERNO DE LA EMPRESA Y SUS MÓDULOS PERMITIDOS POR EL DESARROLLADOR ---
         empresa_id_actual = None
+        modulos_permitidos_desarrollador = []
         try:
-            res_empresa = supabase.table("empresas").select("id").eq("rut_empresa", rut_actual).execute()
+            res_empresa = supabase.table("empresas").select("id, rut_empresa").eq("rut_empresa", rut_actual).execute()
             if res_empresa.data:
                 empresa_id_actual = res_empresa.data[0]["id"]
         except Exception as e:
             st.error(f"⚠️ Error conectando con la tabla empresas: {e}")
+
+        # Cargamos los permisos que el desarrollador asignó a este negocio (desde tu función global de licencias)
+        db_permisos_dev = cargar_permisos() if 'cargar_permisos' in globals() else {}
+        if rut_actual in db_permisos_dev:
+            # Filtramos solo los módulos que el desarrollador marcó como True (excluyendo el Home que siempre va por defecto)
+            modulos_permitidos_desarrollador = [mod for mod, activo in db_permisos_dev[rut_actual].items() if activo]
 
         if not empresa_id_actual:
             st.warning("⚠️ No se encontró el ID de la empresa. Verifica la conexión.")
@@ -3263,7 +3270,8 @@ elif menu == "⚙️ Configuración General":
             modulos_str = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("modulos", "")
             def_modulos = modulos_str.split(", ") if modulos_str else []
 
-            todos_los_modulos = [
+            # REGLA DE ORO: El propietario solo puede seleccionar los módulos que el DESARROLLADOR habilitó para este negocio
+            todos_los_modulos_sistema = [
                 "🏠 Home / Bienvenida", "📊 Dashboard Ejecutivo", "📦 Inventario y Productos", 
                 "💰 Módulo de Ventas (POS)", "🛒 Registrar Compra (CPP)", "📉 Mermas y Ajustes", 
                 "📈 Informes y Movimientos (Kardex)", "⚠️ Control y Gestión de Inventario", 
@@ -3272,7 +3280,11 @@ elif menu == "⚙️ Configuración General":
                 "🏦 Conciliación y Retiros Seguros", "⚙️ Configuración General", "🔑 Control Maestro de Licencias"
             ]
 
-            # 👇 AQUÍ ESTÁ LA MAGIA: clear_on_submit=True limpia las celdas automáticamente
+            if modulos_permitidos_desarrollador:
+                todos_los_modulos = [m for m in todos_los_modulos_sistema if m in modulos_permitidos_desarrollador or m == "🏠 Home / Bienvenida"]
+            else:
+                todos_los_modulos = todos_los_modulos_sistema
+
             with st.form("form_crear_editar_operador", clear_on_submit=True):
                 col_u1, col_u2 = st.columns(2)
                 with col_u1:
@@ -3283,7 +3295,7 @@ elif menu == "⚙️ Configuración General":
                     idx_rol = ["Cajero / Vendedor", "Bodeguero", "Administrador"].index(def_rol) if def_rol in ["Cajero / Vendedor", "Bodeguero", "Administrador"] else 0
                     nuevo_rol_usr = st.selectbox("Rol Principal", options=["Cajero / Vendedor", "Bodeguero", "Administrador"], index=idx_rol)
 
-                st.markdown("**🔐 Asignación de Permisos (Módulos)**")
+                st.markdown("**🔐 Asignación de Permisos (Limitado por Licencia del Desarrollador)**")
                 modulos_seleccionados = st.multiselect(
                     "Selecciona a qué módulos podrá entrar este usuario:",
                     options=todos_los_modulos,
@@ -3318,16 +3330,6 @@ elif menu == "⚙️ Configuración General":
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error al guardar en Supabase: {e}")
-
-            if not es_nuevo:
-                if st.button(f"🗑️ Eliminar usuario '{def_nombre}'", type="secondary"):
-                    try:
-                        id_db = db_usuarios[usuario_seleccionado]["id"]
-                        supabase.table("usuarios").delete().eq("id", id_db).execute()
-                        st.success("Usuario eliminado del sistema.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error al eliminar: {e}")
 
             if not es_nuevo:
                 if st.button(f"🗑️ Eliminar usuario '{def_nombre}'", type="secondary"):
