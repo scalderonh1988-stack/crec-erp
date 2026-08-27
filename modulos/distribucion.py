@@ -8,12 +8,23 @@ def mostrar_modulo_distribucion(supabase_client=None):
     tipo_usuario = st.session_state.get("tipo_usuario", "Propietario")
     negocio_actual = st.session_state.get("negocio_actual", "general")
     
+    # --- 🏠 ENCABEZADO ESTÁNDAR CON BOTÓN VOLVER AL HOME ---
+    col_titulo, col_btn = st.columns([4, 1])
+    with col_titulo:
+        nombre_mostrar = st.session_state.get('nombre_empresa', negocio_actual)
+        st.subheader(f"🚚 Logística y Distribución (Negocio: {nombre_mostrar})")
+    with col_btn:
+        st.write("")
+        if st.button("🏠 Volver al Home", use_container_width=True, key="btn_home_distribucion_top"):
+            st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
+            st.rerun()
+            
+    st.divider()
+
     if tipo_usuario == "Vendedor":
-        st.subheader("📱 Módulo de Preventa en Terreno (Vendedor)")
+        st.info("📱 Módulo de Preventa en Terreno (Vendedor)")
         renderizar_pestana_vendedor(supabase, negocio_actual)
     else:
-        st.subheader("🚚 Módulo de Logística, Preventa y Distribución en Bloque")
-        
         tab_vendedor, tab_bodega, tab_facturacion = st.tabs([
             "📱 1. Vendedor (Notas de Pedido)", 
             "📦 2. Bodega (Picking y Checklist)", 
@@ -46,7 +57,6 @@ def renderizar_pestana_vendedor(supabase, negocio_actual):
         cliente_rut_activo = None
         cliente_nombre_activo = None
         
-        # Consultar clientes reales en Supabase filtrando por id_negocio
         lista_nombres_clientes = []
         dict_clientes_info = {}
         
@@ -111,7 +121,7 @@ def renderizar_pestana_vendedor(supabase, negocio_actual):
     try:
         if supabase:
             res_prod = supabase.table("productos").select("codigo, nombre, stock").eq("id_negocio", str(negocio_actual)).execute()
-            if not res_prod.data: # Fallback por si la tabla productos usa otro filtro o no tiene id_negocio estricto
+            if not res_prod.data:
                 res_prod = supabase.table("productos").select("codigo, nombre, stock").execute()
                 
             if res_prod.data:
@@ -204,7 +214,6 @@ def renderizar_pestana_bodega(supabase, negocio_actual):
 
     for ped in pedidos_pendientes:
         with st.expander(f"📦 Pedido #{ped['id']} — Cliente: {ped['cliente_nombre']} (Vendedor: {ped['vendedor']})", expanded=True):
-            # Cargar detalles del pedido
             detalles_pedido = []
             try:
                 if supabase:
