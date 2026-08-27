@@ -3207,9 +3207,8 @@ elif menu == "⚙️ Configuración General":
 
         rut_actual = st.session_state.get("negocio_seleccionado")
 
-        # --- 0. OBTENER EL ID INTERNO DE LA EMPRESA Y SUS MÓDULOS PERMITIDOS POR EL DESARROLLADOR ---
+        # --- 0. OBTENER EL ID INTERNO DE LA EMPRESA Y MÓDULOS PERMITIDOS ---
         empresa_id_actual = None
-        modulos_permitidos_desarrollador = []
         try:
             res_empresa = supabase.table("empresas").select("id, rut_empresa").eq("rut_empresa", rut_actual).execute()
             if res_empresa.data:
@@ -3217,11 +3216,23 @@ elif menu == "⚙️ Configuración General":
         except Exception as e:
             st.error(f"⚠️ Error conectando con la tabla empresas: {e}")
 
-        # Cargamos los permisos que el desarrollador asignó a este negocio (desde tu función global de licencias)
+        # Definir los módulos totales del sistema de forma segura
+        todos_los_modulos_sistema = [
+            "🏠 Home / Bienvenida", "📊 Dashboard Ejecutivo", "📦 Inventario y Productos", 
+            "💰 Módulo de Ventas (POS)", "🛒 Registrar Compra (CPP)", "📉 Mermas y Ajustes", 
+            "📈 Informes y Movimientos (Kardex)", "⚠️ Control y Gestión de Inventario", 
+            "📊 Módulo de Finanzas", "📒 Cuadratura Diaria", "📑 Cuentas por Cobrar", 
+            "📈 Reportes y Analítica", "📚 Historial de Ventas", "🔄 Notas de Crédito", 
+            "🏦 Conciliación y Retiros Seguros", "⚙️ Configuración General", "🔑 Control Maestro de Licencias"
+        ]
+
+        # Rescatar los permisos que el desarrollador configuró (vía función o respaldo global)
         db_permisos_dev = cargar_permisos() if 'cargar_permisos' in globals() else {}
         if rut_actual in db_permisos_dev:
-            # Filtramos solo los módulos que el desarrollador marcó como True (excluyendo el Home que siempre va por defecto)
             modulos_permitidos_desarrollador = [mod for mod, activo in db_permisos_dev[rut_actual].items() if activo]
+        else:
+            # Si no hay registro estricto previo, permitimos todos por defecto para no bloquear al propietario
+            modulos_permitidos_desarrollador = todos_los_modulos_sistema
 
         if not empresa_id_actual:
             st.warning("⚠️ No se encontró el ID de la empresa. Verifica la conexión.")
@@ -3270,19 +3281,9 @@ elif menu == "⚙️ Configuración General":
             modulos_str = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("modulos", "")
             def_modulos = modulos_str.split(", ") if modulos_str else []
 
-            # REGLA DE ORO: El propietario solo puede seleccionar los módulos que el DESARROLLADOR habilitó para este negocio
-            todos_los_modulos_sistema = [
-                "🏠 Home / Bienvenida", "📊 Dashboard Ejecutivo", "📦 Inventario y Productos", 
-                "💰 Módulo de Ventas (POS)", "🛒 Registrar Compra (CPP)", "📉 Mermas y Ajustes", 
-                "📈 Informes y Movimientos (Kardex)", "⚠️ Control y Gestión de Inventario", 
-                "📊 Módulo de Finanzas", "📒 Cuadratura Diaria", "📑 Cuentas por Cobrar", 
-                "📈 Reportes y Analítica", "📚 Historial de Ventas", "🔄 Notas de Crédito", 
-                "🏦 Conciliación y Retiros Seguros", "⚙️ Configuración General", "🔑 Control Maestro de Licencias"
-            ]
-
-            if modulos_permitidos_desarrollador:
-                todos_los_modulos = [m for m in todos_los_modulos_sistema if m in modulos_permitidos_desarrollador or m == "🏠 Home / Bienvenida"]
-            else:
+            # Cruzamos los módulos permitidos asegurando que nunca quede vacío
+            todos_los_modulos = [m for m in todos_los_modulos_sistema if m in modulos_permitidos_desarrollador or m == "🏠 Home / Bienvenida"]
+            if not todos_los_modulos:
                 todos_los_modulos = todos_los_modulos_sistema
 
             with st.form("form_crear_editar_operador", clear_on_submit=True):
@@ -3400,7 +3401,6 @@ elif menu == "⚙️ Configuración General":
             img.save(ruta_logo, "PNG")
             st.success("✅ ¡Logotipo procesado y actualizado con éxito!")
             st.rerun()
-
     st.markdown("---")
     st.markdown("### 🗂️ Administración de archivos")
     st.write("Gestiona la base de datos de tu negocio: descarga plantillas en blanco, exporta tu información actual o importa cargas masivas.")
