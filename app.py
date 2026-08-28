@@ -3474,6 +3474,59 @@ elif menu == "💰 Módulo de Ventas (POS)":
     bodega_actual = st.selectbox("🏢 Selecciona la Bodega / Sucursal de origen:", bodegas_pos)
     st.markdown("---")
 
+    # --- 🔍 MÓDULO OPTIMIZADO PARA LECTOR DE CÓDIGO DE BARRAS ---
+    if "input_scanner" not in st.session_state:
+        st.session_state.input_scanner = ""
+
+    def procesar_escaneo_pos():
+        codigo_leido = st.session_state.get("input_scanner", "").strip()
+        if codigo_leido:
+            # Buscamos en tu base de datos local o dataframe activo por el campo Código
+            global df_base
+            if df_base is not None and not df_base.empty:
+                # Asegurar formato de columna Código
+                df_match = df_base[df_base['Código'].astype(str).str.strip() == codigo_leido]
+                if not df_match.empty:
+                    prod = df_match.iloc[0]
+                    # Agregamos o incrementamos en el carrito de ventas
+                    codigo_prod = str(prod['Código'])
+                    nombre_prod = str(prod.get('Descripción', prod.get('Nombre', 'Sin Nombre')))
+                    precio_prod = float(prod.get('Precio Venta', prod.get('Precio', 0)))
+                    
+                    # Verificar si ya está en el carrito para sumar cantidad o agregarlo nuevo
+                    encontrado_en_carrito = False
+                    for item in st.session_state.carrito_ventas:
+                        if str(item["Código"]) == codigo_prod:
+                            item["Cantidad"] += 1.0
+                            item["Subtotal"] = item["Cantidad"] * item["Precio Unitario"]
+                            encontrado_en_carrito = True
+                            break
+                    
+                    if not encontrado_en_carrito:
+                        st.session_state.carrito_ventas.append({
+                            "Código": codigo_prod,
+                            "Descripción": nombre_prod,
+                            "Cantidad": 1.0,
+                            "Precio Unitario": precio_prod,
+                            "Subtotal": precio_prod
+                        })
+                    st.success(f"✔️ Agregado: {nombre_prod}")
+                else:
+                    st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_leido}")
+            else:
+                st.error("⚠️ La base de datos de productos no está cargada.")
+        # Limpiamos el input para el próximo escaneo continuo
+        st.session_state.input_scanner = ""
+
+    # Input inteligente que dispara la búsqueda al presionar Enter con el lector físico
+    st.text_input(
+        "🔍 Escanea el código de barras (El cursor debe estar aquí):", 
+        key="input_scanner", 
+        on_change=procesar_escaneo_pos,
+        help="El lector escribirá aquí y buscará automáticamente el producto al presionar Enter."
+    )
+    st.markdown("---")
+
     # --- 1. CABECERA (Modificada con Selector de Tipo de Emisión) ---
     col_doc1, col_doc2, col_doc3 = st.columns(3)
     with col_doc1:
@@ -3585,7 +3638,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
             col_f1, col_f2 = st.columns(2)
             with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def)
             with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def)
-
+            
     # --- PANTALLA DE ÉXITO ---
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y archivada con éxito!")
