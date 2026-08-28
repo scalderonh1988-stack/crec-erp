@@ -200,42 +200,66 @@ PAGO: {forma_pago.upper()}
 
         if not df_nube.empty:
             metodo_lectura = st.radio("Método de entrada de código:", ["⌨️ Digitar / Lector Físico", "📷 Usar Cámara del Celular"], horizontal=True, key="radio_metodo_pos")
-            codigo_escan_pos = ""
+            
+            # Inicializar estados si no existen
+            if "prod_seleccionado_key" not in st.session_state:
+                st.session_state.prod_seleccionado_key = "-- Selecciona o busca un producto --"
+            if "precio_actual_input" not in st.session_state:
+                st.session_state.precio_actual_input = 0.0
+
+            # Opciones para el selectbox
+            opciones_productos = ["-- Selecciona o busca un producto --"] + [f"{row['codigo']} - {row['descripcion']}" for idx, row in df_nube.iterrows()]
 
             if metodo_lectura == "📷 Usar Cámara del Celular":
                 foto_capturada = st.camera_input("Capturar código de barras", key="cam_pos")
                 if foto_capturada is not None:
                     st.success("✔️ ¡Foto capturada con éxito!")
             else:
-                codigo_escan_pos = st.text_input("📷 Digita el código o usa tu pistola láser:", key="input_escan_pos")
+                # Callback para cuando usen la pistola láser o escriban el código y presionen Enter
+                def procesar_codigo_escaneado():
+                    codigo_ingresado = st.session_state.get("input_escan_pos", "").strip()
+                    if codigo_ingresado:
+                        match_scan = df_nube[df_nube['codigo'].astype(str) == str(codigo_ingresado)]
+                        if not match_scan.empty:
+                            encontrado_str = f"{match_scan.iloc[0]['codigo']} - {match_scan.iloc[0]['descripcion']}"
+                            st.session_state.prod_seleccionado_key = encontrado_str
+                            st.session_state.precio_actual_input = float(match_scan.iloc[0]['precio_venta'] or 0.0)
+                            st.success(f"✔️ Producto detectado por lector: {encontrado_str}")
+                        else:
+                            st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_ingresado}")
 
-            opciones_productos = ["-- Selecciona o busca un producto --"] + [f"{row['codigo']} - {row['descripcion']}" for idx, row in df_nube.iterrows()]
-            prod_sugerido_pos_idx = 0
-       
-            if codigo_escan_pos:
-                match_pos = df_nube[df_nube['codigo'].astype(str) == str(codigo_escan_pos)]
-                if not match_pos.empty:
-                    match_str_pos = f"{match_pos.iloc[0]['codigo']} - {match_pos.iloc[0]['descripcion']}"
-                    if match_str_pos in opciones_productos:
-                        prod_sugerido_pos_idx = opciones_productos.index(match_str_pos)
-                        st.success(f"✔️ Producto detectado: {match_str_pos}")
-                        st.session_state.precio_actual_input = float(match_pos.iloc[0]['precio_venta'] or 0.0)
-                        st.session_state.ultimo_prod_sel = match_str_pos
+                st.text_input(
+                    "📷 Digita el código o usa tu pistola láser:", 
+                    key="input_escan_pos", 
+                    on_change=procesar_codigo_escaneado,
+                    help="El lector escribirá aquí y seleccionará el producto automáticamente al presionar Enter."
+                )
 
-            if "ultimo_prod_sel" not in st.session_state: st.session_state.ultimo_prod_sel = ""
-            if "precio_actual_input" not in st.session_state: st.session_state.precio_actual_input = 0.0
+            # Asegurar que el valor actual exista en la lista de opciones
+            current_val = st.session_state.prod_seleccionado_key
+            if current_val not in opciones_productos:
+                current_val = "-- Selecciona o busca un producto --"
+            idx_actual = opciones_productos.index(current_val)
 
-            producto_seleccionado = st.selectbox("O selecciona manualmente el producto:", options=opciones_productos, index=prod_sugerido_pos_idx, key="selectbox_producto_venta")
-        
-            if producto_seleccionado != st.session_state.ultimo_prod_sel:
-                st.session_state.ultimo_prod_sel = producto_seleccionado
-                if producto_seleccionado != "-- Selecciona o busca un producto --":
-                    c_buscado = producto_seleccionado.split(" - ")[0]
+            # Selectbox sincronizado
+            def actualizar_desde_selectbox():
+                val_elegido = st.session_state.selectbox_producto_venta
+                st.session_state.prod_seleccionado_key = val_elegido
+                if val_elegido != "-- Selecciona o busca un producto --":
+                    c_buscado = val_elegido.split(" - ")[0]
                     match_row = df_nube[df_nube['codigo'].astype(str) == str(c_buscado)]
                     if not match_row.empty:
                         st.session_state.precio_actual_input = float(match_row.iloc[0]['precio_venta'] or 0.0)
                 else:
                     st.session_state.precio_actual_input = 0.0
+
+            producto_seleccionado = st.selectbox(
+                "O selecciona manualmente el producto:", 
+                options=opciones_productos, 
+                index=idx_actual, 
+                key="selectbox_producto_venta",
+                on_change=actualizar_desde_selectbox
+            )
 
             with st.form("form_agregar_item"):
                 col_cant, col_precio_input = st.columns(2)
@@ -247,10 +271,10 @@ PAGO: {forma_pago.upper()}
                 btn_agregar = st.form_submit_button("➕ Agregar al Carrito de Venta")
 
                 if btn_agregar:
-                    if producto_seleccionado == "-- Selecciona o busca un producto --":
+                    if st.session_state.prod_seleccionado_key == "-- Selecciona o busca un producto --":
                         st.warning("⚠️ Selecciona un producto válido.")
                     else:
-                        c_buscado = producto_seleccionado.split(" - ")[0]
+                        c_buscado = st.session_state.prod_seleccionado_key.split(" - ")[0]
                         match_row = df_nube[df_nube['codigo'].astype(str) == str(c_buscado)]
                         stock_disponible = float(match_row.iloc[0]['stock'] or 0.0) if not match_row.empty else 0.0
 
@@ -262,11 +286,13 @@ PAGO: {forma_pago.upper()}
                         else:
                             st.session_state.carrito_ventas.append({
                                 "Código": c_buscado,
-                                "Descripción": producto_seleccionado.split(" - ")[1],
+                                "Descripción": st.session_state.prod_seleccionado_key.split(" - ")[1],
                                 "Cantidad": float(cantidad_vendida),
                                 "Precio Unitario": float(precio_venta),
                                 "Subtotal": float(cantidad_vendida) * float(precio_venta)
                             })
+                            # Limpiamos selecciones para la siguiente venta rápida
+                            st.session_state.prod_seleccionado_key = "-- Selecciona o busca un producto --"
                             st.success("✅ Producto agregado con éxito.")
                             st.rerun()
         else:
