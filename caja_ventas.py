@@ -116,7 +116,9 @@ def mostrar_modulo_ventas(ruta_negocio):
                         lineas_productos = ""
                         
                         for item in st.session_state.carrito_ventas:
-                            lineas_productos += f"- {item['Descripción']} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
+                            cant_val = float(item['Cantidad'])
+                            cant_str = f"{int(cant_val)}" if cant_val.is_integer() else f"{cant_val:.3f}"
+                            lineas_productos += f"- {item['Descripción']} (x{cant_str}) ... ${item['Subtotal']:,.2f}\n"
                             
                             registros_para_nube.append({
                                 "rut_empresa": rut_actual,
@@ -188,7 +190,8 @@ PAGO: {forma_pago.upper()}
     else:
         df_nube = pd.DataFrame()
         try:
-            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock").eq("rut_empresa", rut_actual).limit(10000).execute()
+            # Traemos la columna 'unidad' desde Supabase
+            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, unidad").eq("rut_empresa", rut_actual).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
         except Exception as e:
@@ -221,7 +224,6 @@ PAGO: {forma_pago.upper()}
                         else:
                             st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_ingresado}")
 
-                # 🔍 ÚNICA CAJA DEL LECTOR DE CÓDIGO DE BARRAS
                 st.text_input(
                     "🔍 Escanea el código de barras (El cursor debe estar aquí):", 
                     key="input_escan_pos", 
@@ -253,10 +255,41 @@ PAGO: {forma_pago.upper()}
                 on_change=actualizar_desde_selectbox
             )
 
+            # --- IDENTIFICAR UNIDAD Y DETERMINAR FORMATO DE CANTIDAD ---
+            unidad_actual = "UN"
+            if st.session_state.prod_seleccionado_key != "-- Selecciona o busca un producto --":
+                c_buscado = st.session_state.prod_seleccionado_key.split(" - ")[0]
+                match_row = df_nube[df_nube['codigo'].astype(str) == str(c_buscado)]
+                if not match_row.empty and 'unidad' in match_row.columns:
+                    val_u = str(match_row.iloc[0]['unidad'] or 'UN').strip().upper()
+                    if val_u:
+                        unidad_actual = val_u
+
+            # Es decimal si es GR, KG, GRAMO, etc.
+            es_decimal = unidad_actual in ["GR", "KG", "GRAMO", "GRAMOS", "KILO", "KILOS", "LT", "LITRO"]
+
             with st.form("form_agregar_item"):
                 col_cant, col_precio_input = st.columns(2)
                 with col_cant:
-                    cantidad_vendida = st.number_input("Cantidad", min_value=1.0, step=1.0, value=1.0, format="%.2f")
+                    if es_decimal:
+                        cantidad_vendida = st.number_input(
+                            "Cantidad (Decimales / GR)", 
+                            min_value=0.001, 
+                            step=0.010, 
+                            value=1.000, 
+                            format="%.3f",
+                            key=f"cant_dec_{st.session_state.prod_seleccionado_key}"
+                        )
+                    else:
+                        cantidad_vendida = st.number_input(
+                            "Cantidad (Enteros / UN)", 
+                            min_value=1, 
+                            step=1, 
+                            value=1, 
+                            format="%d",
+                            key=f"cant_int_{st.session_state.prod_seleccionado_key}"
+                        )
+
                 with col_precio_input:
                     precio_venta = st.number_input("Precio Unitario ($)", min_value=0.0, step=1.0, value=float(st.session_state.precio_actual_input))
 
@@ -281,7 +314,8 @@ PAGO: {forma_pago.upper()}
                                 "Descripción": st.session_state.prod_seleccionado_key.split(" - ")[1],
                                 "Cantidad": float(cantidad_vendida),
                                 "Precio Unitario": float(precio_venta),
-                                "Subtotal": float(cantidad_vendida) * float(precio_venta)
+                                "Subtotal": float(cantidad_vendida) * float(precio_venta),
+                                "Unidad": unidad_actual
                             })
                             st.session_state.prod_seleccionado_key = "-- Selecciona o busca un producto --"
                             st.success("✅ Producto agregado con éxito.")
@@ -302,9 +336,14 @@ PAGO: {forma_pago.upper()}
                 with col_c1: st.text(item["Código"])
                 with col_c2: st.text(item["Descripción"])
                 with col_c3:
-                    nc = st.number_input("Cant", min_value=0.01, step=0.1, value=float(item["Cantidad"]), format="%.2f", key=f"cant_{i}", label_visibility="collapsed")
-                    st.session_state.carrito_ventas[i]["Cantidad"] = nc
-                    st.session_state.carrito_ventas[i]["Subtotal"] = nc * st.session_state.carrito_ventas[i]["Precio Unitario"]
+                    item_u = str(item.get("Unidad", "UN")).strip().upper()
+                    if item_u in ["GR", "KG", "GRAMO", "GRAMOS", "KILO", "KILOS", "LT", "LITRO"]:
+                        nc = st.number_input("Cant", min_value=0.001, step=0.01, value=float(item["Cantidad"]), format="%.3f", key=f"cant_{i}", label_visibility="collapsed")
+                    else:
+                        nc = st.number_input("Cant", min_value=1, step=1, value=int(item["Cantidad"]), format="%d", key=f"cant_{i}", label_visibility="collapsed")
+                    
+                    st.session_state.carrito_ventas[i]["Cantidad"] = float(nc)
+                    st.session_state.carrito_ventas[i]["Subtotal"] = float(nc) * st.session_state.carrito_ventas[i]["Precio Unitario"]
                 with col_c4:
                     np = st.number_input("Prec", min_value=0.0, step=1.0, value=float(item["Precio Unitario"]), key=f"prec_{i}", label_visibility="collapsed")
                     st.session_state.carrito_ventas[i]["Precio Unitario"] = np
