@@ -776,7 +776,6 @@ def mostrar_modulo_reportes_avanzados(ruta_negocio):
             except Exception as e:
                 st.error(f"❌ Error al generar el PDF: {e}")
 
-
 # ==============================================================================
 # --- LISTA OFICIAL DE MÓDULOS Y FUNCIONES DE ASIGNACIÓN ---
 # ==============================================================================
@@ -815,7 +814,6 @@ def normalizar_lista_modulos(raw_modulos):
 
     resultado = []
     for item in items:
-        # Busca coincidencia de nombre o icono con la lista oficial de módulos
         coincidencia = next((mod for mod in modulos_totales if item.lower() in mod.lower() or mod.lower() in item.lower()), item)
         if coincidencia not in resultado:
             resultado.append(coincidencia)
@@ -887,7 +885,7 @@ if not st.session_state.autenticado:
                 else:
                     acceso_exitoso = False
                     
-                    # 1.5 Validación Propietario en Supabase
+                    # 1.5 Validación Propietario en Supabase (Dueño del Negocio)
                     if supabase_client:
                         try:
                             res_dueño = supabase_client.table("empresas").select("*").eq("rut_empresa", usuario_limpio).execute()
@@ -924,7 +922,7 @@ if not st.session_state.autenticado:
                         except Exception:
                             pass
                     
-                    # 2. Validación Operadores / Vendedores
+                    # 2. Validación Usuarios Operativos (Vendedores, Cajeros, Bodegueros, etc.)
                     if not acceso_exitoso and supabase_client:
                         try:
                             res_usr = supabase_client.table("usuarios").select("*").eq("rut_usuario", usuario_limpio).execute()
@@ -948,9 +946,10 @@ if not st.session_state.autenticado:
                                         if lic_activa and not expirada_por_fecha:
                                             rut_negocio = datos_empresa.get("rut_empresa")
                                             nombre_negocio = datos_empresa.get("empresa_nombre")
-                                            rol_encontrado = str(datos_usr.get("rol", "Cajero / Vendedor"))
+                                            rol_encontrado = str(datos_usr.get("rol", "Operador")).strip()
                                             
-                                            if "vendedor" in rol_encontrado.lower():
+                                            # REGLA POR DEFECTO: Vendedor en Ruta (Sólo Preventa)
+                                            if "vendedor en ruta" in rol_encontrado.lower() or rol_encontrado.lower() == "vendedor":
                                                 st.session_state.autenticado = True
                                                 st.session_state.es_admin_dev = False
                                                 st.session_state.negocio_actual = rut_negocio
@@ -964,12 +963,16 @@ if not st.session_state.autenticado:
                                                 acceso_exitoso = True
                                                 st.rerun()
                                             else:
-                                                # 🔄 PROCESADO Y CONVERSIÓN DE MÓDULOS DE SUPABASE
+                                                # OTROS ROLES: Módulos configurados individualmente por el Propietario en la BD
                                                 raw_modulos = datos_usr.get("modulos", "")
-                                                modulos_operador = normalizar_lista_modulos(raw_modulos)
+                                                
+                                                if str(raw_modulos).upper().strip() == "ALL":
+                                                    modulos_operador = list(modulos_totales)
+                                                else:
+                                                    modulos_operador = normalizar_lista_modulos(raw_modulos)
                                                 
                                                 if not raw_modulos and len(modulos_operador) <= 1:
-                                                    st.error("❌ Tu usuario no tiene módulos asignados.")
+                                                    st.error("❌ El Propietario aún no ha asignado módulos a esta cuenta.")
                                                     acceso_exitoso = True 
                                                 else:
                                                     st.session_state.autenticado = True
@@ -995,7 +998,6 @@ if not st.session_state.autenticado:
                         intentos_restantes = 3 - st.session_state.intentos_fallidos
                         st.error(f"❌ Usuario no encontrado o contraseña incorrecta. Te quedan {intentos_restantes} intento(s).")
 
-    # 🛑 FRENO DE MANO ABSOLUTO: Si llegó aquí sin autenticarse, detiene la ejecución inmediatamente.
     st.stop()
 
 
@@ -1023,8 +1025,6 @@ st.session_state.negocio_seleccionado = negocio_seleccionado
 
 
 # --- 6. BARRA LATERAL, PERMISOS Y PANEL DESARROLLADOR ---
-
-# 🚨 BLINDAJE CONTINUO: Verificar si la licencia sigue activa y vigente en cada interacción
 if not st.session_state.get("es_admin_dev", False):
     rut_actual = st.session_state.get("negocio_seleccionado")
     supabase_client = globals().get('supabase', None) or st.session_state.get("supabase", None)
@@ -1046,7 +1046,6 @@ if not st.session_state.get("es_admin_dev", False):
 
                 lic_valida = (estado_lic in ["true", "1", "t"]) and not expirada_por_fecha
 
-                # Si está inactiva o expirada por fecha, bloquea todo el ERP
                 if not lic_valida:
                     st.error("🚨 **LICENCIA EXPIRADA O INACTIVA**")
                     st.info("Tu suscripción no se encuentra activa. Para seguir utilizando el sistema, realiza la renovación.")
@@ -1056,7 +1055,6 @@ if not st.session_state.get("es_admin_dev", False):
                         st.session_state.clear()
                         st.rerun()
                     
-                    # Detiene totalmente el renderizado de la barra lateral y los módulos
                     st.stop()
         except Exception:
             pass
@@ -1115,7 +1113,6 @@ def guardar_permisos(datos):
 if st.session_state.get("es_admin_dev", False) and "🔑 Control Maestro de Licencias" not in modulos_totales:
     modulos_totales.append("🔑 Control Maestro de Licencias")
 
-# Panel exclusivo para Administrador Master
 if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
@@ -1233,7 +1230,7 @@ if "formas_pago_erp" not in st.session_state:
         "Transferencia Electrónica", "Cheque", "Cuenta Corriente / Crédito Directo"
     ]
 
-# Filtrado de permisos por empresa
+# Determinación de módulos según el rol/asignación del Propietario
 db_permisos_actuales = cargar_permisos()
 negocio_actual_sesion = st.session_state.get('negocio_seleccionado', '')
 
@@ -1243,8 +1240,10 @@ if st.session_state.get("modulos_permitidos") == "ALL":
         lista_modulos_permitidos = [mod for mod in modulos_totales if permisos_negocio.get(mod, True)]
     else:
         lista_modulos_permitidos = list(modulos_totales)
+elif isinstance(st.session_state.get("modulos_permitidos"), list):
+    lista_modulos_permitidos = list(st.session_state.get("modulos_permitidos"))
 else:
-    lista_modulos_permitidos = st.session_state.get("modulos_permitidos", ["🏠 Home / Bienvenida"])
+    lista_modulos_permitidos = ["🏠 Home / Bienvenida"]
 
 if "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
     lista_modulos_permitidos.insert(0, "🏠 Home / Bienvenida")
@@ -1332,7 +1331,7 @@ if menu == "🏠 Home / Bienvenida":
                         st.session_state.menu_seleccionado = nombre_destino
                         st.rerun()
     else:
-        st.info("ℹ️ Tu licencia actual no tiene módulos activos asignados.")
+        st.info("ℹ️ Tu usuario no tiene módulos activos asignados. Contacta al Administrador.")
 
 # --- 9. RENDERIZADO DE MÓDULOS DE INVENTARIO Y REGISTROS ---
 elif menu == "📦 Inventario y Productos":
@@ -1459,51 +1458,51 @@ elif menu == "📦 Inventario y Productos":
             st.error(f"⚠️ Error al conectar con Supabase: {e}")
 
     with tab_inv2:
-            st.markdown("#### 👥 Maestro de Clientes")
-            df_clientes = pd.DataFrame()
-            try:
-                res_cli = supabase.table("clientes").select("*").eq("id_negocio", rut_actual).execute()
-                if res_cli.data:
-                    df_clientes = pd.DataFrame(res_cli.data)
-                    renames = {}
-                    if "nombre" in df_clientes.columns and "Nombre_Cliente" not in df_clientes.columns:
-                        renames["nombre"] = "Nombre_Cliente"
-                    if "direccion" in df_clientes.columns and "Direccion" not in df_clientes.columns:
-                        renames["direccion"] = "Direccion"
-                    if renames:
-                        df_clientes = df_clientes.rename(columns=renames)
-            except Exception as e:
-                st.error(f"⚠️ Error cargando clientes desde la nube: {e}")
+        st.markdown("#### 👥 Maestro de Clientes")
+        df_clientes = pd.DataFrame()
+        try:
+            res_cli = supabase.table("clientes").select("*").eq("id_negocio", rut_actual).execute()
+            if res_cli.data:
+                df_clientes = pd.DataFrame(res_cli.data)
+                renames = {}
+                if "nombre" in df_clientes.columns and "Nombre_Cliente" not in df_clientes.columns:
+                    renames["nombre"] = "Nombre_Cliente"
+                if "direccion" in df_clientes.columns and "Direccion" not in df_clientes.columns:
+                    renames["direccion"] = "Direccion"
+                if renames:
+                    df_clientes = df_clientes.rename(columns=renames)
+        except Exception as e:
+            st.error(f"⚠️ Error cargando clientes desde la nube: {e}")
 
-            st.dataframe(df_clientes, use_container_width=True)
+        st.dataframe(df_clientes, use_container_width=True)
+        
+        with st.form("form_nuevo_cliente_local", clear_on_submit=True):
+            st.markdown("##### Registrar Cliente Nuevo")
+            cl_nom = st.text_input("Nombre / Razón Social")
+            cl_rut = st.text_input("RUT / Identificación")
+            cl_tel = st.text_input("Teléfono")
+            cl_mail = st.text_input("Correo Electrónico")
+            cl_dir = st.text_input("Dirección")
             
-            with st.form("form_nuevo_cliente_local", clear_on_submit=True):
-                st.markdown("##### Registrar Cliente Nuevo")
-                cl_nom = st.text_input("Nombre / Razón Social")
-                cl_rut = st.text_input("RUT / Identificación")
-                cl_tel = st.text_input("Teléfono")
-                cl_mail = st.text_input("Correo Electrónico")
-                cl_dir = st.text_input("Dirección")
-                
-                btn_g_cliente = st.form_submit_button("💾 Guardar Cliente")
-                if btn_g_cliente:
-                    if not cl_nom or not cl_rut:
-                        st.warning("⚠️ Debes ingresar al menos el nombre y el RUT del cliente.")
-                    else:
-                        nuevo_cliente_nube = {
-                            "rut": str(cl_rut).strip(),
-                            "nombre": str(cl_nom).strip(),
-                            "telefono": str(cl_tel).strip(),
-                            "correo": str(cl_mail).strip(),
-                            "direccion": str(cl_dir).strip(),
-                            "id_negocio": str(rut_actual).strip()
-                        }
-                        try:
-                            supabase.table("clientes").upsert(nuevo_cliente_nube, on_conflict="rut").execute()
-                            st.success("✅ ¡Cliente guardado con éxito en la nube!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error al guardar en Supabase: {e}")
+            btn_g_cliente = st.form_submit_button("💾 Guardar Cliente")
+            if btn_g_cliente:
+                if not cl_nom or not cl_rut:
+                    st.warning("⚠️ Debes ingresar al menos el nombre y el RUT del cliente.")
+                else:
+                    nuevo_cliente_nube = {
+                        "rut": str(cl_rut).strip(),
+                        "nombre": str(cl_nom).strip(),
+                        "telefono": str(cl_tel).strip(),
+                        "correo": str(cl_mail).strip(),
+                        "direccion": str(cl_dir).strip(),
+                        "id_negocio": str(rut_actual).strip()
+                    }
+                    try:
+                        supabase.table("clientes").upsert(nuevo_cliente_nube, on_conflict="rut").execute()
+                        st.success("✅ ¡Cliente guardado con éxito en la nube!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar en Supabase: {e}")
 
     with tab_inv3:
         st.markdown("#### 🚚 Directorio de Proveedores")
@@ -1597,7 +1596,7 @@ elif menu == "📦 Inventario y Productos":
                         st.success(f"✅ ¡Bodega '{nombre_bodega}' creada con éxito!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en Supabase: {e}")         
+                        st.error(f"❌ Error al guardar en Supabase: {e}")       
 
 elif menu == "📚 Historial de Ventas":
     mostrar_modulo_historial_ventas(ruta_negocio)                    
