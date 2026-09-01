@@ -952,6 +952,32 @@ st.session_state.negocio_seleccionado = negocio_seleccionado
 
 
 # --- 6. BARRA LATERAL, PERMISOS Y PANEL DESARROLLADOR ---
+
+# 🚨 BLINDAJE CONTINUO: Verificar si la licencia sigue activa en cada interacción
+if not st.session_state.get("es_admin_dev", False):
+    rut_actual = st.session_state.get("negocio_seleccionado")
+    supabase_client = globals().get('supabase', None) or st.session_state.get("supabase", None)
+    
+    if rut_actual and supabase_client:
+        try:
+            res_lic = supabase_client.table("empresas").select("licencia_activa").eq("rut_empresa", rut_actual).execute()
+            if res_lic and res_lic.data:
+                estado_lic = str(res_lic.data[0].get("licencia_activa", "")).lower()
+                
+                # Si es False, "false", 0 o vacío, bloquea todo el ERP
+                if estado_lic not in ["true", "1", "t"]:
+                    st.error("🚨 **LICENCIA EXPIRADA O INACTIVA**")
+                    st.info("Tu suscripción no se encuentra activa. Para seguir utilizando el sistema, realiza la renovación.")
+                    st.link_button("💳 Renovar Licencia Ahora", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
+                    
+                    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+                        st.session_state.clear()
+                        st.rerun()
+                    
+                    # Detiene totalmente el renderizado de la barra lateral y los módulos
+                    st.stop()
+        except Exception:
+            pass
 st.sidebar.markdown(f"👤 Usuario: **{st.session_state.get('usuario_logueado', 'Ninguno')}**")
 st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.get('nombre_empresa', 'NINGUNO')}*")
 
