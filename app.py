@@ -777,7 +777,9 @@ def mostrar_modulo_reportes_avanzados(ruta_negocio):
                 st.error(f"❌ Error al generar el PDF: {e}")
 
 
+# ==============================================================================
 # --- 4. SISTEMA DE AUTENTICACIÓN Y BLINDAJE DE SEGURIDAD ---
+# ==============================================================================
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 if "negocio_actual" not in st.session_state:
@@ -792,7 +794,10 @@ if "modulos_permitidos" not in st.session_state:
     st.session_state.modulos_permitidos = ["🏠 Home / Bienvenida"]
 if "tipo_usuario" not in st.session_state:
     st.session_state.tipo_usuario = "Propietario"
+if "nombre_empresa" not in st.session_state:
+    st.session_state.nombre_empresa = ""
 
+# 🔴 VISTA DE LOGIN: Si no está autenticado, dibuja el formulario y DETIENE la ejecución
 if not st.session_state.autenticado:
     st.markdown('<p class="main-title">🔐 CREC-ERP - Acceso Blindado</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-title">Sistema protegido de gestión empresarial</p>', unsafe_allow_html=True)
@@ -815,7 +820,9 @@ if not st.session_state.autenticado:
             if not usuario_limpio or not password_limpio:
                 st.error("❌ Debes ingresar tanto el usuario como la contraseña.")
             else:
-                # 1. Validación Admin Master (Tú como Desarrollador)
+                supabase_client = globals().get('supabase', None) or st.session_state.get("supabase", None)
+
+                # 1. Validación Admin Master
                 if usuario_limpio.lower() in ["admin", "desarrollador", "simon"] and password_limpio == "SIMON1908":
                     st.session_state.autenticado = True
                     st.session_state.es_admin_dev = True
@@ -831,57 +838,48 @@ if not st.session_state.autenticado:
                 else:
                     acceso_exitoso = False
                     
-                    # 🚨 1.5 VALIDACIÓN DEL PROPIETARIO EN LA NUBE (Supabase)
-                    try:
-                        res_dueño = supabase.table("empresas").select("*").eq("rut_empresa", usuario_limpio).execute()
-                        
-                        if res_dueño.data:
-                            datos_empresa = res_dueño.data[0]
-                            pass_db = str(datos_empresa.get("password", ""))
-                            
-                            if pass_db == password_limpio:
-                                if datos_empresa.get("licencia_activa", True):
-                                    st.session_state.autenticado = True
-                                    st.session_state.es_admin_dev = False
-                                    st.session_state.negocio_actual = usuario_limpio
-                                    st.session_state.usuario_logueado = "Propietario / Administrador"
-                                    st.session_state.rol_usuario = "Propietario"
-                                    st.session_state.tipo_usuario = "Propietario"
-                                    st.session_state.modulos_permitidos = "ALL"
-                                    st.session_state.intentos_fallidos = 0
-                                    st.session_state.nombre_empresa = datos_empresa.get("empresa_nombre", usuario_limpio)
-                                    
-                                    st.success(f"👑 ¡Bienvenido Propietario de {st.session_state.nombre_empresa}!")
-                                    acceso_exitoso = True
-                                    st.rerun()
-                                else:
-                                    st.error("❌ La licencia de esta empresa se encuentra expirada o inactiva.")
-                                    acceso_exitoso = True
-                    except Exception as e:
-                        pass
-                    
-                    # 2. VALIDACIÓN ESTRICTA EN LA NUBE: Cajeros, Operadores y Vendedores en Ruta
-                    if not acceso_exitoso:
+                    # 1.5 Validación Propietario en Supabase
+                    if supabase_client:
                         try:
-                            res_usr = supabase.table("usuarios").select("*").eq("rut_usuario", usuario_limpio).execute()
-                            
-                            if res_usr.data:
+                            res_dueño = supabase_client.table("empresas").select("*").eq("rut_empresa", usuario_limpio).execute()
+                            if res_dueño and res_dueño.data:
+                                datos_empresa = res_dueño.data[0]
+                                pass_db = str(datos_empresa.get("password", ""))
+                                if pass_db == password_limpio:
+                                    if datos_empresa.get("licencia_activa", True):
+                                        st.session_state.autenticado = True
+                                        st.session_state.es_admin_dev = False
+                                        st.session_state.negocio_actual = usuario_limpio
+                                        st.session_state.usuario_logueado = "Propietario / Administrador"
+                                        st.session_state.rol_usuario = "Propietario"
+                                        st.session_state.tipo_usuario = "Propietario"
+                                        st.session_state.modulos_permitidos = "ALL"
+                                        st.session_state.intentos_fallidos = 0
+                                        st.session_state.nombre_empresa = datos_empresa.get("empresa_nombre", usuario_limpio)
+                                        acceso_exitoso = True
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ La licencia de esta empresa se encuentra expirada o inactiva.")
+                                        acceso_exitoso = True
+                        except Exception:
+                            pass
+                    
+                    # 2. Validación Operadores / Vendedores
+                    if not acceso_exitoso and supabase_client:
+                        try:
+                            res_usr = supabase_client.table("usuarios").select("*").eq("rut_usuario", usuario_limpio).execute()
+                            if res_usr and res_usr.data:
                                 datos_usr = res_usr.data[0]
-                                
                                 if str(datos_usr.get("password_hash")) == password_limpio:
                                     id_empresa = datos_usr.get("empresa_id")
-                                    res_emp = supabase.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa").eq("id", id_empresa).execute()
-                                    
-                                    if res_emp.data:
+                                    res_emp = supabase_client.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa").eq("id", id_empresa).execute()
+                                    if res_emp and res_emp.data:
                                         datos_empresa = res_emp.data[0]
-                                        
                                         if datos_empresa.get("licencia_activa", True):
                                             rut_negocio = datos_empresa.get("rut_empresa")
                                             nombre_negocio = datos_empresa.get("empresa_nombre")
-                                            
                                             rol_encontrado = str(datos_usr.get("rol", "Cajero / Vendedor"))
                                             
-                                            # 📱 DETECCIÓN DEL ROL VENDEDOR EN RUTA
                                             if "vendedor" in rol_encontrado.lower():
                                                 st.session_state.autenticado = True
                                                 st.session_state.es_admin_dev = False
@@ -893,17 +891,13 @@ if not st.session_state.autenticado:
                                                 st.session_state.menu_seleccionado = "Logística y Distribución (Preventa)"
                                                 st.session_state.intentos_fallidos = 0
                                                 st.session_state.nombre_empresa = nombre_negocio
-                                                
-                                                st.success(f"📱 ¡Bienvenido Vendedor en Ruta {st.session_state.usuario_logueado}!")
                                                 acceso_exitoso = True
                                                 st.rerun()
                                             else:
-                                                # Validaciones normales para Cajeros / Operadores
                                                 modulos_str = datos_usr.get("modulos", "")
                                                 modulos_operador = [m.strip() for m in modulos_str.split(",") if m.strip()]
-                                                
                                                 if not modulos_operador:
-                                                    st.error("❌ Tu usuario no tiene módulos asignados. Acceso denegado.")
+                                                    st.error("❌ Tu usuario no tiene módulos asignados.")
                                                     acceso_exitoso = True 
                                                 else:
                                                     st.session_state.autenticado = True
@@ -915,32 +909,36 @@ if not st.session_state.autenticado:
                                                     st.session_state.modulos_permitidos = modulos_operador
                                                     st.session_state.intentos_fallidos = 0
                                                     st.session_state.nombre_empresa = nombre_negocio
-                                                    
-                                                    st.success(f"🟢 ¡Bienvenido {st.session_state.usuario_logueado}!")
                                                     acceso_exitoso = True
                                                     st.rerun()
                                         else:
-                                            st.error("❌ La licencia de la empresa se encuentra expirada o inactiva.")
+                                            st.error("❌ La licencia de la empresa se encuentra expirada.")
                                             acceso_exitoso = True
-                        except Exception as e:
+                        except Exception:
                             pass
                         
-                    # 3. RECHAZO TOTAL SI NINGUNA VALIDACIÓN FUNCIONÓ
                     if not acceso_exitoso:
                         st.session_state.intentos_fallidos += 1
                         intentos_restantes = 3 - st.session_state.intentos_fallidos
                         st.error(f"❌ Usuario no encontrado o contraseña incorrecta. Te quedan {intentos_restantes} intento(s).")
-    
-    # 🛑 DETENER LA EJECUCIÓN SI NO ESTÁ AUTENTICADO
+
+    # 🛑 FRENO DE MANO ABSOLUTO: Si llegó aquí sin autenticarse, detiene la ejecución inmediatamente.
     st.stop()
 
 
+# ==============================================================================
+# TODO LO SIGUIENTE SOLO SE EJECUTA SI EL USUARIO YA ESTÁ AUTENTICADO
+# ==============================================================================
+
 # --- 5. CONFIGURACIÓN DE RUTAS Y ARCHIVOS DEL NEGOCIO ACTIVO ---
+CLIENTES_DIR = globals().get('CLIENTES_DIR', 'clientes')
+PERMISOS_FILE = globals().get('PERMISOS_FILE', 'permisos.json')
+
 negocio_seleccionado = st.session_state.get("negocio_actual", None)
 if negocio_seleccionado and negocio_seleccionado != "admin_general":
     ruta_negocio = os.path.join(CLIENTES_DIR, str(negocio_seleccionado))
     os.makedirs(ruta_negocio, exist_ok=True)
-    archivos_en_carpeta = os.listdir(ruta_negocio)
+    archivos_en_carpeta = os.listdir(ruta_negocio) if os.path.exists(ruta_negocio) else []
     archivo_base = next((os.path.join(ruta_negocio, f) for f in archivos_en_carpeta if f.startswith("BASE DE DATOS")), os.path.join(ruta_negocio, "BASE DE DATOS.xlsx"))
     archivo_compras = next((os.path.join(ruta_negocio, f) for f in archivos_en_carpeta if f.startswith("Libro_Compras")), os.path.join(ruta_negocio, "Libro_Compras.xlsx"))
 else:
@@ -951,52 +949,57 @@ else:
 st.session_state.negocio_seleccionado = negocio_seleccionado
 
 
-# --- 6. BARRA LATERAL, PERMISOS Y MENÚ ÚNICO ---
+# --- 6. BARRA LATERAL, PERMISOS Y PANEL DESARROLLADOR ---
+st.sidebar.markdown(f"👤 Usuario: **{st.session_state.get('usuario_logueado', 'Ninguno')}**")
+st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.get('nombre_empresa', 'NINGUNO')}*")
 
-if st.session_state.get("autenticado", False):
-    st.sidebar.markdown(f"👤 Usuario: **{st.session_state.get('usuario_logueado', 'Ninguno')}**")
-    st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.get('nombre_empresa', 'NINGUNO')}*")
-
-    if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
-        st.session_state.clear()
-        st.rerun()
+if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+    st.session_state.clear()
+    st.rerun()
 
 if not st.session_state.get("es_admin_dev", False):
     st.sidebar.write("") 
     st.sidebar.link_button("💳 Renovar Licencia Mensual", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
 
-if not st.session_state.get("es_admin_dev", False):
     try:
         rut_actual = st.session_state.get("negocio_seleccionado") 
-        res_licencia = supabase.table("empresas").select("fecha_expiracion").eq("rut_empresa", rut_actual).execute()
-        
-        if res_licencia and res_licencia.data:
-            fecha_exp_str = res_licencia.data[0].get("fecha_expiracion")
-            if fecha_exp_str and str(fecha_exp_str).strip() not in ["None", "NaT", "nan", ""]:
-                hoy = date.today()
-                fecha_exp_date = pd.to_datetime(str(fecha_exp_str)).date()
-                dias_restantes = (fecha_exp_date - hoy).days
-                
-                if 0 < dias_restantes <= 5:
-                    st.sidebar.warning(f"⚠️ **Atención:** Tu licencia expira en **{dias_restantes} días**.")
-                elif dias_restantes == 0:
-                    st.sidebar.error("🚨 **Último día:** Tu licencia expira **HOY**.")
-                elif dias_restantes < 0:
-                    st.sidebar.error(f"🚫 **Licencia Expirada** hace {abs(dias_restantes)} días. Tu acceso será suspendido a la brevedad.")
-    except Exception as e:
+        supabase_client = globals().get('supabase', None) or st.session_state.get("supabase", None)
+        if rut_actual and supabase_client:
+            res_licencia = supabase_client.table("empresas").select("fecha_expiracion").eq("rut_empresa", rut_actual).execute()
+            
+            if res_licencia and res_licencia.data:
+                fecha_exp_str = res_licencia.data[0].get("fecha_expiracion")
+                if fecha_exp_str and str(fecha_exp_str).strip() not in ["None", "NaT", "nan", ""]:
+                    hoy = date.today()
+                    fecha_exp_date = pd.to_datetime(str(fecha_exp_str)).date()
+                    dias_restantes = (fecha_exp_date - hoy).days
+                    
+                    if 0 < dias_restantes <= 5:
+                        st.sidebar.warning(f"⚠️ **Atención:** Tu licencia expira en **{dias_restantes} días**.")
+                    elif dias_restantes == 0:
+                        st.sidebar.error("🚨 **Último día:** Tu licencia expira **HOY**.")
+                    elif dias_restantes < 0:
+                        st.sidebar.error(f"🚫 **Licencia Expirada** hace {abs(dias_restantes)} días.")
+    except Exception:
         pass
 
 st.sidebar.divider()
 
 def cargar_permisos():
     if os.path.exists(PERMISOS_FILE):
-        with open(PERMISOS_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(PERMISOS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
     return {}
 
 def guardar_permisos(datos):
-    with open(PERMISOS_FILE, "w") as f:
-        json.dump(datos, f, indent=4)
+    try:
+        with open(PERMISOS_FILE, "w") as f:
+            json.dump(datos, f, indent=4)
+    except Exception:
+        pass
 
 modulos_totales = [
     "🏠 Home / Bienvenida",
@@ -1021,21 +1024,11 @@ modulos_totales = [
 if st.session_state.get("es_admin_dev", False):
     modulos_totales.append("🔑 Control Maestro de Licencias")
 
-# --- 🧠 CÁLCULO DE MÓDULOS PERMITIDOS SEGÚN SESIÓN ---
-if st.session_state.get("modulos_permitidos") == "ALL":
-    lista_modulos_permitidos = modulos_totales
-else:
-    lista_modulos_permitidos = st.session_state.get("modulos_permitidos", ["🏠 Home / Bienvenida"])
-
-if "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
-    lista_modulos_permitidos.insert(0, "🏠 Home / Bienvenida")
-
-# --- 🛠️ PANEL DE DESARROLLADOR MAESTRO (Y FILTRADO DE MÓDULOS) ---
+# Panel exclusivo para Administrador Master
 if st.session_state.get("es_admin_dev", False):
     with st.sidebar.expander("🛠️ Panel de Desarrollador (Licencias y Mantenimiento)"):
         st.success("✔️ Modo Desarrollador Activo")
         
-        # --- CARGAR EXCLUSIVAMENTE DESDE LA TABLA EMPRESAS DE SUPABASE ---
         negocios_disponibles = []
         try:
             supabase_cli = globals().get('supabase', None) or st.session_state.get("supabase", None)
@@ -1043,7 +1036,7 @@ if st.session_state.get("es_admin_dev", False):
                 res_empresas = supabase_cli.table("empresas").select("rut_empresa").execute()
                 if res_empresas and res_empresas.data:
                     negocios_disponibles = [str(emp["rut_empresa"]) for emp in res_empresas.data if emp.get("rut_empresa")]
-        except Exception as e:
+        except Exception:
             pass
             
         if not negocios_disponibles:
@@ -1053,21 +1046,20 @@ if st.session_state.get("es_admin_dev", False):
         
         with tab_lic:
             negocio_a_modificar = st.selectbox("Selecciona Negocio:", negocios_disponibles, key="sel_dev_negocio_nico")
-            db_permisos = cargar_permisos() if 'cargar_permisos' in globals() else {}
+            db_permisos = cargar_permisos()
             if negocio_a_modificar not in db_permisos:
-                db_permisos[negocio_a_modificar] = {mod: True for mod in (modulos_totales if 'modulos_totales' in globals() else [])}
+                db_permisos[negocio_a_modificar] = {mod: True for mod in modulos_totales}
            
             with st.form(f"form_licencia_dev_{negocio_a_modificar}"):
                 permisos_temporales = {}
-                for mod in (modulos_totales if 'modulos_totales' in globals() else []):
+                for mod in modulos_totales:
                     estado_actual = db_permisos[negocio_a_modificar].get(mod, True)
                     permisos_temporales[mod] = st.checkbox(mod, value=estado_actual, key=f"chk_dev_{negocio_a_modificar}_{mod}")
                
                 if st.form_submit_button("💾 Guardar Licencia"):
                     db_permisos[negocio_a_modificar] = permisos_temporales
-                    if 'guardar_permisos' in globals():
-                        guardar_permisos(db_permisos)
-                    st.success("✅ ¡Licencia y atribuciones del desarrollador actualizadas!")
+                    guardar_permisos(db_permisos)
+                    st.success("✅ ¡Licencia actualizada!")
                     st.rerun()
 
         with tab_crear:
@@ -1083,20 +1075,9 @@ if st.session_state.get("es_admin_dev", False):
                     if not id_negocio or not nombre_comercial:
                         st.warning("⚠️ Debes completar el ID y el Nombre.")
                     else:
-                        datos_nuevo = {
-                            "nombre": nombre_comercial,
-                            "password": password_cliente,
-                            "fecha_expiracion": str(fecha_exp),
-                            "activo": True,
-                            "modulos": {mod: True for mod in (modulos_totales if 'modulos_totales' in globals() else [])}
-                        }
-                        if 'guardar_nuevo_cliente' in globals():
-                            guardar_nuevo_cliente(id_negocio, datos_nuevo)
-                        
-                        db_permisos = cargar_permisos() if 'cargar_permisos' in globals() else {}
-                        db_permisos[id_negocio] = {mod: True for mod in (modulos_totales if 'modulos_totales' in globals() else [])}
-                        if 'guardar_permisos' in globals():
-                            guardar_permisos(db_permisos)
+                        db_permisos = cargar_permisos()
+                        db_permisos[id_negocio] = {mod: True for mod in modulos_totales}
+                        guardar_permisos(db_permisos)
                         
                         try:
                             supabase_cli = globals().get('supabase', None) or st.session_state.get("supabase", None)
@@ -1107,23 +1088,21 @@ if st.session_state.get("es_admin_dev", False):
                                     "fecha_expiracion": str(fecha_exp),
                                     "licencia_activa": True
                                 }).execute()
-                        except Exception as e:
+                        except Exception:
                             pass 
                         
-                        st.success(f"✨ ¡Negocio '{nombre_comercial}' creado y sincronizado!")
+                        st.success(f"✨ ¡Negocio '{nombre_comercial}' creado con éxito!")
                         st.rerun()
 
         with tab_mant:
             st.markdown("#### 🧹 Reseteo y Limpieza Remota")
             negocio_a_limpiar = st.selectbox("Selecciona Negocio a Gestionar:", negocios_disponibles, key="limpiar_negocio_sel_nico")
-            CLIENTES_DIR = globals().get('CLIENTES_DIR', 'clientes')
             dir_cliente_objetivo = os.path.join(CLIENTES_DIR, negocio_a_limpiar)
-            st.warning("⚠️ **Zona de Peligro:** La opción de fábrica eliminará todos los registros locales.")
-            confirmar_borrado = st.checkbox("Confirmo que deseo restablecer este negocio a versión de fábrica", key="chk_confirmar_fabrica")
+            confirmar_borrado = st.checkbox("Confirmo que deseo restablecer este negocio", key="chk_confirmar_fabrica")
 
-            if st.button("🚨 Restablecer a Versión de Fábrica (Borrar Todo)", type="primary", key="btn_version_fabrica"):
+            if st.button("🚨 Restablecer a Versión de Fábrica", type="primary", key="btn_version_fabrica"):
                 if not confirmar_borrado:
-                    st.error("❌ Debes marcar la casilla de confirmación para autorizar el reseteo.")
+                    st.error("❌ Debes marcar la casilla de confirmación.")
                 else:
                     try:
                         import shutil
@@ -1136,17 +1115,17 @@ if st.session_state.get("es_admin_dev", False):
                                 dir_sub = os.path.join(dir_cliente_objetivo, carpeta_sub)
                                 if os.path.exists(dir_sub):
                                     shutil.rmtree(dir_sub)
-                        st.success(f"✨ ¡Negocio '{negocio_a_limpiar}' restablecido a versión de fábrica con éxito!")
+                        st.success(f"✨ ¡Negocio '{negocio_a_limpiar}' restablecido!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Ocurrió un error al restablecer: {e}")
+                        st.error(f"❌ Error al restablecer: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("© 2026 CREC-ERP")
 st.sidebar.markdown("Desarrollado por **Sebastián Calderón**")
 
 
-# --- 7. INICIALIZACIÓN Y APLICACIÓN ESTRICTA DE JERARQUÍA DE MÓDULOS ---
+# --- 7. INICIALIZACIÓN Y APLICACIÓN DE JERARQUÍA DE MÓDULOS ---
 if "menu_seleccionado" not in st.session_state:
     st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
 if "carrito_ventas" not in st.session_state:
@@ -1163,21 +1142,23 @@ if "formas_pago_erp" not in st.session_state:
         "Transferencia Electrónica", "Cheque", "Cuenta Corriente / Crédito Directo"
     ]
 
-# OBTENER MÓDULOS PERMITIDOS SEGÚN LA LICENCIA ESTABLECIDA POR EL DESARROLLADOR
-modulos_totales_sistema = globals().get('modulos_totales', ["🏠 Home / Bienvenida"])
-db_permisos_actuales = cargar_permisos() if 'cargar_permisos' in globals() else {}
-negocio_actual_sesion = st.session_state.get('negocio_seleccionado', st.session_state.get('rut_empresa', ''))
+# Filtrado de permisos por empresa
+db_permisos_actuales = cargar_permisos()
+negocio_actual_sesion = st.session_state.get('negocio_seleccionado', '')
 
-# REGLA DE ORO: El propietario tiene acceso a todo... PERO limitado estrictamente por la licencia del desarrollador
-if negocio_actual_sesion in db_permisos_actuales:
-    permisos_negocio = db_permisos_actuales[negocio_actual_sesion]
-    lista_modulos_permitidos = [mod for mod in modulos_totales_sistema if permisos_negocio.get(mod, True)]
+if st.session_state.get("modulos_permitidos") == "ALL":
+    if negocio_actual_sesion in db_permisos_actuales:
+        permisos_negocio = db_permisos_actuales[negocio_actual_sesion]
+        lista_modulos_permitidos = [mod for mod in modulos_totales if permisos_negocio.get(mod, True)]
+    else:
+        lista_modulos_permitidos = list(modulos_totales)
 else:
-    lista_modulos_permitidos = globals().get('lista_modulos_permitidos', modulos_totales_sistema)
+    lista_modulos_permitidos = st.session_state.get("modulos_permitidos", ["🏠 Home / Bienvenida"])
 
-if "🏠 Home / Bienvenida" in modulos_totales_sistema and "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
+if "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
     lista_modulos_permitidos.insert(0, "🏠 Home / Bienvenida")
 
+# RENDERIZADO DEL MENÚ LATERAL (SOLO POST-LOGIN)
 menu = st.sidebar.selectbox(
     "🧭 Selecciona un Módulo:",
     lista_modulos_permitidos,
@@ -1193,15 +1174,14 @@ if param_caja:
     st.sidebar.info(f"🖥️ Modo Terminal Activo: **{param_caja}**")
 
 def cargar_datos(path_db):
-    if os.path.exists(path_db):
+    if path_db and os.path.exists(path_db):
         df = pd.read_excel(path_db, dtype={'Código': str})
         if 'Activo' in df.columns:
             df = df[df['Activo'].astype(str).str.strip().str.capitalize() == 'Si']
         return df
     return None
 
-archivo_base = globals().get('archivo_base', '')
-df_base = cargar_datos(archivo_base) if archivo_base else None
+df_base = cargar_datos(archivo_base)
 
 def mostrar_encabezado_con_home(titulo_modulo):
     col_titulo, col_btn = st.columns([4, 1])
@@ -1214,9 +1194,10 @@ def mostrar_encabezado_con_home(titulo_modulo):
             st.session_state.menu_seleccionado = "🏠 Home / Bienvenida"
             st.rerun()
 
-# --- 8. RENDERIZADO DEL HOME FIJO Y MÓDULOS ---
+
+# --- 8. RENDERIZADO DEL HOME Y NAVEGACIÓN DE MÓDULOS ---
 if menu == "🏠 Home / Bienvenida":
-    st.markdown(f"<p class='main-title'>🪙 CREC-ERP: {st.session_state.nombre_empresa if 'nombre_empresa' in st.session_state else 'GENERAL'}</p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='main-title'>🪙 CREC-ERP: {st.session_state.nombre_empresa if st.session_state.nombre_empresa else 'GENERAL'}</p>", unsafe_allow_html=True)
     st.markdown("<p class='sub-title'>Selecciona un módulo para comenzar:</p>", unsafe_allow_html=True)
    
     if st.session_state.get("es_admin_dev", False):
@@ -1246,11 +1227,7 @@ if menu == "🏠 Home / Bienvenida":
         {"id": "conf", "nombre_ref": "Configuración General", "label": "⚙️ Configuración General"}
     ]
 
-    botones_activos = []
-    for mod in modulos_disponibles_home:
-        permitido = any(mod["nombre_ref"].lower() in str(p).lower() for p in lista_modulos_permitidos)
-        if permitido:
-            botones_activos.append(mod)
+    botones_activos = [mod for mod in modulos_disponibles_home if any(mod["nombre_ref"].lower() in str(p).lower() for p in lista_modulos_permitidos)]
 
     if botones_activos:
         num_columnas = 2
