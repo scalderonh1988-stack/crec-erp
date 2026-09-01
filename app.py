@@ -3262,9 +3262,23 @@ elif menu == "⚙️ Configuración General":
                 with open(ruta_config_json, "r", encoding="utf-8") as f:
                     st.session_state.config_ticket = json.load(f)
             except Exception:
-                st.session_state.config_ticket = {"nombre_empresa": negocio_seleccionado, "rut_empresa": "", "direccion": "", "iva_tasa": 19.0, "pie_pagina": "", "formato_impresion": "80mm (Térmica Estándar)"}
+                st.session_state.config_ticket = {
+                    "nombre_empresa": negocio_seleccionado, 
+                    "rut_empresa": "", 
+                    "direccion": "", 
+                    "iva_tasa": 19.0, 
+                    "pie_pagina": "", 
+                    "formato_impresion": "80mm (Térmica Estándar)"
+                }
         else:
-            st.session_state.config_ticket = {"nombre_empresa": negocio_seleccionado, "rut_empresa": "", "direccion": "", "iva_tasa": 19.0, "pie_pagina": "", "formato_impresion": "80mm (Térmica Estándar)"}
+            st.session_state.config_ticket = {
+                "nombre_empresa": negocio_seleccionado, 
+                "rut_empresa": "", 
+                "direccion": "", 
+                "iva_tasa": 19.0, 
+                "pie_pagina": "", 
+                "formato_impresion": "80mm (Térmica Estándar)"
+            }
 
     tab1, tab2, tab3 = st.tabs(["👥 Usuarios y Cajas", "💳 Formas de Pago", "🖨️ Formato de Tickets e Impresión"])
 
@@ -3298,7 +3312,6 @@ elif menu == "⚙️ Configuración General":
         if rut_actual in db_permisos_dev:
             modulos_permitidos_desarrollador = [mod for mod, activo in db_permisos_dev[rut_actual].items() if activo]
         else:
-            # Si no hay registro estricto previo, permitimos todos por defecto para no bloquear al propietario
             modulos_permitidos_desarrollador = todos_los_modulos_sistema
 
         if not empresa_id_actual:
@@ -3336,83 +3349,116 @@ elif menu == "⚙️ Configuración General":
             st.markdown("#### ⚙️ Crear o Editar Permisos de Usuario")
             
             opciones_usuarios = ["-- ✨ Crear Nuevo Usuario --"] + list(db_usuarios.keys())
-            usuario_seleccionado = st.selectbox("🔍 Buscar Usuario a Editar (o Crear Nuevo):", opciones_usuarios)
+            usuario_seleccionado = st.selectbox(
+                "🔍 Buscar Usuario a Editar (o Crear Nuevo):", 
+                opciones_usuarios, 
+                key="select_user_cfg_tab1"
+            )
             
             es_nuevo = (usuario_seleccionado == "-- ✨ Crear Nuevo Usuario --")
             
             def_uid = "" if es_nuevo else usuario_seleccionado
             def_nombre = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("nombre", "")
-            # Al editar se deja la clave en blanco para no sobreescribirla por error si no se cambia
             def_pass = ""
             def_rol = "Cajero / Vendedor" if es_nuevo else db_usuarios[usuario_seleccionado].get("rol", "Cajero / Vendedor")
             
             modulos_str = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("modulos", "")
-            def_modulos = modulos_str.split(", ") if modulos_str else []
+            def_modulos = [m.strip() for m in modulos_str.split(",") if m.strip()] if modulos_str else []
 
-            # Cruzamos los módulos permitidos asegurando que nunca quede vacío
             todos_los_modulos = [m for m in todos_los_modulos_sistema if m in modulos_permitidos_desarrollador or m == "🏠 Home / Bienvenida"]
             if not todos_los_modulos:
                 todos_los_modulos = todos_los_modulos_sistema
 
-            with st.form("form_crear_editar_operador", clear_on_submit=True):
+            # Clave dinámica única para refrescar correctamente los inputs de Streamlit al cambiar de usuario
+            key_suffix = "nuevo" if es_nuevo else usuario_seleccionado.replace(" ", "_").replace("-", "_").replace(".", "_")
+
+            with st.form(f"form_crear_editar_operador_{key_suffix}", clear_on_submit=False):
                 col_u1, col_u2 = st.columns(2)
                 with col_u1:
-                    nuevo_user_id = st.text_input("RUT del Usuario *", value=def_uid, disabled=not es_nuevo, help="RUT de inicio de sesión.")
-                    nuevo_nombre_usr = st.text_input("Nombre Completo *", value=def_nombre)
+                    nuevo_user_id = st.text_input(
+                        "RUT del Usuario *", 
+                        value=def_uid, 
+                        disabled=not es_nuevo, 
+                        key=f"rut_{key_suffix}", 
+                        help="RUT de inicio de sesión."
+                    )
+                    nuevo_nombre_usr = st.text_input(
+                        "Nombre Completo *", 
+                        value=def_nombre, 
+                        key=f"nombre_{key_suffix}"
+                    )
                 with col_u2:
                     nuevo_pass_usr = st.text_input(
                         "Contraseña de Acceso *", 
                         type="password", 
                         value=def_pass,
+                        key=f"pass_{key_suffix}",
                         help="Si está editando, déjela en blanco para mantener la contraseña actual."
                     )
-                    idx_rol = ["Cajero / Vendedor", "Bodeguero", "Administrador"].index(def_rol) if def_rol in ["Cajero / Vendedor", "Bodeguero", "Administrador"] else 0
-                    nuevo_rol_usr = st.selectbox("Rol Principal", options=["Cajero / Vendedor", "Bodeguero", "Administrador"], index=idx_rol)
+                    roles_opciones = ["Cajero / Vendedor", "Bodeguero", "Administrador"]
+                    idx_rol = roles_opciones.index(def_rol) if def_rol in roles_opciones else 0
+                    nuevo_rol_usr = st.selectbox(
+                        "Rol Principal", 
+                        options=roles_opciones, 
+                        index=idx_rol, 
+                        key=f"rol_{key_suffix}"
+                    )
 
                 st.markdown("**🔐 Asignación de Permisos (Limitado por Licencia del Desarrollador)**")
                 modulos_seleccionados = st.multiselect(
                     "Selecciona a qué módulos podrá entrar este usuario:",
                     options=todos_los_modulos,
-                    default=[m for m in def_modulos if m in todos_los_modulos]
+                    default=[m for m in def_modulos if m in todos_los_modulos],
+                    key=f"mods_{key_suffix}"
                 )
 
                 texto_boton = "💾 Registrar Nuevo Operador" if es_nuevo else "🔄 Guardar Cambios"
                 btn_guardar_usr = st.form_submit_button(texto_boton, type="primary")
 
                 if btn_guardar_usr:
-                    user_limpio = nuevo_user_id.strip()
+                    user_limpio = nuevo_user_id.strip().upper()
                     pass_limpia = nuevo_pass_usr.strip()
                     
-                    # Validamos que los datos críticos estén
-                    if not user_limpio or not nuevo_nombre_usr:
+                    if not user_limpio or not nuevo_nombre_usr.strip():
                         st.warning("⚠️ Debes ingresar el RUT y el Nombre.")
                     elif es_nuevo and not pass_limpia:
                         st.warning("⚠️ Para crear un nuevo usuario, la contraseña es obligatoria.")
                     else:
-                        # Preparamos el diccionario base
                         registro_usuario = {
                             "empresa_id": empresa_id_actual,
                             "rut_usuario": user_limpio,
                             "nombre": nuevo_nombre_usr.strip(),
                             "rol": nuevo_rol_usr,
-                            "modulos": ", ".join(modulos_seleccionados)
+                            "modulos": ", ".join(modulos_seleccionados) if modulos_seleccionados else "🏠 Home / Bienvenida"
                         }
                         
-                        # ✅ GUARDADO DIRECTO EN TEXTO PLANO (Sin scrypt ni generate_password_hash)
                         if pass_limpia:
                             registro_usuario["password_hash"] = pass_limpia
                         
                         try:
                             if es_nuevo:
                                 supabase.table("usuarios").insert(registro_usuario).execute()
-                                st.success(f"✨ ¡Usuario '{nuevo_nombre_usr}' creado con éxito!")
+                                st.toast(f"✨ ¡Usuario '{nuevo_nombre_usr}' creado con éxito!", icon="✅")
                             else:
                                 id_db = db_usuarios[usuario_seleccionado]["id"]
                                 supabase.table("usuarios").update(registro_usuario).eq("id", id_db).execute()
-                                st.success(f"✅ ¡Permisos actualizados para '{nuevo_nombre_usr}'!")
+                                st.toast(f"✅ ¡Permisos actualizados para '{nuevo_nombre_usr}'!", icon="✅")
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error al guardar en base de datos: {e}")
+
+            # Botón de eliminación solo visible al editar un usuario existente
+            if not es_nuevo:
+                with st.expander("🗑️ Eliminar Usuario"):
+                    st.warning(f"¿Estás seguro de eliminar a **{def_nombre}** ({def_uid})?")
+                    if st.button("🚨 Confirmar Eliminación", key=f"del_user_{key_suffix}"):
+                        try:
+                            id_db = db_usuarios[usuario_seleccionado]["id"]
+                            supabase.table("usuarios").delete().eq("id", id_db).execute()
+                            st.toast("🗑️ Usuario eliminado correctamente.", icon="🗑️")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al eliminar usuario: {e}")
 
     with tab2:
         st.markdown("### 💳 Configuración de Formas de Pago Aceptadas")
