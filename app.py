@@ -860,6 +860,7 @@ if not st.session_state.autenticado:
                                         st.rerun()
                                     else:
                                         st.error("❌ La licencia de esta empresa se encuentra expirada o inactiva.")
+                                        st.link_button("💳 Renovar Licencia Ahora", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
                                         acceso_exitoso = True
                         except Exception:
                             pass
@@ -913,6 +914,7 @@ if not st.session_state.autenticado:
                                                     st.rerun()
                                         else:
                                             st.error("❌ La licencia de la empresa se encuentra expirada.")
+                                            st.link_button("💳 Renovar Licencia Ahora", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
                                             acceso_exitoso = True
                         except Exception:
                             pass
