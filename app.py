@@ -846,7 +846,17 @@ if not st.session_state.autenticado:
                                 datos_empresa = res_dueño.data[0]
                                 pass_db = str(datos_empresa.get("password", ""))
                                 if pass_db == password_limpio:
-                                    if datos_empresa.get("licencia_activa", True):
+                                    lic_activa = datos_empresa.get("licencia_activa", True)
+                                    fecha_exp_str = datos_empresa.get("fecha_expiracion")
+                                    expirada_por_fecha = False
+                                    
+                                    if fecha_exp_str and str(fecha_exp_str).strip() not in ["None", "NaT", "nan", ""]:
+                                        try:
+                                            expirada_por_fecha = pd.to_datetime(str(fecha_exp_str)).date() < date.today()
+                                        except Exception:
+                                            pass
+
+                                    if lic_activa and not expirada_por_fecha:
                                         st.session_state.autenticado = True
                                         st.session_state.es_admin_dev = False
                                         st.session_state.negocio_actual = usuario_limpio
@@ -873,10 +883,20 @@ if not st.session_state.autenticado:
                                 datos_usr = res_usr.data[0]
                                 if str(datos_usr.get("password_hash")) == password_limpio:
                                     id_empresa = datos_usr.get("empresa_id")
-                                    res_emp = supabase_client.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa").eq("id", id_empresa).execute()
+                                    res_emp = supabase_client.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa", "fecha_expiracion").eq("id", id_empresa).execute()
                                     if res_emp and res_emp.data:
                                         datos_empresa = res_emp.data[0]
-                                        if datos_empresa.get("licencia_activa", True):
+                                        lic_activa = datos_empresa.get("licencia_activa", True)
+                                        fecha_exp_str = datos_empresa.get("fecha_expiracion")
+                                        expirada_por_fecha = False
+                                        
+                                        if fecha_exp_str and str(fecha_exp_str).strip() not in ["None", "NaT", "nan", ""]:
+                                            try:
+                                                expirada_por_fecha = pd.to_datetime(str(fecha_exp_str)).date() < date.today()
+                                            except Exception:
+                                                pass
+
+                                        if lic_activa and not expirada_por_fecha:
                                             rut_negocio = datos_empresa.get("rut_empresa")
                                             nombre_negocio = datos_empresa.get("empresa_nombre")
                                             rol_encontrado = str(datos_usr.get("rol", "Cajero / Vendedor"))
@@ -953,19 +973,30 @@ st.session_state.negocio_seleccionado = negocio_seleccionado
 
 # --- 6. BARRA LATERAL, PERMISOS Y PANEL DESARROLLADOR ---
 
-# 🚨 BLINDAJE CONTINUO: Verificar si la licencia sigue activa en cada interacción
+# 🚨 BLINDAJE CONTINUO: Verificar si la licencia sigue activa y vigente en cada interacción
 if not st.session_state.get("es_admin_dev", False):
     rut_actual = st.session_state.get("negocio_seleccionado")
     supabase_client = globals().get('supabase', None) or st.session_state.get("supabase", None)
     
     if rut_actual and supabase_client:
         try:
-            res_lic = supabase_client.table("empresas").select("licencia_activa").eq("rut_empresa", rut_actual).execute()
+            res_lic = supabase_client.table("empresas").select("licencia_activa", "fecha_expiracion").eq("rut_empresa", rut_actual).execute()
             if res_lic and res_lic.data:
-                estado_lic = str(res_lic.data[0].get("licencia_activa", "")).lower()
+                datos_lic = res_lic.data[0]
+                estado_lic = str(datos_lic.get("licencia_activa", "")).lower()
+                fecha_exp_str = datos_lic.get("fecha_expiracion")
                 
-                # Si es False, "false", 0 o vacío, bloquea todo el ERP
-                if estado_lic not in ["true", "1", "t"]:
+                expirada_por_fecha = False
+                if fecha_exp_str and str(fecha_exp_str).strip() not in ["None", "NaT", "nan", ""]:
+                    try:
+                        expirada_por_fecha = pd.to_datetime(str(fecha_exp_str)).date() < date.today()
+                    except Exception:
+                        pass
+
+                lic_valida = (estado_lic in ["true", "1", "t"]) and not expirada_por_fecha
+
+                # Si está inactiva o expirada por fecha, bloquea todo el ERP
+                if not lic_valida:
                     st.error("🚨 **LICENCIA EXPIRADA O INACTIVA**")
                     st.info("Tu suscripción no se encuentra activa. Para seguir utilizando el sistema, realiza la renovación.")
                     st.link_button("💳 Renovar Licencia Ahora", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
@@ -978,6 +1009,7 @@ if not st.session_state.get("es_admin_dev", False):
                     st.stop()
         except Exception:
             pass
+
 st.sidebar.markdown(f"👤 Usuario: **{st.session_state.get('usuario_logueado', 'Ninguno')}**")
 st.sidebar.markdown(f"🏢 Negocio: *{st.session_state.get('nombre_empresa', 'NINGUNO')}*")
 
