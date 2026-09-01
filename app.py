@@ -778,6 +778,55 @@ def mostrar_modulo_reportes_avanzados(ruta_negocio):
 
 
 # ==============================================================================
+# --- LISTA OFICIAL DE MÓDULOS Y FUNCIONES DE ASIGNACIÓN ---
+# ==============================================================================
+modulos_totales = [
+    "🏠 Home / Bienvenida",
+    "📊 Dashboard Ejecutivo",
+    "📦 Inventario y Productos",
+    "🍔 Producción y Recetas",
+    "💰 Módulo de Ventas (POS)",
+    "🛒 Registrar Compra (CPP)",
+    "📉 Mermas y Ajustes",
+    "📈 Informes y Movimientos (Kardex)",
+    "⚠️ Control y Gestión de Inventario",
+    "📊 Módulo de Finanzas",
+    "📒 Cuadratura Diaria",
+    "📑 Cuentas por Cobrar",
+    "📈 Reportes y Analítica",
+    "📚 Historial de Ventas",
+    "🔄 Notas de Crédito",
+    "🏦 Conciliación y Retiros Seguros",
+    "🚚 Logística y Distribución (Preventa)",
+    "⚙️ Configuración General"
+]
+
+def normalizar_lista_modulos(raw_modulos):
+    """Convierte texto o lista proveniente de Supabase en una lista con nombres exactos."""
+    if not raw_modulos:
+        return ["🏠 Home / Bienvenida"]
+        
+    if isinstance(raw_modulos, str):
+        items = [m.strip() for m in raw_modulos.split(",") if m.strip()]
+    elif isinstance(raw_modulos, list):
+        items = [str(m).strip() for m in raw_modulos if str(m).strip()]
+    else:
+        items = []
+
+    resultado = []
+    for item in items:
+        # Busca coincidencia de nombre o icono con la lista oficial de módulos
+        coincidencia = next((mod for mod in modulos_totales if item.lower() in mod.lower() or mod.lower() in item.lower()), item)
+        if coincidencia not in resultado:
+            resultado.append(coincidencia)
+
+    if "🏠 Home / Bienvenida" not in resultado:
+        resultado.insert(0, "🏠 Home / Bienvenida")
+
+    return resultado
+
+
+# ==============================================================================
 # --- 4. SISTEMA DE AUTENTICACIÓN Y BLINDAJE DE SEGURIDAD ---
 # ==============================================================================
 if "autenticado" not in st.session_state:
@@ -908,16 +957,18 @@ if not st.session_state.autenticado:
                                                 st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
                                                 st.session_state.rol_usuario = rol_encontrado
                                                 st.session_state.tipo_usuario = "Vendedor"
-                                                st.session_state.modulos_permitidos = ["Logística y Distribución (Preventa)"]
-                                                st.session_state.menu_seleccionado = "Logística y Distribución (Preventa)"
+                                                st.session_state.modulos_permitidos = ["🏠 Home / Bienvenida", "🚚 Logística y Distribución (Preventa)"]
+                                                st.session_state.menu_seleccionado = "🚚 Logística y Distribución (Preventa)"
                                                 st.session_state.intentos_fallidos = 0
                                                 st.session_state.nombre_empresa = nombre_negocio
                                                 acceso_exitoso = True
                                                 st.rerun()
                                             else:
-                                                modulos_str = datos_usr.get("modulos", "")
-                                                modulos_operador = [m.strip() for m in modulos_str.split(",") if m.strip()]
-                                                if not modulos_operador:
+                                                # 🔄 PROCESADO Y CONVERSIÓN DE MÓDULOS DE SUPABASE
+                                                raw_modulos = datos_usr.get("modulos", "")
+                                                modulos_operador = normalizar_lista_modulos(raw_modulos)
+                                                
+                                                if not raw_modulos and len(modulos_operador) <= 1:
                                                     st.error("❌ Tu usuario no tiene módulos asignados.")
                                                     acceso_exitoso = True 
                                                 else:
@@ -926,7 +977,7 @@ if not st.session_state.autenticado:
                                                     st.session_state.negocio_actual = rut_negocio
                                                     st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
                                                     st.session_state.rol_usuario = rol_encontrado
-                                                    st.session_state.tipo_usuario = "Propietario"
+                                                    st.session_state.tipo_usuario = "Operador"
                                                     st.session_state.modulos_permitidos = modulos_operador
                                                     st.session_state.intentos_fallidos = 0
                                                     st.session_state.nombre_empresa = nombre_negocio
@@ -1061,27 +1112,7 @@ def guardar_permisos(datos):
     except Exception:
         pass
 
-modulos_totales = [
-    "🏠 Home / Bienvenida",
-    "📊 Dashboard Ejecutivo",
-    "📦 Inventario y Productos",
-    "🍔 Producción y Recetas",
-    "💰 Módulo de Ventas (POS)",
-    "🛒 Registrar Compra (CPP)",
-    "📉 Mermas y Ajustes",
-    "📈 Informes y Movimientos (Kardex)",
-    "⚠️ Control y Gestión de Inventario",
-    "📊 Módulo de Finanzas",
-    "📒 Cuadratura Diaria",
-    "📑 Cuentas por Cobrar",
-    "📈 Reportes y Analítica",
-    "📚 Historial de Ventas",
-    "🔄 Notas de Crédito",
-    "🏦 Conciliación y Retiros Seguros",
-    "🚚 Logística y Distribución (Preventa)",
-    "⚙️ Configuración General"
-]
-if st.session_state.get("es_admin_dev", False):
+if st.session_state.get("es_admin_dev", False) and "🔑 Control Maestro de Licencias" not in modulos_totales:
     modulos_totales.append("🔑 Control Maestro de Licencias")
 
 # Panel exclusivo para Administrador Master
@@ -1566,7 +1597,7 @@ elif menu == "📦 Inventario y Productos":
                         st.success(f"✅ ¡Bodega '{nombre_bodega}' creada con éxito!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en Supabase: {e}")           
+                        st.error(f"❌ Error al guardar en Supabase: {e}")         
 
 elif menu == "📚 Historial de Ventas":
     mostrar_modulo_historial_ventas(ruta_negocio)                    
