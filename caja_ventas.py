@@ -220,9 +220,12 @@ PAGO: {forma_pago.upper()}
                             encontrado_str = f"{match_scan.iloc[0]['codigo']} - {match_scan.iloc[0]['descripcion']}"
                             st.session_state.prod_seleccionado_key = encontrado_str
                             st.session_state.precio_actual_input = float(match_scan.iloc[0]['precio_venta'] or 0.0)
-                            st.success(f"✔️ Producto detectado por lector: {encontrado_str}")
+                            st.success(f"✔️ Producto detectado: {encontrado_str}")
                         else:
                             st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_ingresado}")
+                    
+                    # 🔑 Borra la caja para que el siguiente escaneo no acumule caracteres
+                    st.session_state["input_escan_pos"] = ""
 
                 st.text_input(
                     "🔍 Escanea el código de barras (El cursor debe estar aquí):", 
