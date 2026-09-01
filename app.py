@@ -3617,19 +3617,20 @@ elif menu == "💰 Módulo de Ventas (POS)":
     def procesar_escaneo_pos():
         codigo_leido = st.session_state.get("input_scanner", "").strip()
         if codigo_leido:
-            # Buscamos en tu base de datos local o dataframe activo por el campo Código
             global df_base
-            if df_base is not None and not df_base.empty:
-                # Asegurar formato de columna Código
-                df_match = df_base[df_base['Código'].astype(str).str.strip() == codigo_leido]
+            df_a_buscar = df_base if ('df_base' in globals() and df_base is not None and not df_base.empty) else st.session_state.get("df_nube_pos")
+            if df_a_buscar is not None and not df_a_buscar.empty:
+                col_c = 'Código' if 'Código' in df_a_buscar.columns else 'codigo'
+                col_d = 'Descripción' if 'Descripción' in df_a_buscar.columns else ('descripcion' if 'descripcion' in df_a_buscar.columns else 'Nombre')
+                col_p = 'Precio Venta' if 'Precio Venta' in df_a_buscar.columns else ('precio_venta' if 'precio_venta' in df_a_buscar.columns else 'Precio')
+                
+                df_match = df_a_buscar[df_a_buscar[col_c].astype(str).str.strip() == codigo_leido]
                 if not df_match.empty:
                     prod = df_match.iloc[0]
-                    # Agregamos o incrementamos en el carrito de ventas
-                    codigo_prod = str(prod['Código'])
-                    nombre_prod = str(prod.get('Descripción', prod.get('Nombre', 'Sin Nombre')))
-                    precio_prod = float(prod.get('Precio Venta', prod.get('Precio', 0)))
+                    codigo_prod = str(prod[col_c])
+                    nombre_prod = str(prod.get(col_d, 'Sin Nombre'))
+                    precio_prod = float(prod.get(col_p, 0))
                     
-                    # Verificar si ya está en el carrito para sumar cantidad o agregarlo nuevo
                     encontrado_en_carrito = False
                     for item in st.session_state.carrito_ventas:
                         if str(item["Código"]) == codigo_prod:
@@ -3651,26 +3652,15 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_leido}")
             else:
                 st.error("⚠️ La base de datos de productos no está cargada.")
-        # Limpiamos el input para el próximo escaneo continuo
         st.session_state.input_scanner = ""
 
-    # Input inteligente que dispara la búsqueda al presionar Enter con el lector físico
-    st.text_input(
-        "🔍 Escanea el código de barras (El cursor debe estar aquí):", 
-        key="input_scanner", 
-        on_change=procesar_escaneo_pos,
-        help="El lector escribirá aquí y buscará automáticamente el producto al presionar Enter."
-    )
-    st.markdown("---")
-
-    # --- 1. CABECERA (Modificada con Selector de Tipo de Emisión) ---
+    # --- 1. CABECERA ---
     col_doc1, col_doc2, col_doc3 = st.columns(3)
     with col_doc1:
         tipo_documento = st.selectbox("📄 Selecciona el documento:", ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"])
     with col_doc2:
         fecha_emision_venta = st.date_input("📅 Fecha de Emisión del Documento")
     with col_doc3:
-        # ⚙️ NUEVO: Selector para elegir entre Control Interno o SII Oficial
         modo_operacion = st.radio(
             "⚙️ Tipo de Emisión:",
             ["Control Interno (Libre)", "Oficial (SII)"],
@@ -3678,7 +3668,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
             key="radio_modo_emision"
         )
     
-    # Convertimos el texto del radio a formato limpio para la base de datos
     modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
 
     # --- 2. LÓGICA: FACTURAR DESDE UNA GUÍA PREVIA ---
@@ -3696,10 +3685,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             res_guia = supabase.table("ventas").select("*").eq("rut_empresa", rut_actual).eq("folio", folio_guia_a_facturar.strip()).execute()
                             if res_guia.data:
                                 st.session_state.carrito_ventas = []
-                                
-                                # 🚨 GUARDAMOS EL FOLIO ORIGEN PARA ELIMINARLO DESPUÉS
                                 st.session_state.folio_guia_origen = folio_guia_a_facturar.strip()
-                                
                                 cliente_de_guia = res_guia.data[0].get("cliente", "")
                                 if cliente_de_guia and cliente_de_guia != "Cliente General":
                                     st.session_state.cliente_preseleccionado = cliente_de_guia
@@ -3848,9 +3834,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     else:
                         fecha_hora_actual = datetime.now()
                         
-                        # ==========================================================
-                        # 🔢 GENERACIÓN INTELIGENTE DE FOLIO CORRELATIVO (SUPABASE)
-                        # ==========================================================
                         try:
                             res_f = supabase.table("folios_empresa").select("ultimo_folio_usado").eq("rut_empresa", rut_actual).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
                             if res_f.data and len(res_f.data) > 0:
@@ -3865,14 +3848,12 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                     "ultimo_folio_usado": numero_folio_actual
                                 }).execute()
                         except Exception:
-                            # Fallback de seguridad si falla la tabla de folios
                             numero_folio_actual = int(datetime.now().strftime("%H%M%S"))
 
                         transaccion_id_actual = str(numero_folio_actual)
                         lineas_productos = ""
                         venta_exitosa = True
                         
-                        # Si viene de una Guía, borramos la original para no duplicar
                         folio_origen = st.session_state.get("folio_guia_origen")
                         if folio_origen and tipo_documento == "Factura Electrónica":
                             try:
@@ -3912,7 +3893,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                             if res_stock_comp.data:
                                                 stock_actual_comp = float(res_stock_comp.data[0]["stock"] or 0.0)
                                                 nuevo_stock_comp = stock_actual_comp - cantidad_total_a_descontar
-                                                
                                                 supabase.table("productos").update({"stock": nuevo_stock_comp}).eq("rut_empresa", rut_actual).eq("codigo", cod_componente).eq("bodega", bodega_actual).execute()
                                     else:
                                         res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", codigo_vendido).eq("bodega", bodega_actual).execute()
@@ -3950,7 +3930,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "neto": round(neto_calculado, 2),
                                 "iva": round(iva_calculado, 2),
                                 "impuesto_especifico": round(ila_calculado, 2),
-                                "modo_emision": modo_str # 👈 Guardamos si es INTERNO u OFICIAL
+                                "modo_emision": modo_str
                             }
                             
                             try:
@@ -4025,6 +4005,7 @@ PAGO: {forma_pago.upper()}
             res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", rut_actual).eq("bodega", bodega_actual).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
+                st.session_state.df_nube_pos = df_nube
         except Exception as e:
             st.error(f"⚠️ Error conectando al inventario en la nube: {e}")
 
@@ -4035,25 +4016,21 @@ PAGO: {forma_pago.upper()}
             col_stock = 'stock'
 
             metodo_lectura = st.radio("Método de entrada de código:", ["⌨️ Digitar / Lector Físico", "📷 Usar Cámara del Celular"], horizontal=True, key="radio_metodo_pos")
-            codigo_escan_pos = ""
 
             if metodo_lectura == "📷 Usar Cámara del Celular":
                 st.markdown("Apunta la cámara al código de barras y captura la foto:")
                 foto_capturada = st.camera_input("Capturar código de barras", key="cam_pos")
             else:
-                codigo_escan_pos = st.text_input("📷 Digita el código o usa tu pistola láser:", key="input_escan_pos")
+                # 📌 AQUÍ SE UBICA AHORA EL LECTOR DE CÓDIGO DE BARRAS PRINCIPAL
+                st.text_input(
+                    "🔍 Escanea el código de barras (El cursor debe estar aquí):", 
+                    key="input_scanner", 
+                    on_change=procesar_escaneo_pos,
+                    help="El lector escribirá aquí y buscará automáticamente el producto al presionar Enter."
+                )
 
             opciones_productos = ["-- Selecciona o busca un producto --"] + [f"{row[col_cod]} - {row[col_desc]}" for idx, row in df_nube.iterrows()]
             prod_sugerido_pos_idx = 0
-       
-            if codigo_escan_pos:
-                match_pos = df_nube[df_nube[col_cod].astype(str) == str(codigo_escan_pos)]
-                if not match_pos.empty:
-                    match_str_pos = f"{match_pos.iloc[0][col_cod]} - {match_pos.iloc[0][col_desc]}"
-                    if match_str_pos in opciones_productos:
-                        prod_sugerido_pos_idx = opciones_productos.index(match_str_pos)
-                        st.session_state.precio_actual_input = float(match_pos.iloc[0][col_precio] or 0.0)
-                        st.session_state.ultimo_prod_sel = match_str_pos
 
             if "ultimo_prod_sel" not in st.session_state: st.session_state.ultimo_prod_sel = ""
             if "precio_actual_input" not in st.session_state: st.session_state.precio_actual_input = 0.0

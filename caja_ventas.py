@@ -115,7 +115,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                         registros_para_nube = []
                         lineas_productos = ""
                         
-                        # Preparar paquete de datos con la estructura exacta de tu app original
                         for item in st.session_state.carrito_ventas:
                             lineas_productos += f"- {item['Descripción']} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
                             
@@ -135,15 +134,13 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 "total_boleta": float(total_venta)
                             })
 
-                        # ☁️ SINCRONIZACIÓN BLINDADA CON SUPABASE
+                        # ☁️ SINCRONIZACIÓN CON SUPABASE
                         try:
-                            # 1. Insertamos en Supabase
                             respuesta_venta = supabase.table("ventas").insert(registros_para_nube).execute()
 
                             if not respuesta_venta.data:
                                 st.error("❌ Supabase no guardó los datos. Verifica que las columnas existan en la tabla 'ventas'.")
                             else:
-                                # 2. Descontamos Stock SOLO si se guardó la venta
                                 for item in st.session_state.carrito_ventas:
                                     try:
                                         res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
@@ -154,7 +151,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                                     except Exception as e:
                                         st.warning(f"⚠️ No se pudo descontar el stock del producto {item['Código']}")
 
-                                # 3. Generar Comprobante Visual
                                 cfg = st.session_state.get('config_ticket', {'nombre_empresa': 'MI EMPRESA', 'rut_empresa': '00.000.000-0', 'direccion': 'Dirección Casa Matriz', 'pie_pagina': 'Gracias por su preferencia'})
                                 
                                 texto_recibo = f"""========================================
@@ -201,13 +197,11 @@ PAGO: {forma_pago.upper()}
         if not df_nube.empty:
             metodo_lectura = st.radio("Método de entrada de código:", ["⌨️ Digitar / Lector Físico", "📷 Usar Cámara del Celular"], horizontal=True, key="radio_metodo_pos")
             
-            # Inicializar estados si no existen
             if "prod_seleccionado_key" not in st.session_state:
                 st.session_state.prod_seleccionado_key = "-- Selecciona o busca un producto --"
             if "precio_actual_input" not in st.session_state:
                 st.session_state.precio_actual_input = 0.0
 
-            # Opciones para el selectbox
             opciones_productos = ["-- Selecciona o busca un producto --"] + [f"{row['codigo']} - {row['descripcion']}" for idx, row in df_nube.iterrows()]
 
             if metodo_lectura == "📷 Usar Cámara del Celular":
@@ -215,7 +209,6 @@ PAGO: {forma_pago.upper()}
                 if foto_capturada is not None:
                     st.success("✔️ ¡Foto capturada con éxito!")
             else:
-                # Callback para cuando usen la pistola láser o escriban el código y presionen Enter
                 def procesar_codigo_escaneado():
                     codigo_ingresado = st.session_state.get("input_escan_pos", "").strip()
                     if codigo_ingresado:
@@ -228,20 +221,19 @@ PAGO: {forma_pago.upper()}
                         else:
                             st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_ingresado}")
 
+                # 🔍 ÚNICA CAJA DEL LECTOR DE CÓDIGO DE BARRAS
                 st.text_input(
-                    "📷 Digita el código o usa tu pistola láser:", 
+                    "🔍 Escanea el código de barras (El cursor debe estar aquí):", 
                     key="input_escan_pos", 
                     on_change=procesar_codigo_escaneado,
                     help="El lector escribirá aquí y seleccionará el producto automáticamente al presionar Enter."
                 )
 
-            # Asegurar que el valor actual exista en la lista de opciones
             current_val = st.session_state.prod_seleccionado_key
             if current_val not in opciones_productos:
                 current_val = "-- Selecciona o busca un producto --"
             idx_actual = opciones_productos.index(current_val)
 
-            # Selectbox sincronizado
             def actualizar_desde_selectbox():
                 val_elegido = st.session_state.selectbox_producto_venta
                 st.session_state.prod_seleccionado_key = val_elegido
@@ -291,7 +283,6 @@ PAGO: {forma_pago.upper()}
                                 "Precio Unitario": float(precio_venta),
                                 "Subtotal": float(cantidad_vendida) * float(precio_venta)
                             })
-                            # Limpiamos selecciones para la siguiente venta rápida
                             st.session_state.prod_seleccionado_key = "-- Selecciona o busca un producto --"
                             st.success("✅ Producto agregado con éxito.")
                             st.rerun()
@@ -344,7 +335,6 @@ PAGO: {forma_pago.upper()}
         else:
             st.info("ℹ️ Carrito vacío.")
 
-        # Script para atajos de teclado
         components.html("""
         <script>
         const doc = window.parent.document;
