@@ -3312,7 +3312,8 @@ elif menu == "⚙️ Configuración General":
             
             def_uid = "" if es_nuevo else usuario_seleccionado
             def_nombre = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("nombre", "")
-            def_pass = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("password_hash", "")
+            # Al editar se deja la clave en blanco para no sobreescribirla por error si no se cambia
+            def_pass = ""
             def_rol = "Cajero / Vendedor" if es_nuevo else db_usuarios[usuario_seleccionado].get("rol", "Cajero / Vendedor")
             
             modulos_str = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("modulos", "")
@@ -3329,7 +3330,12 @@ elif menu == "⚙️ Configuración General":
                     nuevo_user_id = st.text_input("RUT del Usuario *", value=def_uid, disabled=not es_nuevo, help="RUT de inicio de sesión.")
                     nuevo_nombre_usr = st.text_input("Nombre Completo *", value=def_nombre)
                 with col_u2:
-                    nuevo_pass_usr = st.text_input("Contraseña de Acceso *", type="password", value=def_pass)
+                    nuevo_pass_usr = st.text_input(
+                        "Contraseña de Acceso *", 
+                        type="password", 
+                        value=def_pass,
+                        help="Si está editando, déjela en blanco para mantener la contraseña actual."
+                    )
                     idx_rol = ["Cajero / Vendedor", "Bodeguero", "Administrador"].index(def_rol) if def_rol in ["Cajero / Vendedor", "Bodeguero", "Administrador"] else 0
                     nuevo_rol_usr = st.selectbox("Rol Principal", options=["Cajero / Vendedor", "Bodeguero", "Administrador"], index=idx_rol)
 
@@ -3345,11 +3351,12 @@ elif menu == "⚙️ Configuración General":
 
                 if btn_guardar_usr:
                     user_limpio = nuevo_user_id.strip()
+                    pass_limpia = nuevo_pass_usr.strip()
                     
                     # Validamos que los datos críticos estén
                     if not user_limpio or not nuevo_nombre_usr:
                         st.warning("⚠️ Debes ingresar el RUT y el Nombre.")
-                    elif es_nuevo and not nuevo_pass_usr:
+                    elif es_nuevo and not pass_limpia:
                         st.warning("⚠️ Para crear un nuevo usuario, la contraseña es obligatoria.")
                     else:
                         # Preparamos el diccionario base
@@ -3361,10 +3368,9 @@ elif menu == "⚙️ Configuración General":
                             "modulos": ", ".join(modulos_seleccionados)
                         }
                         
-                        # 🔐 FIX DE SEGURIDAD: Solo hasheamos si se escribió una contraseña.
-                        # Esto evita borrar la contraseña actual si solo estás editando los permisos.
-                        if nuevo_pass_usr:
-                            registro_usuario["password_hash"] = generate_password_hash(nuevo_pass_usr.strip())
+                        # ✅ GUARDADO DIRECTO EN TEXTO PLANO (Sin scrypt ni generate_password_hash)
+                        if pass_limpia:
+                            registro_usuario["password_hash"] = pass_limpia
                         
                         try:
                             if es_nuevo:
@@ -3419,7 +3425,6 @@ elif menu == "⚙️ Configuración General":
                 st.session_state.config_ticket = nueva_config
                 
                 try:
-                    # ☁️ FIX DE ALMACENAMIENTO: Guardamos en Supabase en vez del archivo JSON local
                     if empresa_id_actual:
                         supabase.table("empresas").update(
                             {"config_ticket": nueva_config}
@@ -3433,10 +3438,8 @@ elif menu == "⚙️ Configuración General":
         st.markdown("---")
         st.markdown("### 🖼️ Logotipo de la Empresa")
         
-        # ☁️ Mostrar imagen directamente desde Supabase Storage
         ruta_storage_logo = f"{rut_actual}/logo_empresa.png"
         try:
-            # Intentamos obtener la URL pública del logo
             url_logo = supabase.storage.from_("archivos_clientes").get_public_url(ruta_storage_logo)
             st.image(url_logo, width=120, caption="Logotipo actual en la nube")
         except Exception:
@@ -3446,10 +3449,7 @@ elif menu == "⚙️ Configuración General":
         
         if logo_cargado is not None:
             try:
-                # ☁️ FIX DE ALMACENAMIENTO: Subimos el archivo a Supabase Storage
                 file_bytes = logo_cargado.getvalue()
-                
-                # upsert=true permite reemplazar el logo viejo por el nuevo
                 supabase.storage.from_("archivos_clientes").upload(
                     path=ruta_storage_logo, 
                     file=file_bytes, 
@@ -3460,6 +3460,7 @@ elif menu == "⚙️ Configuración General":
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al subir el logo a Storage: {e}")
+
     st.markdown("---")
     st.markdown("### 🗂️ Administración de archivos")
     st.write("Gestiona la base de datos de tu negocio: descarga plantillas en blanco, exporta tu información actual o importa cargas masivas.")
