@@ -18,6 +18,7 @@ from notas_credito import mostrar_modulo_notas_credito
 from cuentas_por_pagar import mostrar_modulo_cuentas_por_pagar
 from modulos.distribucion import mostrar_modulo_distribucion
 from produccion_recetas import mostrar_modulo_produccion
+from werkzeug.security import generate_password_hash
 # Ocultar el menú predeterminado y la marca de agua de Streamlit
 hide_st_style = """
             <style>
@@ -929,6 +930,9 @@ if not st.session_state.autenticado:
                         st.session_state.intentos_fallidos += 1
                         intentos_restantes = 3 - st.session_state.intentos_fallidos
                         st.error(f"❌ Usuario no encontrado o contraseña incorrecta. Te quedan {intentos_restantes} intento(s).")
+    
+    # 🛑 DETENER LA EJECUCIÓN SI NO ESTÁ AUTENTICADO
+    st.stop()
 
 
 # --- 5. CONFIGURACIÓN DE RUTAS Y ARCHIVOS DEL NEGOCIO ACTIVO ---
@@ -1011,7 +1015,7 @@ modulos_totales = [
     "📚 Historial de Ventas",
     "🔄 Notas de Crédito",
     "🏦 Conciliación y Retiros Seguros",
-    "🚚 Logística y Distribución (Preventa)", # 🚨 NUEVO MÓDULO AGREGADO AQUÍ
+    "🚚 Logística y Distribución (Preventa)",
     "⚙️ Configuración General"
 ]
 if st.session_state.get("es_admin_dev", False):
@@ -1167,12 +1171,10 @@ negocio_actual_sesion = st.session_state.get('negocio_seleccionado', st.session_
 # REGLA DE ORO: El propietario tiene acceso a todo... PERO limitado estrictamente por la licencia del desarrollador
 if negocio_actual_sesion in db_permisos_actuales:
     permisos_negocio = db_permisos_actuales[negocio_actual_sesion]
-    # Filtramos los módulos totales dejando únicamente los que el desarrollador marcó como True para este negocio
     lista_modulos_permitidos = [mod for mod in modulos_totales_sistema if permisos_negocio.get(mod, True)]
 else:
     lista_modulos_permitidos = globals().get('lista_modulos_permitidos', modulos_totales_sistema)
 
-# Garantizar que el Home siempre esté disponible si existe en el sistema
 if "🏠 Home / Bienvenida" in modulos_totales_sistema and "🏠 Home / Bienvenida" not in lista_modulos_permitidos:
     lista_modulos_permitidos.insert(0, "🏠 Home / Bienvenida")
 
@@ -1217,7 +1219,6 @@ if menu == "🏠 Home / Bienvenida":
     st.markdown(f"<p class='main-title'>🪙 CREC-ERP: {st.session_state.nombre_empresa if 'nombre_empresa' in st.session_state else 'GENERAL'}</p>", unsafe_allow_html=True)
     st.markdown("<p class='sub-title'>Selecciona un módulo para comenzar:</p>", unsafe_allow_html=True)
    
-    # 🚀 BOTÓN FORZADO EXCLUSIVO PARA EL DESARROLLADOR
     if st.session_state.get("es_admin_dev", False):
         st.error("🛠️ **PANEL DE CONTROL MAESTRO**")
         if st.button("🔑 ABRIR CONTROL DE LICENCIAS Y CLIENTES", type="primary", use_container_width=True):
@@ -1241,7 +1242,7 @@ if menu == "🏠 Home / Bienvenida":
         {"id": "conci", "nombre_ref": "Conciliación y Retiros Seguros", "label": "🏦 Conciliación y Retiros Seguros"},
         {"id": "historial", "nombre_ref": "Historial de Ventas", "label": "📚 Historial de Ventas"},
         {"id": "report", "nombre_ref": "Reportes y Analítica", "label": "📈 Reportes y Analítica"},
-        {"id": "distribucion", "nombre_ref": "Logística y Distribución (Preventa)", "label": "🚚 Logística y Distribución (Preventa)"}, # 🚨 NUEVO BOTÓN AGREGADO AQUÍ
+        {"id": "distribucion", "nombre_ref": "Logística y Distribución (Preventa)", "label": "🚚 Logística y Distribución (Preventa)"},
         {"id": "conf", "nombre_ref": "Configuración General", "label": "⚙️ Configuración General"}
     ]
 
@@ -1282,7 +1283,6 @@ elif menu == "📦 Inventario y Productos":
             if not df_inv.empty:
                 st.dataframe(df_inv, use_container_width=True)
             
-            # --- LÓGICA DE CREACIÓN DE PRODUCTOS MULTI-BODEGA ---
             st.markdown("### 🆕 Ingresar Nuevo Producto a la Base de Datos")
             
             bodegas_existentes = ["Bodega Principal"]
@@ -1529,7 +1529,7 @@ elif menu == "📦 Inventario y Productos":
                         st.success(f"✅ ¡Bodega '{nombre_bodega}' creada con éxito!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en Supabase: {e}")                
+                        st.error(f"❌ Error al guardar en Supabase: {e}")           
 
 elif menu == "📚 Historial de Ventas":
     mostrar_modulo_historial_ventas(ruta_negocio)                    
@@ -3308,39 +3308,38 @@ elif menu == "⚙️ Configuración General":
 
                 if btn_guardar_usr:
                     user_limpio = nuevo_user_id.strip()
-                    if not user_limpio or not nuevo_pass_usr or not nuevo_nombre_usr:
-                        st.warning("⚠️ Debes ingresar el RUT, el Nombre y la Contraseña.")
+                    
+                    # Validamos que los datos críticos estén
+                    if not user_limpio or not nuevo_nombre_usr:
+                        st.warning("⚠️ Debes ingresar el RUT y el Nombre.")
+                    elif es_nuevo and not nuevo_pass_usr:
+                        st.warning("⚠️ Para crear un nuevo usuario, la contraseña es obligatoria.")
                     else:
+                        # Preparamos el diccionario base
                         registro_usuario = {
                             "empresa_id": empresa_id_actual,
                             "rut_usuario": user_limpio,
                             "nombre": nuevo_nombre_usr.strip(),
-                            "password_hash": nuevo_pass_usr.strip(),
                             "rol": nuevo_rol_usr,
                             "modulos": ", ".join(modulos_seleccionados)
                         }
                         
+                        # 🔐 FIX DE SEGURIDAD: Solo hasheamos si se escribió una contraseña.
+                        # Esto evita borrar la contraseña actual si solo estás editando los permisos.
+                        if nuevo_pass_usr:
+                            registro_usuario["password_hash"] = generate_password_hash(nuevo_pass_usr.strip())
+                        
                         try:
                             if es_nuevo:
                                 supabase.table("usuarios").insert(registro_usuario).execute()
-                                st.success(f"✨ ¡Usuario '{nuevo_nombre_usr}' creado con éxito en Supabase!")
+                                st.success(f"✨ ¡Usuario '{nuevo_nombre_usr}' creado con éxito!")
                             else:
                                 id_db = db_usuarios[usuario_seleccionado]["id"]
                                 supabase.table("usuarios").update(registro_usuario).eq("id", id_db).execute()
                                 st.success(f"✅ ¡Permisos actualizados para '{nuevo_nombre_usr}'!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al guardar en Supabase: {e}")
-
-            if not es_nuevo:
-                if st.button(f"🗑️ Eliminar usuario '{def_nombre}'", type="secondary"):
-                    try:
-                        id_db = db_usuarios[usuario_seleccionado]["id"]
-                        supabase.table("usuarios").delete().eq("id", id_db).execute()
-                        st.success("Usuario eliminado del sistema.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error al eliminar: {e}")
+                            st.error(f"❌ Error al guardar en base de datos: {e}")
 
     with tab2:
         st.markdown("### 💳 Configuración de Formas de Pago Aceptadas")
@@ -3372,7 +3371,7 @@ elif menu == "⚙️ Configuración General":
             btn_guardar_config = st.form_submit_button("💾 Guardar Configuración")
           
             if btn_guardar_config:
-                st.session_state.config_ticket = {
+                nueva_config = {
                     "nombre_empresa": empresa,
                     "rut_empresa": rut,
                     "direccion": direccion,
@@ -3380,27 +3379,50 @@ elif menu == "⚙️ Configuración General":
                     "pie_pagina": pie,
                     "formato_impresion": formato
                 }
+                st.session_state.config_ticket = nueva_config
+                
                 try:
-                    with open(ruta_config_json, "w", encoding="utf-8") as f:
-                        json.dump(st.session_state.config_ticket, f, ensure_ascii=False, indent=4)
-                    st.success("✅ Configuración e IVA guardados permanentemente.")
+                    # ☁️ FIX DE ALMACENAMIENTO: Guardamos en Supabase en vez del archivo JSON local
+                    if empresa_id_actual:
+                        supabase.table("empresas").update(
+                            {"config_ticket": nueva_config}
+                        ).eq("id", empresa_id_actual).execute()
+                        st.success("✅ Configuración e IVA guardados permanentemente en la nube.")
+                    else:
+                        st.error("No se pudo identificar la empresa para guardar la configuración.")
                 except Exception as e:
-                    st.error(f"❌ Error al guardar el archivo: {e}")
+                    st.error(f"❌ Error al guardar en base de datos: {e}")
 
         st.markdown("---")
         st.markdown("### 🖼️ Logotipo de la Empresa")
-        if os.path.exists(ruta_logo):
-            st.image(ruta_logo, width=120, caption="Logotipo actual guardado")
+        
+        # ☁️ Mostrar imagen directamente desde Supabase Storage
+        ruta_storage_logo = f"{rut_actual}/logo_empresa.png"
+        try:
+            # Intentamos obtener la URL pública del logo
+            url_logo = supabase.storage.from_("archivos_clientes").get_public_url(ruta_storage_logo)
+            st.image(url_logo, width=120, caption="Logotipo actual en la nube")
+        except Exception:
+            st.info("No hay un logotipo cargado en la nube aún.")
    
         logo_cargado = st.file_uploader("Sube una imagen para tu logo (PNG o JPG)", type=["png", "jpg", "jpeg"], key="uploader_logo_empresa")
+        
         if logo_cargado is not None:
-            os.makedirs(tenant_dir, exist_ok=True)
-            img = Image.open(logo_cargado)
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            img.save(ruta_logo, "PNG")
-            st.success("✅ ¡Logotipo procesado y actualizado con éxito!")
-            st.rerun()
+            try:
+                # ☁️ FIX DE ALMACENAMIENTO: Subimos el archivo a Supabase Storage
+                file_bytes = logo_cargado.getvalue()
+                
+                # upsert=true permite reemplazar el logo viejo por el nuevo
+                supabase.storage.from_("archivos_clientes").upload(
+                    path=ruta_storage_logo, 
+                    file=file_bytes, 
+                    file_options={"content-type": logo_cargado.type, "upsert": "true"}
+                )
+                
+                st.success("✅ ¡Logotipo subido y actualizado en la nube con éxito!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error al subir el logo a Storage: {e}")
     st.markdown("---")
     st.markdown("### 🗂️ Administración de archivos")
     st.write("Gestiona la base de datos de tu negocio: descarga plantillas en blanco, exporta tu información actual o importa cargas masivas.")
