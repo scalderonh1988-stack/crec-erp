@@ -9,6 +9,46 @@ from data_manager import supabase, get_current_tenant
 # 📜 Importamos el integrador DTE de OpenFactura
 from dte_manager import emitir_dte_openfactura
 
+def obtener_datos_empresa(tenant_id):
+    """Recopila y normaliza los datos de la empresa desde session_state y Supabase."""
+    datos = {}
+    
+    # 1. Leer variables de Configuración General almacenadas en session_state
+    for cfg_key in ['config_empresa', 'config_ticket', 'datos_empresa', 'empresa_actual']:
+        if cfg_key in st.session_state and isinstance(st.session_state[cfg_key], dict):
+            datos.update(st.session_state[cfg_key])
+
+    # 2. Consultar en la tabla 'empresas' de Supabase probando distintas columnas de filtro
+    for col in ["rut_empresa", "rut", "id", "empresa_id", "id_negocio"]:
+        try:
+            res = supabase.table("empresas").select("*").eq(col, tenant_id).execute()
+            if res.data and len(res.data) > 0:
+                for k, v in res.data[0].items():
+                    if v and not datos.get(k):
+                        datos[k] = v
+                break
+        except Exception:
+            continue
+
+    # 3. Normalizar nombres de campos para asegurar compatibilidad con la plantilla DTE/PDF
+    rut_val = datos.get("rut_empresa") or datos.get("rut") or datos.get("rut_emisor") or str(tenant_id)
+    dir_val = datos.get("direccion_tributaria") or datos.get("direccion_local") or datos.get("direccion") or "Sin Dirección"
+    nombre_val = datos.get("razon_social") or datos.get("nombre_fantasia") or datos.get("nombre_empresa") or datos.get("nombre") or "MI EMPRESA"
+    giro_val = datos.get("giro") or datos.get("giro_comercial") or ""
+
+    datos.update({
+        "rut": rut_val,
+        "rut_empresa": rut_val,
+        "rut_emisor": rut_val,
+        "direccion": dir_val,
+        "direccion_tributaria": dir_val,
+        "direccion_local": dir_val,
+        "razon_social": nombre_val,
+        "nombre_empresa": nombre_val,
+        "giro": giro_val
+    })
+    return datos
+
 def mostrar_modulo_ventas(ruta_negocio):
     st.markdown("### 💰 Módulo de Ventas (POS)")
     st.write("Registra tus ventas y actualiza tu inventario en tiempo real (100% Nube).")
@@ -73,7 +113,6 @@ def mostrar_modulo_ventas(ruta_negocio):
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y archivada con éxito en la Nube!")
         
-        # Muestra botón para ver/descargar el PDF tributario oficial si fue emitido por la API
         if st.session_state.pdf_dte_actual:
             st.link_button("📄 Ver / Imprimir DTE Oficial (OpenFactura PDF)", st.session_state.pdf_dte_actual, use_container_width=True, type="primary")
             st.divider()
@@ -124,6 +163,9 @@ def mostrar_modulo_ventas(ruta_negocio):
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
 
+                        # Recopilamos y formateamos los datos de la empresa
+                        datos_empresa = obtener_datos_empresa(rut_actual)
+
                         # 📜 1. EMISIÓN DE DTE EN OPENFACTURA (SII)
                         items_para_dte = [
                             {
@@ -136,11 +178,12 @@ def mostrar_modulo_ventas(ruta_negocio):
 
                         with st.spinner("📄 Procesando emisión con Impuestos Internos (OpenFactura)..."):
                             res_dte = emitir_dte_openfactura(
-                                rut_emisor=rut_actual,
+                                rut_emisor=datos_empresa.get("rut"),
                                 tipo_documento=tipo_documento,
                                 items=items_para_dte,
                                 rut_receptor=cliente_rut if cliente_rut else "66666666-6",
-                                razon_social_receptor=cliente_nombre if cliente_nombre else "Cliente General"
+                                razon_social_receptor=cliente_nombre if cliente_nombre else "Cliente General",
+                                datos_empresa=datos_empresa
                             )
 
                         folio_oficial = transaccion_id_actual
@@ -163,7 +206,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                             lineas_productos += f"- {item['Descripción']} (x{cant_str}) ... ${item['Subtotal']:,.2f}\n"
                             
                             registros_para_nube.append({
-                                "rut_empresa": rut_actual,
+                                "rut_empresa": datos_empresa.get("rut"),
                                 "transaccion_id": transaccion_id_actual,
                                 "folio": folio_oficial,
                                 "folio_sii": folio_oficial,
@@ -197,21 +240,12 @@ def mostrar_modulo_ventas(ruta_negocio):
                                     except Exception as e:
                                         st.warning(f"⚠️ No se pudo descontar el stock del producto {item['Código']}")
 
-                                # 3. OBTENER DATOS DE LA EMPRESA PARA IMPRIMIR EN EL TICKET
-                                datos_empresa = {}
-                                try:
-                                    res_emp = supabase.table("empresas").select("*").eq("rut_empresa", rut_actual).execute()
-                                    if res_emp.data:
-                                        datos_empresa = res_emp.data[0]
-                                except Exception:
-                                    pass
-
-                                cfg = st.session_state.get('config_ticket', {})
-                                nombre_emp = datos_empresa.get("nombre_fantasia") or datos_empresa.get("razon_social") or datos_empresa.get("empresa_nombre") or cfg.get('nombre_empresa', 'MI EMPRESA')
-                                rut_emp = datos_empresa.get("rut_empresa") or cfg.get('rut_empresa', rut_actual)
-                                dir_emp = datos_empresa.get("direccion_local") or datos_empresa.get("direccion_tributaria") or datos_empresa.get("direccion") or cfg.get('direccion', 'Dirección Matriz')
-                                giro_emp = datos_empresa.get("giro") or ""
-                                pie_pag = cfg.get('pie_pagina', 'Gracias por su preferencia')
+                                # Generar Recibo de texto impreso
+                                nombre_emp = datos_empresa.get("razon_social", "MI EMPRESA")
+                                rut_emp = datos_empresa.get("rut", rut_actual)
+                                dir_emp = datos_empresa.get("direccion", "Sin Dirección")
+                                giro_emp = datos_empresa.get("giro", "")
+                                pie_pag = st.session_state.get('config_ticket', {}).get('pie_pagina', 'Gracias por su preferencia')
 
                                 str_giro = f"GIRO: {giro_emp}\n" if giro_emp else ""
                                 str_cliente = f"CLIENTE: {cliente_nombre}\nRUT CLIENTE: {cliente_rut}\n----------------------------------------\n" if (tipo_documento in ['Factura Electrónica', 'Guía de Despacho'] or cliente_nombre) else ""
