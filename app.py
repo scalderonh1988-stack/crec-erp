@@ -3468,144 +3468,152 @@ elif menu == "⚙️ Configuración General":
                             st.error(f"❌ Error al guardar Nombre de Fantasía: {e}")
 
     # ==========================================
-    # PESTAÑA 2: USUARIOS Y CAJAS
+    # PESTAÑA 2: USUARIOS Y CAJAS (RESTRINGIDA A PROPIETARIO / ADMINISTRADOR)
     # ==========================================
     with tab2:
         st.markdown("### 👥 Administración de Operadores y Permisos")
-        st.info("ℹ️ Crea usuarios, edita sus datos y define a qué módulos pueden acceder. Estos datos se guardan directamente en la tabla 'usuarios' de Supabase.")
 
-        todos_los_modulos_sistema = [
-            "🏠 Home / Bienvenida", "📊 Dashboard Ejecutivo", "📦 Inventario y Productos", 
-            "💰 Módulo de Ventas (POS)", "🛒 Registrar Compra (CPP)", "📉 Mermas y Ajustes", 
-            "📈 Informes y Movimientos (Kardex)", "⚠️ Control y Gestión de Inventario", 
-            "📊 Módulo de Finanzas", "📒 Cuadratura Diaria", "📑 Cuentas por Cobrar", 
-            "📈 Reportes y Analítica", "📚 Historial de Ventas", "🔄 Notas de Crédito", 
-            "🏦 Conciliación y Retiros Seguros", "⚙️ Configuración General", "🔑 Control Maestro de Licencias"
-        ]
+        # Verificación de Rol del usuario que inició sesión
+        rol_usuario_actual = str(st.session_state.get("rol", st.session_state.get("usuario_rol", ""))).lower()
+        es_propietario = any(term in rol_usuario_actual for term in ["propietario", "administrador", "admin"])
 
-        db_permisos_dev = cargar_permisos() if 'cargar_permisos' in globals() else {}
-        if rut_actual in db_permisos_dev:
-            modulos_permitidos_desarrollador = [mod for mod, activo in db_permisos_dev[rut_actual].items() if activo]
+        if not es_propietario:
+            st.error("🔒 **Acceso Restringido:** La creación, edición y administración de usuarios es de uso exclusivo para el Propietario o Administrador del sistema.")
         else:
-            modulos_permitidos_desarrollador = todos_los_modulos_sistema
+            st.info("ℹ️ Crea usuarios, edita sus datos y define a qué módulos pueden acceder. Estos datos se guardan directamente en la tabla 'usuarios' de Supabase.")
 
-        if not empresa_id_actual:
-            st.warning("⚠️ No se encontró el ID de la empresa. Completa primero la pestaña 'Datos de la Empresa'.")
-        else:
-            db_usuarios = {}
-            try:
-                res_users = supabase.table("usuarios").select("*").eq("empresa_id", empresa_id_actual).execute()
-                if res_users.data:
-                    for row in res_users.data:
-                        db_usuarios[row["rut_usuario"]] = row
-            except Exception as e:
-                st.error(f"⚠️ Error cargando usuarios: {e}")
+            todos_los_modulos_sistema = [
+                "🏠 Home / Bienvenida", "📊 Dashboard Ejecutivo", "📦 Inventario y Productos", 
+                "💰 Módulo de Ventas (POS)", "🛒 Registrar Compra (CPP)", "📉 Mermas y Ajustes", 
+                "📈 Informes y Movimientos (Kardex)", "⚠️ Control y Gestión de Inventario", 
+                "📊 Módulo de Finanzas", "📒 Cuadratura Diaria", "📑 Cuentas por Cobrar", 
+                "📈 Reportes y Analítica", "📚 Historial de Ventas", "🔄 Notas de Crédito", 
+                "🏦 Conciliación y Retiros Seguros", "⚙️ Configuración General", "🔑 Control Maestro de Licencias"
+            ]
 
-            st.markdown("#### 📋 Usuarios Actuales")
-            if db_usuarios:
-                lista_tabla = []
-                for uid, info in db_usuarios.items():
-                    modulos_permitidos = info.get("modulos", "")
-                    lista_tabla.append({
-                        "RUT Usuario": uid,
-                        "Nombre": info.get("nombre", "Sin Nombre"),
-                        "Rol Asignado": info.get("rol", "No definido"),
-                        "Módulos Habilitados": modulos_permitidos if modulos_permitidos else "Ninguno"
-                    })
-                st.dataframe(pd.DataFrame(lista_tabla), use_container_width=True)
+            db_permisos_dev = cargar_permisos() if 'cargar_permisos' in globals() else {}
+            if rut_actual in db_permisos_dev:
+                modulos_permitidos_desarrollador = [mod for mod, activo in db_permisos_dev[rut_actual].items() if activo]
             else:
-                st.info("ℹ️ No hay operadores registrados para esta empresa todavía.")
+                modulos_permitidos_desarrollador = todos_los_modulos_sistema
 
-            st.divider()
+            if not empresa_id_actual:
+                st.warning("⚠️ No se encontró el ID de la empresa. Completa primero la pestaña 'Datos de la Empresa'.")
+            else:
+                db_usuarios = {}
+                try:
+                    res_users = supabase.table("usuarios").select("*").eq("empresa_id", empresa_id_actual).execute()
+                    if res_users.data:
+                        for row in res_users.data:
+                            db_usuarios[row["rut_usuario"]] = row
+                except Exception as e:
+                    st.error(f"⚠️ Error cargando usuarios: {e}")
 
-            st.markdown("#### ⚙️ Crear o Editar Permisos de Usuario")
-            opciones_usuarios = ["-- ✨ Crear Nuevo Usuario --"] + list(db_usuarios.keys())
-            usuario_seleccionado = st.selectbox(
-                "🔍 Buscar Usuario a Editar (o Crear Nuevo):", 
-                opciones_usuarios, 
-                key="select_user_cfg_tab2"
-            )
-            
-            es_nuevo = (usuario_seleccionado == "-- ✨ Crear Nuevo Usuario --")
-            def_uid = "" if es_nuevo else usuario_seleccionado
-            def_nombre = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("nombre", "")
-            def_pass = ""
-            def_rol = "Cajero / Vendedor" if es_nuevo else db_usuarios[usuario_seleccionado].get("rol", "Cajero / Vendedor")
-            
-            modulos_str = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("modulos", "")
-            def_modulos = [m.strip() for m in modulos_str.split(",") if m.strip()] if modulos_str else []
+                st.markdown("#### 📋 Usuarios Actuales")
+                if db_usuarios:
+                    lista_tabla = []
+                    for uid, info in db_usuarios.items():
+                        modulos_permitidos = info.get("modulos", "")
+                        lista_tabla.append({
+                            "RUT Usuario": uid,
+                            "Nombre": info.get("nombre", "Sin Nombre"),
+                            "Rol Asignado": info.get("rol", "No definido"),
+                            "Módulos Habilitados": modulos_permitidos if modulos_permitidos else "Ninguno"
+                        })
+                    st.dataframe(pd.DataFrame(lista_tabla), use_container_width=True)
+                else:
+                    st.info("ℹ️ No hay operadores registrados para esta empresa todavía.")
 
-            todos_los_modulos = [m for m in todos_los_modulos_sistema if m in modulos_permitidos_desarrollador or m == "🏠 Home / Bienvenida"]
-            if not todos_los_modulos:
-                todos_los_modulos = todos_los_modulos_sistema
+                st.divider()
 
-            key_suffix = "nuevo" if es_nuevo else usuario_seleccionado.replace(" ", "_").replace("-", "_").replace(".", "_")
-
-            with st.form(f"form_crear_editar_operador_{key_suffix}", clear_on_submit=False):
-                col_u1, col_u2 = st.columns(2)
-                with col_u1:
-                    nuevo_user_id = st.text_input("RUT del Usuario *", value=def_uid, disabled=not es_nuevo, key=f"rut_{key_suffix}")
-                    nuevo_nombre_usr = st.text_input("Nombre Completo *", value=def_nombre, key=f"nombre_{key_suffix}")
-                with col_u2:
-                    nuevo_pass_usr = st.text_input("Contraseña de Acceso *", type="password", value=def_pass, key=f"pass_{key_suffix}")
-                    roles_opciones = ["Cajero / Vendedor", "Bodeguero", "Administrador"]
-                    idx_rol = roles_opciones.index(def_rol) if def_rol in roles_opciones else 0
-                    nuevo_rol_usr = st.selectbox("Rol Principal", options=roles_opciones, index=idx_rol, key=f"rol_{key_suffix}")
-
-                st.markdown("**🔐 Asignación de Permisos (Limitado por Licencia del Desarrollador)**")
-                modulos_seleccionados = st.multiselect(
-                    "Selecciona a qué módulos podrá entrar este usuario:",
-                    options=todos_los_modulos,
-                    default=[m for m in def_modulos if m in todos_los_modulos],
-                    key=f"mods_{key_suffix}"
+                st.markdown("#### ⚙️ Crear o Editar Permisos de Usuario")
+                opciones_usuarios = ["-- ✨ Crear Nuevo Usuario --"] + list(db_usuarios.keys())
+                usuario_seleccionado = st.selectbox(
+                    "🔍 Buscar Usuario a Editar (o Crear Nuevo):", 
+                    opciones_usuarios, 
+                    key="select_user_cfg_tab2"
                 )
+                
+                es_nuevo = (usuario_seleccionado == "-- ✨ Crear Nuevo Usuario --")
+                def_uid = "" if es_nuevo else usuario_seleccionado
+                def_nombre = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("nombre", "")
+                def_pass = ""
+                def_rol = "Cajero / Vendedor" if es_nuevo else db_usuarios[usuario_seleccionado].get("rol", "Cajero / Vendedor")
+                
+                modulos_str = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("modulos", "")
+                def_modulos = [m.strip() for m in modulos_str.split(",") if m.strip()] if modulos_str else []
 
-                texto_boton = "💾 Registrar Nuevo Operador" if es_nuevo else "🔄 Guardar Cambios"
-                btn_guardar_usr = st.form_submit_button(texto_boton, type="primary")
+                todos_los_modulos = [m for m in todos_los_modulos_sistema if m in modulos_permitidos_desarrollador or m == "🏠 Home / Bienvenida"]
+                if not todos_los_modulos:
+                    todos_los_modulos = todos_los_modulos_sistema
 
-                if btn_guardar_usr:
-                    user_limpio = nuevo_user_id.strip().upper()
-                    pass_limpia = nuevo_pass_usr.strip()
-                    
-                    if not user_limpio or not nuevo_nombre_usr.strip():
-                        st.warning("⚠️ Debes ingresar el RUT y el Nombre.")
-                    elif es_nuevo and not pass_limpia:
-                        st.warning("⚠️ Para crear un nuevo usuario, la contraseña es obligatoria.")
-                    else:
-                        registro_usuario = {
-                            "empresa_id": empresa_id_actual,
-                            "rut_usuario": user_limpio,
-                            "nombre": nuevo_nombre_usr.strip(),
-                            "rol": nuevo_rol_usr,
-                            "modulos": ", ".join(modulos_seleccionados) if modulos_seleccionados else "🏠 Home / Bienvenida"
-                        }
+                key_suffix = "nuevo" if es_nuevo else usuario_seleccionado.replace(" ", "_").replace("-", "_").replace(".", "_")
+
+                with st.form(f"form_crear_editar_operador_{key_suffix}", clear_on_submit=False):
+                    col_u1, col_u2 = st.columns(2)
+                    with col_u1:
+                        nuevo_user_id = st.text_input("RUT del Usuario *", value=def_uid, disabled=not es_nuevo, key=f"rut_{key_suffix}")
+                        nuevo_nombre_usr = st.text_input("Nombre Completo *", value=def_nombre, key=f"nombre_{key_suffix}")
+                    with col_u2:
+                        nuevo_pass_usr = st.text_input("Contraseña de Acceso *", type="password", value=def_pass, key=f"pass_{key_suffix}")
+                        roles_opciones = ["Cajero / Vendedor", "Bodeguero", "Administrador"]
+                        idx_rol = roles_opciones.index(def_rol) if def_rol in roles_opciones else 0
+                        nuevo_rol_usr = st.selectbox("Rol Principal", options=roles_opciones, index=idx_rol, key=f"rol_{key_suffix}")
+
+                    st.markdown("**🔐 Asignación de Permisos (Limitado por Licencia del Desarrollador)**")
+                    modulos_seleccionados = st.multiselect(
+                        "Selecciona a qué módulos podrá entrar este usuario:",
+                        options=todos_los_modulos,
+                        default=[m for m in def_modulos if m in todos_los_modulos],
+                        key=f"mods_{key_suffix}"
+                    )
+
+                    texto_boton = "💾 Registrar Nuevo Operador" if es_nuevo else "🔄 Guardar Cambios"
+                    btn_guardar_usr = st.form_submit_button(texto_boton, type="primary")
+
+                    if btn_guardar_usr:
+                        user_limpio = nuevo_user_id.strip().upper()
+                        pass_limpia = nuevo_pass_usr.strip()
                         
-                        if pass_limpia:
-                            registro_usuario["password_hash"] = pass_limpia
-                        
-                        try:
-                            if es_nuevo:
-                                supabase.table("usuarios").insert(registro_usuario).execute()
-                                st.toast(f"✨ ¡Usuario '{nuevo_nombre_usr}' creado con éxito!", icon="✅")
-                            else:
+                        if not user_limpio or not nuevo_nombre_usr.strip():
+                            st.warning("⚠️ Debes ingresar el RUT y el Nombre.")
+                        elif es_nuevo and not pass_limpia:
+                            st.warning("⚠️ Para crear un nuevo usuario, la contraseña es obligatoria.")
+                        else:
+                            registro_usuario = {
+                                "empresa_id": empresa_id_actual,
+                                "rut_usuario": user_limpio,
+                                "nombre": nuevo_nombre_usr.strip(),
+                                "rol": nuevo_rol_usr,
+                                "modulos": ", ".join(modulos_seleccionados) if modulos_seleccionados else "🏠 Home / Bienvenida"
+                            }
+                            
+                            if pass_limpia:
+                                registro_usuario["password_hash"] = pass_limpia
+                            
+                            try:
+                                if es_nuevo:
+                                    supabase.table("usuarios").insert(registro_usuario).execute()
+                                    st.toast(f"✨ ¡Usuario '{nuevo_nombre_usr}' creado con éxito!", icon="✅")
+                                else:
+                                    id_db = db_usuarios[usuario_seleccionado]["id"]
+                                    supabase.table("usuarios").update(registro_usuario).eq("id", id_db).execute()
+                                    st.toast(f"✅ ¡Permisos actualizados para '{nuevo_nombre_usr}'!", icon="✅")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al guardar en base de datos: {e}")
+
+                if not es_nuevo:
+                    with st.expander("🗑️ Eliminar Usuario"):
+                        st.warning(f"¿Estás seguro de eliminar a **{def_nombre}** ({def_uid})?")
+                        if st.button("🚨 Confirmar Eliminación", key=f"del_user_{key_suffix}"):
+                            try:
                                 id_db = db_usuarios[usuario_seleccionado]["id"]
-                                supabase.table("usuarios").update(registro_usuario).eq("id", id_db).execute()
-                                st.toast(f"✅ ¡Permisos actualizados para '{nuevo_nombre_usr}'!", icon="✅")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error al guardar en base de datos: {e}")
-
-            if not es_nuevo:
-                with st.expander("🗑️ Eliminar Usuario"):
-                    st.warning(f"¿Estás seguro de eliminar a **{def_nombre}** ({def_uid})?")
-                    if st.button("🚨 Confirmar Eliminación", key=f"del_user_{key_suffix}"):
-                        try:
-                            id_db = db_usuarios[usuario_seleccionado]["id"]
-                            supabase.table("usuarios").delete().eq("id", id_db).execute()
-                            st.toast("🗑️ Usuario eliminado correctamente.", icon="🗑️")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error al eliminar usuario: {e}")
+                                supabase.table("usuarios").delete().eq("id", id_db).execute()
+                                st.toast("🗑️ Usuario eliminado correctamente.", icon="🗑️")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al eliminar usuario: {e}")
 
     # ==========================================
     # PESTAÑA 3: FORMAS DE PAGO
