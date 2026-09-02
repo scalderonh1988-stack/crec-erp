@@ -9,49 +9,9 @@ from data_manager import supabase, get_current_tenant
 # 📜 Importamos el integrador DTE de OpenFactura
 from dte_manager import emitir_dte_openfactura
 
-def obtener_datos_empresa(tenant_id):
-    """Recopila los datos de la empresa buscando por RUT numérico o ID de la tabla."""
-    datos = {}
-    
-    # 1. Leer de la memoria activa de Streamlit si ya existen
-    llaves = ["rut_empresa", "direccion_tributaria", "razon_social", "giro"]
-    for k in llaves:
-        if k in st.session_state and st.session_state[k]:
-            datos[k] = str(st.session_state[k]).strip()
 
-    for cfg_key in ['datos_empresa', 'config_ticket', 'empresa']:
-        if cfg_key in st.session_state and isinstance(st.session_state[cfg_key], dict):
-            for k, v in st.session_state[cfg_key].items():
-                if v and not datos.get(k):
-                    datos[k] = str(v).strip()
-
-    # 2. Búsqueda en Supabase adaptada al valor exacto de tus capturas
-    if tenant_id and (not datos.get("rut_empresa") or not datos.get("direccion_tributaria")):
-        val_id = str(tenant_id).strip()
-        
-        # Limpiamos el valor para obtener los dígitos del RUT
-        rut_base = val_id.split("-")[0].replace(".", "").strip()
-
-        try:
-            # Consulta A: Buscar si empresa_id coincide con el inicio de rut_empresa (Ej: 15382273-5)
-            res = supabase.table("empresas").select("*").ilike("rut_empresa", f"{rut_base}%").execute()
-            
-            # Consulta B: Si no encuentra, buscar en password o en la id primaria
-            if not res.data:
-                res = supabase.table("empresas").select("*").eq("password", rut_base).execute()
-            if not res.data and rut_base.isdigit():
-                res = supabase.table("empresas").select("*").eq("id", int(rut_base)).execute()
-
-            if res.data and len(res.data) > 0:
-                emp = res.data[0]
-                for k, v in emp.items():
-                    if v:
-                        datos[k] = str(v).strip()
-
-        except Exception as e:
-            pass
-
-    # 3. Normalizar datos para la factura
+def _normalizar_datos_empresa(datos):
+    """Auxiliar para formatear la salida del diccionario con todas sus variantes de nombres."""
     nombre_val = datos.get("razon_social") or datos.get("empresa_nombre") or datos.get("nombre_fantasia") or "MI EMPRESA"
     rut_val = datos.get("rut_empresa") or datos.get("rut") or "Sin RUT"
     dir_val = datos.get("direccion_tributaria") or datos.get("direccion") or datos.get("direccion_local") or "Sin Dirección"
@@ -70,7 +30,110 @@ def obtener_datos_empresa(tenant_id):
         "giro": giro_val,
         "giro_emisor": giro_val
     }
-    return datos_normalizados
+
+
+def obtener_datos_empresa(tenant_id=None):
+    """
+    Recopila los datos de la empresa.
+    Maneja tanto al Propietario (RUT empresa) como al Cajero (RUT usuario -> empresa_id -> datos empresa).
+    """
+    datos = {}
+    
+    # 1. Leer de la sesión activa si ya están cargados
+    for cfg_key in ['datos_empresa', 'config_ticket', 'empresa']:
+        if cfg_key in st.session_state and isinstance(st.session_state[cfg_key], dict):
+            for k, v in st.session_state[cfg_key].items():
+                if v and not datos.get(k):
+                    datos[k] = str(v).strip()
+
+    for k in ["rut_empresa", "direccion_tributaria", "razon_social", "giro"]:
+        if k in st.session_state and st.session_state[k]:
+            datos[k] = str(st.session_state[k]).strip()
+
+    if datos.get("rut_empresa") and datos.get("direccion_tributaria") and datos.get("rut_empresa") != "Sin RUT":
+        return _normalizar_datos_empresa(datos)
+
+    # 2. Recolectar todos los posibles identificadores
+    candidatos = []
+    
+    if isinstance(tenant_id, dict):
+        if tenant_id.get("empresa_id"): candidatos.append(str(tenant_id["empresa_id"]))
+        if tenant_id.get("rut_usuario"): candidatos.append(str(tenant_id["rut_usuario"]))
+        if tenant_id.get("id"): candidatos.append(str(tenant_id["id"]))
+    elif tenant_id:
+        candidatos.append(str(tenant_id))
+
+    usr_sess = st.session_state.get("usuario") or st.session_state.get("user") or {}
+    if isinstance(usr_sess, dict):
+        if usr_sess.get("empresa_id"): candidatos.append(str(usr_sess["empresa_id"]))
+        if usr_sess.get("rut_usuario"): candidatos.append(str(usr_sess["rut_usuario"]))
+        if usr_sess.get("id"): candidatos.append(str(usr_sess["id"]))
+
+    if st.session_state.get("empresa_id_actual"):
+        candidatos.append(str(st.session_state["empresa_id_actual"]))
+    if st.session_state.get("rut"):
+        candidatos.append(str(st.session_state["rut"]))
+
+    # Limpiar y extraer solo dígitos de RUT
+    candidatos_limpios = []
+    for c in candidatos:
+        c_clean = str(c).split("-")[0].replace(".", "").strip()
+        if c_clean and c_clean not in candidatos_limpios:
+            candidatos_limpios.append(c_clean)
+
+    # 3. PASO PUENTE: Si el identificador es de un Cajero, consultar su empresa_id en 'usuarios'
+    empresa_ids_a_buscar = list(candidatos_limpios)
+
+    for cand in candidatos_limpios:
+        try:
+            res_u = None
+            if cand.isdigit():
+                res_u = supabase.table("usuarios").select("empresa_id").eq("id", int(cand)).execute()
+            if not res_u or not res_u.data:
+                res_u = supabase.table("usuarios").select("empresa_id").ilike("rut_usuario", f"{cand}%").execute()
+
+            if res_u and res_u.data:
+                emp_id_found = str(res_u.data[0].get("empresa_id") or "").strip()
+                if emp_id_found and emp_id_found not in empresa_ids_a_buscar:
+                    empresa_ids_a_buscar.insert(0, emp_id_found)  # Priorizar el empresa_id encontrado
+        except Exception:
+            pass
+
+    # 4. CONSULTA A LA TABLA 'empresas'
+    empresa_encontrada = None
+    for target in empresa_ids_a_buscar:
+        try:
+            # Buscar coincidencia con inicio de rut_empresa
+            res = supabase.table("empresas").select("*").ilike("rut_empresa", f"{target}%").execute()
+            
+            # Buscar en password o ID primaria de la empresa
+            if not res.data:
+                res = supabase.table("empresas").select("*").eq("password", target).execute()
+            if not res.data and target.isdigit():
+                res = supabase.table("empresas").select("*").eq("id", int(target)).execute()
+
+            if res.data and len(res.data) > 0:
+                empresa_encontrada = res.data[0]
+                break
+        except Exception:
+            continue
+
+    # 5. RESCATE DE SEGURIDAD (Si no lo ubica, usa la empresa registrada activa)
+    if not empresa_encontrada:
+        try:
+            res_fb = supabase.table("empresas").select("*").order("id", desc=True).limit(1).execute()
+            if res_fb.data:
+                empresa_encontrada = res_fb.data[0]
+        except Exception:
+            pass
+
+    if empresa_encontrada:
+        for k, v in empresa_encontrada.items():
+            if v:
+                datos[k] = str(v).strip()
+
+    return _normalizar_datos_empresa(datos)
+
 
 def mostrar_modulo_ventas(ruta_negocio):
     st.markdown("### 💰 Módulo de Ventas (POS)")
@@ -186,7 +249,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
 
-                        # Recopilamos y formateamos los datos de la empresa
+                        # Recopilamos y formateamos los datos de la empresa vinculada
                         datos_empresa = obtener_datos_empresa(rut_actual)
 
                         # 📜 1. EMISIÓN DE DTE EN OPENFACTURA (SII)
