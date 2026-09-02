@@ -10,44 +10,73 @@ from data_manager import supabase, get_current_tenant
 from dte_manager import emitir_dte_openfactura
 
 def obtener_datos_empresa(tenant_id):
-    """Recopila y normaliza los datos de la empresa desde session_state y Supabase."""
+    """Recopila y normaliza exhaustivamente los datos de la empresa."""
     datos = {}
     
-    # 1. Leer variables de Configuración General almacenadas en session_state
-    for cfg_key in ['config_empresa', 'config_ticket', 'datos_empresa', 'empresa_actual']:
+    # 1. Leer llaves directas en st.session_state (donde Guarda Configuración General)
+    llaves_directas = [
+        "rut", "rut_empresa", "rut_emisor", 
+        "direccion", "direccion_empresa", "direccion_tributaria", "direccion_local",
+        "razon_social", "nombre_empresa", "nombre_fantasia", "nombre",
+        "giro", "giro_comercial"
+    ]
+    for key in llaves_directas:
+        if key in st.session_state and st.session_state[key]:
+            datos[key] = str(st.session_state[key]).strip()
+
+    # 2. Leer diccionarios de configuración almacenados en session_state
+    for cfg_key in ['empresa', 'config', 'config_empresa', 'config_ticket', 'datos_empresa', 'empresa_actual', 'perfil']:
         if cfg_key in st.session_state and isinstance(st.session_state[cfg_key], dict):
-            datos.update(st.session_state[cfg_key])
+            for k, v in st.session_state[cfg_key].items():
+                if v and not datos.get(k):
+                    datos[k] = str(v).strip()
 
-    # 2. Consultar en la tabla 'empresas' de Supabase probando distintas columnas de filtro
-    for col in ["rut_empresa", "rut", "id", "empresa_id", "id_negocio"]:
-        try:
-            res = supabase.table("empresas").select("*").eq(col, tenant_id).execute()
-            if res.data and len(res.data) > 0:
-                for k, v in res.data[0].items():
-                    if v and not datos.get(k):
-                        datos[k] = v
-                break
-        except Exception:
-            continue
+    # 3. Consultar tablas de Supabase ('empresas', 'configuracion', 'perfil')
+    tablas = ["empresas", "configuracion", "perfil", "usuarios"]
+    columnas_filtro = ["rut_empresa", "rut", "id", "user_id", "empresa_id", "id_negocio"]
+    
+    for tabla in tablas:
+        for col in columnas_filtro:
+            try:
+                res = supabase.table(tabla).select("*").eq(col, tenant_id).execute()
+                if res.data and len(res.data) > 0:
+                    for k, v in res.data[0].items():
+                        if v and not datos.get(k):
+                            datos[k] = str(v).strip()
+                    break
+            except Exception:
+                continue
+        if datos.get("rut") and datos.get("direccion"):
+            break
 
-    # 3. Normalizar nombres de campos para asegurar compatibilidad con la plantilla DTE/PDF
-    rut_val = datos.get("rut_empresa") or datos.get("rut") or datos.get("rut_emisor") or str(tenant_id)
-    dir_val = datos.get("direccion_tributaria") or datos.get("direccion_local") or datos.get("direccion") or "Sin Dirección"
-    nombre_val = datos.get("razon_social") or datos.get("nombre_fantasia") or datos.get("nombre_empresa") or datos.get("nombre") or "MI EMPRESA"
+    # 4. Validar y aislar RUT (evita que el nombre del usuario se asigne como RUT)
+    rut_val = datos.get("rut") or datos.get("rut_empresa") or datos.get("rut_emisor") or ""
+    
+    # Si el valor obtenido contiene solo letras o es un nombre, se descarta para el campo RUT
+    if not rut_val or any(c.isalpha() for c in rut_val.replace("k", "").replace("K", "")):
+        rut_val = str(tenant_id) if tenant_id and any(c.isdigit() for c in str(tenant_id)) else "Sin RUT"
+
+    dir_val = datos.get("direccion") or datos.get("direccion_tributaria") or datos.get("direccion_empresa") or datos.get("direccion_local") or "Sin Dirección"
+    nombre_val = datos.get("razon_social") or datos.get("nombre_empresa") or datos.get("nombre_fantasia") or datos.get("nombre") or "MI EMPRESA"
     giro_val = datos.get("giro") or datos.get("giro_comercial") or ""
 
-    datos.update({
+    # Mapeo universal de llaves para el generador de PDF y OpenFactura
+    datos_normalizados = {
         "rut": rut_val,
         "rut_empresa": rut_val,
         "rut_emisor": rut_val,
         "direccion": dir_val,
         "direccion_tributaria": dir_val,
+        "direccion_empresa": dir_val,
         "direccion_local": dir_val,
+        "direccion_emisor": dir_val,
         "razon_social": nombre_val,
         "nombre_empresa": nombre_val,
-        "giro": giro_val
-    })
-    return datos
+        "nombre": nombre_val,
+        "giro": giro_val,
+        "giro_emisor": giro_val
+    }
+    return datos_normalizados
 
 def mostrar_modulo_ventas(ruta_negocio):
     st.markdown("### 💰 Módulo de Ventas (POS)")
