@@ -124,7 +124,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
 
-                        # 📜 1. EMISIÓN DE DTE EN OPENFACTURA (SANDBOX)
+                        # 📜 1. EMISIÓN DE DTE EN OPENFACTURA (SII)
                         items_para_dte = [
                             {
                                 "nombre": item["Descripción"],
@@ -147,11 +147,11 @@ def mostrar_modulo_ventas(ruta_negocio):
                         pdf_oficial_url = None
 
                         if res_dte.get("exito"):
-                            folio_oficial = str(res_dte.get("folio"))
+                            folio_oficial = str(res_dte.get("folio", transaccion_id_actual))
                             pdf_oficial_url = res_dte.get("pdf_url")
                             st.session_state.pdf_dte_actual = pdf_oficial_url
                         else:
-                            st.warning(f"⚠️ Alerta DTE: {res_dte.get('error')}. Se registrará la venta localmente.")
+                            st.warning(f"⚠️ Alerta DTE: {res_dte.get('error')}. Se registrará la venta localmente con ID interno.")
 
                         # ☁️ 2. PREPARAR Y GUARDAR EN SUPABASE
                         registros_para_nube = []
@@ -165,6 +165,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                             registros_para_nube.append({
                                 "rut_empresa": rut_actual,
                                 "transaccion_id": transaccion_id_actual,
+                                "folio": folio_oficial,
                                 "folio_sii": folio_oficial,
                                 "pdf_url": pdf_oficial_url,
                                 "fecha_hora": fecha_hora_actual.isoformat(),
@@ -184,7 +185,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                             respuesta_venta = supabase.table("ventas").insert(registros_para_nube).execute()
 
                             if not respuesta_venta.data:
-                                st.error("❌ Supabase no guardó los datos. Verifica las columnas 'folio_sii' y 'pdf_url' en la tabla 'ventas'.")
+                                st.error("❌ Supabase no guardó los datos. Verifica la estructura de la tabla 'ventas'.")
                             else:
                                 for item in st.session_state.carrito_ventas:
                                     try:
@@ -196,25 +197,42 @@ def mostrar_modulo_ventas(ruta_negocio):
                                     except Exception as e:
                                         st.warning(f"⚠️ No se pudo descontar el stock del producto {item['Código']}")
 
-                                cfg = st.session_state.get('config_ticket', {'nombre_empresa': 'MI EMPRESA', 'rut_empresa': '00.000.000-0', 'direccion': 'Dirección Casa Matriz', 'pie_pagina': 'Gracias por su preferencia'})
-                                
+                                # 3. OBTENER DATOS DE LA EMPRESA PARA IMPRIMIR EN EL TICKET
+                                datos_empresa = {}
+                                try:
+                                    res_emp = supabase.table("empresas").select("*").eq("rut_empresa", rut_actual).execute()
+                                    if res_emp.data:
+                                        datos_empresa = res_emp.data[0]
+                                except Exception:
+                                    pass
+
+                                cfg = st.session_state.get('config_ticket', {})
+                                nombre_emp = datos_empresa.get("nombre_fantasia") or datos_empresa.get("razon_social") or datos_empresa.get("empresa_nombre") or cfg.get('nombre_empresa', 'MI EMPRESA')
+                                rut_emp = datos_empresa.get("rut_empresa") or cfg.get('rut_empresa', rut_actual)
+                                dir_emp = datos_empresa.get("direccion_local") or datos_empresa.get("direccion_tributaria") or datos_empresa.get("direccion") or cfg.get('direccion', 'Dirección Matriz')
+                                giro_emp = datos_empresa.get("giro") or ""
+                                pie_pag = cfg.get('pie_pagina', 'Gracias por su preferencia')
+
+                                str_giro = f"GIRO: {giro_emp}\n" if giro_emp else ""
+                                str_cliente = f"CLIENTE: {cliente_nombre}\nRUT CLIENTE: {cliente_rut}\n----------------------------------------\n" if (tipo_documento in ['Factura Electrónica', 'Guía de Despacho'] or cliente_nombre) else ""
+
                                 texto_recibo = f"""========================================
-       {cfg.get('nombre_empresa', 'MI EMPRESA')}
-       RUT: {cfg.get('rut_empresa', '00.000.000-0')}
-       {cfg.get('direccion', 'Dirección')}
-========================================
+       {nombre_emp}
+       RUT: {rut_emp}
+       {dir_emp}
+       {str_giro}========================================
 DOCUMENTO: {tipo_documento.upper()}
-FOLIO SII / ID: {folio_oficial}
+FOLIO SII: N° {folio_oficial}
 FECHA: {fecha_hora_actual.strftime('%d/%m/%Y %H:%M:%S')}
 TERMINAL: {caja_actual}
 ----------------------------------------
-{('CLIENTE: ' + cliente_nombre + ' | RUT: ' + cliente_rut + chr(10) + '----------------------------------------' + chr(10)) if tipo_documento in ['Factura Electrónica', 'Guía de Despacho'] else ''}DETALLE:
+{str_cliente}DETALLE:
 {lineas_productos}----------------------------------------
 TOTAL: ${total_venta:,.2f}
 PAGO: {forma_pago.upper()}
 {('RECIBIDO: $' + f'{efectivo_recibido:,.2f}' + chr(10) + 'VUELTO: $' + f'{cambio:,.2f}') if forma_pago == 'Efectivo' else ''}
 ========================================
-{cfg.get('pie_pagina', 'Gracias por su preferencia')}
+{pie_pag}
 ========================================"""
 
                                 st.session_state.ultimo_recibo = texto_recibo
