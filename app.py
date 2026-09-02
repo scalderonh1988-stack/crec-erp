@@ -3306,6 +3306,13 @@ elif menu == "⚙️ Configuración General":
     # PESTAÑA 1: DATOS DE LA EMPRESA (PROTEGIDA CONTRA VALORES NULL)
     # ==========================================
     with tab1:
+        # Carga/Sincronización inicial en la memoria de sesión
+        if datos_empresa_db:
+            if "datos_empresa" not in st.session_state:
+                st.session_state.datos_empresa = dict(datos_empresa_db)
+            else:
+                st.session_state.datos_empresa.update(datos_empresa_db)
+
         st.markdown("### 🏢 Configuración de Identidad de la Empresa")
         st.info("ℹ️ Separa la Razón Social exigida legalmente por el SII del Nombre de Fantasía que verán tus clientes en los tickets impresos.")
 
@@ -3392,10 +3399,22 @@ elif menu == "⚙️ Configuración General":
                             else:
                                 supabase.table("empresas").insert(payload_razon).execute()
 
+                            # 🔄 ACTUALIZACIÓN DIRECTA EN LA MEMORIA DE LA SESIÓN
+                            if "datos_empresa" not in st.session_state:
+                                st.session_state.datos_empresa = {}
+                            st.session_state.datos_empresa.update(payload_razon)
+
                             if "config_ticket" not in st.session_state:
                                 st.session_state.config_ticket = {}
-                            st.session_state.config_ticket["razon_social"] = str_razon
-                            st.session_state.config_ticket["rut_empresa"] = str_rut
+                            st.session_state.config_ticket.update({
+                                "razon_social": str_razon,
+                                "rut_empresa": str_rut,
+                                "direccion": (direccion_tributaria or "").strip(),
+                                "direccion_tributaria": (direccion_tributaria or "").strip(),
+                                "giro": (giro_comercial or "").strip(),
+                                "comuna": (comuna_ciudad or "").strip(),
+                                "email_contacto": (email_tributario or "").strip()
+                            })
 
                             st.toast("✅ ¡Razón Social y datos legales guardados correctamente!", icon="🏛️")
                             st.rerun()
@@ -3455,6 +3474,11 @@ elif menu == "⚙️ Configuración General":
                                 supabase.table("empresas").update(payload_fantasia).eq("id", empresa_id_actual).execute()
                             else:
                                 supabase.table("empresas").insert(payload_fantasia).execute()
+
+                            # 🔄 ACTUALIZACIÓN DIRECTA EN LA MEMORIA DE LA SESIÓN
+                            if "datos_empresa" not in st.session_state:
+                                st.session_state.datos_empresa = {}
+                            st.session_state.datos_empresa.update(payload_fantasia)
 
                             if "config_ticket" not in st.session_state:
                                 st.session_state.config_ticket = {}
@@ -3629,7 +3653,7 @@ elif menu == "⚙️ Configuración General":
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ Error al eliminar usuario: {e}")
-                                
+
     # ==========================================
     # PESTAÑA 3: FORMAS DE PAGO
     # ==========================================
