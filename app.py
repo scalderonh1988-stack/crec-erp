@@ -3473,9 +3473,24 @@ elif menu == "⚙️ Configuración General":
     with tab2:
         st.markdown("### 👥 Administración de Operadores y Permisos")
 
-        # Verificación de Rol del usuario que inició sesión
-        rol_usuario_actual = str(st.session_state.get("rol", st.session_state.get("usuario_rol", ""))).lower()
-        es_propietario = any(term in rol_usuario_actual for term in ["propietario", "administrador", "admin"])
+        # Verificación ultra robusta de Rol / Permiso en session_state
+        texto_sesion_usuario = ""
+        
+        # 1. Inspeccionar claves habituales de usuario y rol
+        for key in ["rol", "usuario_rol", "rol_usuario", "user_role", "role", "perfil", "usuario", "usuario_actual", "user"]:
+            val = st.session_state.get(key)
+            if isinstance(val, dict):
+                texto_sesion_usuario += f" {val.get('rol', '')} {val.get('role', '')} {val.get('nombre', '')} {val.get('usuario', '')}"
+            elif isinstance(val, str):
+                texto_sesion_usuario += f" {val}"
+
+        # 2. Escaneo de respaldo sobre todas las variables de session_state
+        for k, v in st.session_state.items():
+            if isinstance(v, str) and any(t in v.lower() for t in ["propietario", "administrador", "admin"]):
+                texto_sesion_usuario += f" {v}"
+
+        texto_sesion_usuario = texto_sesion_usuario.lower()
+        es_propietario = any(term in texto_sesion_usuario for term in ["propietario", "administrador", "admin"])
 
         if not es_propietario:
             st.error("🔒 **Acceso Restringido:** La creación, edición y administración de usuarios es de uso exclusivo para el Propietario o Administrador del sistema.")
@@ -3614,7 +3629,7 @@ elif menu == "⚙️ Configuración General":
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ Error al eliminar usuario: {e}")
-
+                                
     # ==========================================
     # PESTAÑA 3: FORMAS DE PAGO
     # ==========================================
