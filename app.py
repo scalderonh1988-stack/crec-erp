@@ -3280,7 +3280,13 @@ elif menu == "⚙️ Configuración General":
                 "formato_impresion": "80mm (Térmica Estándar)"
             }
 
-    tab1, tab2, tab3 = st.tabs(["👥 Usuarios y Cajas", "💳 Formas de Pago", "🖨️ Formato de Tickets e Impresión"])
+    # 📜 Pestañas de Configuración incluyendo Certificado Digital (DTE)
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "👥 Usuarios y Cajas", 
+        "💳 Formas de Pago", 
+        "🖨️ Formato de Tickets e Impresión", 
+        "📜 Certificado Digital (DTE)"
+    ])
 
     with tab1:
         st.markdown("### 👥 Administración de Operadores y Permisos")
@@ -3297,7 +3303,6 @@ elif menu == "⚙️ Configuración General":
         except Exception as e:
             st.error(f"⚠️ Error conectando con la tabla empresas: {e}")
 
-        # Definir los módulos totales del sistema de forma segura
         todos_los_modulos_sistema = [
             "🏠 Home / Bienvenida", "📊 Dashboard Ejecutivo", "📦 Inventario y Productos", 
             "💰 Módulo de Ventas (POS)", "🛒 Registrar Compra (CPP)", "📉 Mermas y Ajustes", 
@@ -3307,7 +3312,6 @@ elif menu == "⚙️ Configuración General":
             "🏦 Conciliación y Retiros Seguros", "⚙️ Configuración General", "🔑 Control Maestro de Licencias"
         ]
 
-        # Rescatar los permisos que el desarrollador configuró (vía función o respaldo global)
         db_permisos_dev = cargar_permisos() if 'cargar_permisos' in globals() else {}
         if rut_actual in db_permisos_dev:
             modulos_permitidos_desarrollador = [mod for mod, activo in db_permisos_dev[rut_actual].items() if activo]
@@ -3317,7 +3321,6 @@ elif menu == "⚙️ Configuración General":
         if not empresa_id_actual:
             st.warning("⚠️ No se encontró el ID de la empresa. Verifica la conexión.")
         else:
-            # --- 1. LEER USUARIOS DESDE SUPABASE ---
             db_usuarios = {}
             try:
                 res_users = supabase.table("usuarios").select("*").eq("empresa_id", empresa_id_actual).execute()
@@ -3332,7 +3335,6 @@ elif menu == "⚙️ Configuración General":
                 lista_tabla = []
                 for uid, info in db_usuarios.items():
                     modulos_permitidos = info.get("modulos", "")
-                    
                     lista_tabla.append({
                         "RUT Usuario": uid,
                         "Nombre": info.get("nombre", "Sin Nombre"),
@@ -3345,9 +3347,7 @@ elif menu == "⚙️ Configuración General":
 
             st.divider()
 
-            # --- 2. BUSCADOR Y EDICIÓN DE USUARIOS ---
             st.markdown("#### ⚙️ Crear o Editar Permisos de Usuario")
-            
             opciones_usuarios = ["-- ✨ Crear Nuevo Usuario --"] + list(db_usuarios.keys())
             usuario_seleccionado = st.selectbox(
                 "🔍 Buscar Usuario a Editar (o Crear Nuevo):", 
@@ -3356,7 +3356,6 @@ elif menu == "⚙️ Configuración General":
             )
             
             es_nuevo = (usuario_seleccionado == "-- ✨ Crear Nuevo Usuario --")
-            
             def_uid = "" if es_nuevo else usuario_seleccionado
             def_nombre = "" if es_nuevo else db_usuarios[usuario_seleccionado].get("nombre", "")
             def_pass = ""
@@ -3369,40 +3368,18 @@ elif menu == "⚙️ Configuración General":
             if not todos_los_modulos:
                 todos_los_modulos = todos_los_modulos_sistema
 
-            # Clave dinámica única para refrescar correctamente los inputs de Streamlit al cambiar de usuario
             key_suffix = "nuevo" if es_nuevo else usuario_seleccionado.replace(" ", "_").replace("-", "_").replace(".", "_")
 
             with st.form(f"form_crear_editar_operador_{key_suffix}", clear_on_submit=False):
                 col_u1, col_u2 = st.columns(2)
                 with col_u1:
-                    nuevo_user_id = st.text_input(
-                        "RUT del Usuario *", 
-                        value=def_uid, 
-                        disabled=not es_nuevo, 
-                        key=f"rut_{key_suffix}", 
-                        help="RUT de inicio de sesión."
-                    )
-                    nuevo_nombre_usr = st.text_input(
-                        "Nombre Completo *", 
-                        value=def_nombre, 
-                        key=f"nombre_{key_suffix}"
-                    )
+                    nuevo_user_id = st.text_input("RUT del Usuario *", value=def_uid, disabled=not es_nuevo, key=f"rut_{key_suffix}")
+                    nuevo_nombre_usr = st.text_input("Nombre Completo *", value=def_nombre, key=f"nombre_{key_suffix}")
                 with col_u2:
-                    nuevo_pass_usr = st.text_input(
-                        "Contraseña de Acceso *", 
-                        type="password", 
-                        value=def_pass,
-                        key=f"pass_{key_suffix}",
-                        help="Si está editando, déjela en blanco para mantener la contraseña actual."
-                    )
+                    nuevo_pass_usr = st.text_input("Contraseña de Acceso *", type="password", value=def_pass, key=f"pass_{key_suffix}")
                     roles_opciones = ["Cajero / Vendedor", "Bodeguero", "Administrador"]
                     idx_rol = roles_opciones.index(def_rol) if def_rol in roles_opciones else 0
-                    nuevo_rol_usr = st.selectbox(
-                        "Rol Principal", 
-                        options=roles_opciones, 
-                        index=idx_rol, 
-                        key=f"rol_{key_suffix}"
-                    )
+                    nuevo_rol_usr = st.selectbox("Rol Principal", options=roles_opciones, index=idx_rol, key=f"rol_{key_suffix}")
 
                 st.markdown("**🔐 Asignación de Permisos (Limitado por Licencia del Desarrollador)**")
                 modulos_seleccionados = st.multiselect(
@@ -3447,7 +3424,6 @@ elif menu == "⚙️ Configuración General":
                         except Exception as e:
                             st.error(f"❌ Error al guardar en base de datos: {e}")
 
-            # Botón de eliminación solo visible al editar un usuario existente
             if not es_nuevo:
                 with st.expander("🗑️ Eliminar Usuario"):
                     st.warning(f"¿Estás seguro de eliminar a **{def_nombre}** ({def_uid})?")
@@ -3477,9 +3453,7 @@ elif menu == "⚙️ Configuración General":
             empresa = st.text_input("Nombre Empresa", value=st.session_state.config_ticket.get("nombre_empresa", ""))
             rut = st.text_input("RUT", value=st.session_state.config_ticket.get("rut_empresa", ""))
             direccion = st.text_input("Dirección", value=st.session_state.config_ticket.get("direccion", ""))
-           
             iva_personalizado = st.number_input("Tasa de IVA Local (%)", min_value=0.0, max_value=100.0, value=float(st.session_state.config_ticket.get("iva_tasa", 19.0)), step=1.0)
-           
             pie = st.text_input("Pie de Página", value=st.session_state.config_ticket.get("pie_pagina", ""))
           
             formatos_disponibles = ["80mm (Térmica Estándar)", "58mm (Térmica Pequeña)", "Carta / A4"]
@@ -3513,7 +3487,6 @@ elif menu == "⚙️ Configuración General":
 
         st.markdown("---")
         st.markdown("### 🖼️ Logotipo de la Empresa")
-        
         ruta_storage_logo = f"{rut_actual}/logo_empresa.png"
         try:
             url_logo = supabase.storage.from_("archivos_clientes").get_public_url(ruta_storage_logo)
@@ -3522,7 +3495,6 @@ elif menu == "⚙️ Configuración General":
             st.info("No hay un logotipo cargado en la nube aún.")
    
         logo_cargado = st.file_uploader("Sube una imagen para tu logo (PNG o JPG)", type=["png", "jpg", "jpeg"], key="uploader_logo_empresa")
-        
         if logo_cargado is not None:
             try:
                 file_bytes = logo_cargado.getvalue()
@@ -3531,11 +3503,73 @@ elif menu == "⚙️ Configuración General":
                     file=file_bytes, 
                     file_options={"content-type": logo_cargado.type, "upsert": "true"}
                 )
-                
                 st.success("✅ ¡Logotipo subido y actualizado en la nube con éxito!")
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al subir el logo a Storage: {e}")
+
+    # 📜 PESTAÑA 4: CERTIFICADO DIGITAL PARA IMPUESTOS INTERNOS (DTE)
+    with tab4:
+        st.markdown("### 📜 Certificado Digital (Firma Electrónica)")
+        st.write("Carga tu firma digital para vincular tu negocio ante el SII a través de OpenFactura y habilitar la emisión oficial de DTEs.")
+
+        # 1. Indicaciones para la adquisición del certificado
+        with st.expander("🛒 ¿Aún no tienes Certificado Digital? Cómpralo aquí", expanded=False):
+            st.info("Puedes adquirir tu certificado digital por 1 a 3 años (~$13.000 a $15.000 CLP/año) en las entidades certificadoras autorizadas por el SII:")
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                st.link_button("🌐 Comprar en Firma.cl", "https://www.firma.cl", use_container_width=True)
+            with col_c2:
+                st.link_button("🌐 Comprar en E-CertChile", "https://www.e-certchile.cl", use_container_width=True)
+
+        st.divider()
+
+        # 2. Formulario de subida de archivo .pfx/.p12 y contraseña
+        st.markdown("#### 📤 Cargar y Vincular Certificado Digital")
+        
+        archivo_pfx = st.file_uploader(
+            "Selecciona el archivo de tu certificado (.pfx o .p12):", 
+            type=["pfx", "p12"],
+            key="uploader_cert_pfx",
+            help="Archivo entregado por la empresa proveedora de firma."
+        )
+        
+        password_pfx = st.text_input(
+            "Contraseña del Certificado Digital:", 
+            type="password", 
+            placeholder="••••••••",
+            key="pass_cert_pfx",
+            help="Clave secreta creada al descargar el certificado."
+        )
+
+        if st.button("🔐 Cargar y Activar Firma en OpenFactura", type="primary", use_container_width=True, key="btn_subir_cert_openfactura"):
+            if not archivo_pfx or not password_pfx:
+                st.warning("⚠️ Debes adjuntar el archivo del certificado e ingresar la contraseña.")
+            else:
+                with st.spinner("Registrando y validando firma digital con el proveedor DTE..."):
+                    import requests
+                    endpoint_cert = "https://api.haulmer.com/v2/dte/organization/certificate"
+                    
+                    headers = {
+                        "apikey": "9245922d05404d71b84f0f03227d8e87"  # Reemplazar por tu API Key de Producción
+                    }
+                    
+                    files = {
+                        "file": (archivo_pfx.name, archivo_pfx.getvalue(), "application/x-pkcs12")
+                    }
+                    data = {
+                        "password": password_pfx,
+                        "rut": str(rut_actual)
+                    }
+                    
+                    try:
+                        response = requests.post(endpoint_cert, headers=headers, files=files, data=data, timeout=15)
+                        if response.status_code in [200, 201]:
+                            st.success("🎉 ¡Certificado Digital cargado y vinculado con éxito! Tu negocio ya está habilitado para emitir documentos tributarios oficiales.")
+                        else:
+                            st.error(f"❌ Error al validar certificado con OpenFactura: {response.text}")
+                    except Exception as e:
+                        st.error(f"⚠️ Error de conexión con la API de OpenFactura: {e}")
 
     st.markdown("---")
     st.markdown("### 🗂️ Administración de archivos")
