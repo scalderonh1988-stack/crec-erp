@@ -10,92 +10,62 @@ from data_manager import supabase, get_current_tenant
 from dte_manager import emitir_dte_openfactura
 
 def obtener_datos_empresa(tenant_id):
-    """Recopila y normaliza exhaustivamente los datos de la empresa (Propietario y Empleados)."""
+    """Recopila los datos de la empresa buscando por RUT numérico o ID de la tabla."""
     datos = {}
     
-    # 1. Leer llaves directas en st.session_state (Memoria activa)
-    llaves_directas = [
-        "rut", "rut_empresa", "rut_emisor", 
-        "direccion", "direccion_empresa", "direccion_tributaria", "direccion_local",
-        "razon_social", "nombre_empresa", "nombre_fantasia", "nombre",
-        "giro", "giro_comercial"
-    ]
-    for key in llaves_directas:
-        if key in st.session_state and st.session_state[key]:
-            datos[key] = str(st.session_state[key]).strip()
+    # 1. Leer de la memoria activa de Streamlit si ya existen
+    llaves = ["rut_empresa", "direccion_tributaria", "razon_social", "giro"]
+    for k in llaves:
+        if k in st.session_state and st.session_state[k]:
+            datos[k] = str(st.session_state[k]).strip()
 
-    # 2. Leer diccionarios de configuración almacenados en session_state
-    for cfg_key in ['datos_empresa', 'empresa', 'config_empresa', 'config_ticket', 'empresa_actual']:
+    for cfg_key in ['datos_empresa', 'config_ticket', 'empresa']:
         if cfg_key in st.session_state and isinstance(st.session_state[cfg_key], dict):
             for k, v in st.session_state[cfg_key].items():
                 if v and not datos.get(k):
                     datos[k] = str(v).strip()
 
-    # 3. Consulta inteligente a Supabase (Resuelve la búsqueda para Propietarios y Cajeros)
-    if not datos.get("rut_empresa") or not datos.get("direccion_tributaria"):
-        empresa_id_vinculado = None
+    # 2. Búsqueda en Supabase adaptada al valor exacto de tus capturas
+    if tenant_id and (not datos.get("rut_empresa") or not datos.get("direccion_tributaria")):
+        val_id = str(tenant_id).strip()
+        
+        # Limpiamos el valor para obtener los dígitos del RUT
+        rut_base = val_id.split("-")[0].replace(".", "").strip()
 
-        # A. PRIMERA BUSQUEDA: Intentar directo en la tabla 'empresas' (Caso Propietario o tenant_id = empresa_id)
-        columnas_empresa = ["id", "rut_empresa", "rut", "user_id"]
-        for col in columnas_empresa:
-            try:
-                res = supabase.table("empresas").select("*").eq(col, tenant_id).execute()
-                if res.data and len(res.data) > 0:
-                    for k, v in res.data[0].items():
-                        if v and not datos.get(k):
-                            datos[k] = str(v).strip()
-                    break
-            except Exception:
-                continue
+        try:
+            # Consulta A: Buscar si empresa_id coincide con el inicio de rut_empresa (Ej: 15382273-5)
+            res = supabase.table("empresas").select("*").ilike("rut_empresa", f"{rut_base}%").execute()
+            
+            # Consulta B: Si no encuentra, buscar en password o en la id primaria
+            if not res.data:
+                res = supabase.table("empresas").select("*").eq("password", rut_base).execute()
+            if not res.data and rut_base.isdigit():
+                res = supabase.table("empresas").select("*").eq("id", int(rut_base)).execute()
 
-        # B. SEGUNDA BÚSQUEDA (Si es Cajero/Empleado): Buscar su 'empresa_id' en la tabla 'usuarios'
-        if not datos.get("razon_social") and not datos.get("rut_empresa"):
-            try:
-                res_usr = supabase.table("usuarios").select("empresa_id").eq("id", tenant_id).execute()
-                if not res_usr.data:
-                    res_usr = supabase.table("usuarios").select("empresa_id").eq("rut_usuario", tenant_id).execute()
-                
-                if res_usr.data and res_usr.data[0].get("empresa_id"):
-                    empresa_id_vinculado = res_usr.data[0]["empresa_id"]
-            except Exception:
-                pass
+            if res.data and len(res.data) > 0:
+                emp = res.data[0]
+                for k, v in emp.items():
+                    if v:
+                        datos[k] = str(v).strip()
 
-            # C. Si encontramos el empresa_id del empleado, traemos los datos de 'empresas'
-            if empresa_id_vinculado:
-                try:
-                    res_emp = supabase.table("empresas").select("*").eq("id", empresa_id_vinculado).execute()
-                    if res_emp.data and len(res_emp.data) > 0:
-                        for k, v in res_emp.data[0].items():
-                            if v and not datos.get(k):
-                                datos[k] = str(v).strip()
-                except Exception:
-                    pass
+        except Exception as e:
+            pass
 
-    # 4. Validar y aislar RUT (Limpia formatos y asegura valor válido)
-    rut_val = datos.get("rut_empresa") or datos.get("rut") or datos.get("rut_emisor") or ""
-    
-    # Si no hay RUT o viene un texto que no es RUT, se marca como no disponible
-    rut_limpio = rut_val.replace("k", "").replace("K", "").replace(".", "").replace("-", "").strip()
-    if not rut_val or any(c.isalpha() for c in rut_limpio):
-        rut_val = "Sin RUT"
+    # 3. Normalizar datos para la factura
+    nombre_val = datos.get("razon_social") or datos.get("empresa_nombre") or datos.get("nombre_fantasia") or "MI EMPRESA"
+    rut_val = datos.get("rut_empresa") or datos.get("rut") or "Sin RUT"
+    dir_val = datos.get("direccion_tributaria") or datos.get("direccion") or datos.get("direccion_local") or "Sin Dirección"
+    giro_val = datos.get("giro") or ""
 
-    dir_val = datos.get("direccion_tributaria") or datos.get("direccion") or datos.get("direccion_empresa") or datos.get("direccion_local") or "Sin Dirección"
-    nombre_val = datos.get("razon_social") or datos.get("empresa_nombre") or datos.get("nombre_empresa") or datos.get("nombre_fantasia") or datos.get("nombre") or "MI EMPRESA"
-    giro_val = datos.get("giro") or datos.get("giro_comercial") or ""
-
-    # Mapeo universal de llaves normalizadas
-    datos_normalizados = {
+    return {
         "rut": rut_val,
         "rut_empresa": rut_val,
         "rut_emisor": rut_val,
         "direccion": dir_val,
         "direccion_tributaria": dir_val,
-        "direccion_empresa": dir_val,
-        "direccion_local": dir_val,
         "direccion_emisor": dir_val,
         "razon_social": nombre_val,
         "empresa_nombre": nombre_val,
-        "nombre_empresa": nombre_val,
         "nombre": nombre_val,
         "giro": giro_val,
         "giro_emisor": giro_val
