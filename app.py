@@ -3303,11 +3303,25 @@ elif menu == "⚙️ Configuración General":
     ])
 
     # ==========================================
-    # PESTAÑA 1: DATOS DE LA EMPRESA
+    # PESTAÑA 1: DATOS DE LA EMPRESA (PROTEGIDA CONTRA VALORES NULL)
     # ==========================================
     with tab1:
         st.markdown("### 🏢 Configuración de Identidad de la Empresa")
         st.info("ℹ️ Separa la Razón Social exigida legalmente por el SII del Nombre de Fantasía que verán tus clientes en los tickets impresos.")
+
+        # Sanitización de valores None provenientes de Supabase
+        val_razon_def = datos_empresa_db.get("razon_social") or datos_empresa_db.get("empresa_nombre") or negocio_seleccionado or ""
+        val_rut_def = datos_empresa_db.get("rut_empresa") or rut_actual or ""
+        val_giro_def = datos_empresa_db.get("giro") or ""
+        val_dir_trib_def = datos_empresa_db.get("direccion_tributaria") or datos_empresa_db.get("direccion") or ""
+        val_comuna_def = datos_empresa_db.get("comuna") or "Santiago"
+        val_email_def = datos_empresa_db.get("email_contacto") or ""
+
+        val_fantasia_def = datos_empresa_db.get("nombre_fantasia") or datos_empresa_db.get("empresa_nombre") or negocio_seleccionado or ""
+        val_slogan_def = datos_empresa_db.get("slogan") or ""
+        val_dir_local_def = datos_empresa_db.get("direccion_local") or datos_empresa_db.get("direccion") or ""
+        val_telefono_def = datos_empresa_db.get("telefono") or ""
+        val_ticket_def = datos_empresa_db.get("usar_nombre_fantasia_ticket") if datos_empresa_db.get("usar_nombre_fantasia_ticket") is not None else True
 
         # Sub-pestañas para Razón Social y Nombre de Fantasía
         subtab_razon, subtab_fantasia = st.tabs([
@@ -3323,51 +3337,54 @@ elif menu == "⚙️ Configuración General":
                 with col_r1:
                     razon_social_val = st.text_input(
                         "Razón Social Legítima (SII) *", 
-                        value=datos_empresa_db.get("razon_social", datos_empresa_db.get("nombre_empresa", negocio_seleccionado)),
+                        value=str(val_razon_def),
                         placeholder="Ej: SOCIEDAD COMERCIAL E INVERSIONES LIMITADA"
                     )
                     rut_empresa_input = st.text_input(
                         "RUT Empresa *", 
-                        value=datos_empresa_db.get("rut_empresa", rut_actual),
+                        value=str(val_rut_def),
                         placeholder="Ej: 77.654.321-K"
                     )
                     giro_comercial = st.text_input(
                         "Giro Comercial (SII) *", 
-                        value=datos_empresa_db.get("giro", ""),
+                        value=str(val_giro_def),
                         placeholder="Ej: Venta al por menor de bebidas y licores"
                     )
                 with col_r2:
                     direccion_tributaria = st.text_input(
                         "Dirección Casa Matriz / Tributaria *", 
-                        value=datos_empresa_db.get("direccion_tributaria", datos_empresa_db.get("direccion", "")),
+                        value=str(val_dir_trib_def),
                         placeholder="Ej: Av. Providencia 1234, Of. 501"
                     )
                     comuna_ciudad = st.text_input(
                         "Comuna / Ciudad *", 
-                        value=datos_empresa_db.get("comuna", "Santiago"),
+                        value=str(val_comuna_def),
                         placeholder="Ej: Santiago"
                     )
                     email_tributario = st.text_input(
                         "Correo Electrónico Tributario (DTE) *", 
-                        value=datos_empresa_db.get("email_contacto", ""),
+                        value=str(val_email_def),
                         placeholder="dte@miempresa.cl"
                     )
 
                 btn_guardar_razon = st.form_submit_button("💾 Guardar Razón Social y Datos Legales", type="primary", use_container_width=True)
 
                 if btn_guardar_razon:
-                    if not razon_social_val.strip() or not rut_empresa_input.strip():
+                    str_razon = (razon_social_val or "").strip()
+                    str_rut = (rut_empresa_input or "").strip()
+
+                    if not str_razon or not str_rut:
                         st.warning("⚠️ La Razón Social y el RUT son obligatorios.")
                     else:
                         payload_razon = {
-                            "razon_social": razon_social_val.strip(),
-                            "nombre_empresa": razon_social_val.strip(),
-                            "rut_empresa": rut_empresa_input.strip(),
-                            "giro": giro_comercial.strip(),
-                            "direccion_tributaria": direccion_tributaria.strip(),
-                            "direccion": direccion_tributaria.strip(),
-                            "comuna": comuna_ciudad.strip(),
-                            "email_contacto": email_tributario.strip()
+                            "razon_social": str_razon,
+                            "empresa_nombre": str_razon,
+                            "rut_empresa": str_rut,
+                            "giro": (giro_comercial or "").strip(),
+                            "direccion_tributaria": (direccion_tributaria or "").strip(),
+                            "direccion": (direccion_tributaria or "").strip(),
+                            "comuna": (comuna_ciudad or "").strip(),
+                            "email_contacto": (email_tributario or "").strip()
                         }
                         try:
                             if empresa_id_actual:
@@ -3377,8 +3394,8 @@ elif menu == "⚙️ Configuración General":
 
                             if "config_ticket" not in st.session_state:
                                 st.session_state.config_ticket = {}
-                            st.session_state.config_ticket["razon_social"] = razon_social_val.strip()
-                            st.session_state.config_ticket["rut_empresa"] = rut_empresa_input.strip()
+                            st.session_state.config_ticket["razon_social"] = str_razon
+                            st.session_state.config_ticket["rut_empresa"] = str_rut
 
                             st.toast("✅ ¡Razón Social y datos legales guardados correctamente!", icon="🏛️")
                             st.rerun()
@@ -3393,42 +3410,44 @@ elif menu == "⚙️ Configuración General":
                 with col_f1:
                     nombre_fantasia_val = st.text_input(
                         "Nombre de Fantasía (Marca Comercial) *", 
-                        value=datos_empresa_db.get("nombre_fantasia", negocio_seleccionado),
+                        value=str(val_fantasia_def),
                         placeholder="Ej: BOTILLERIA SAPIRON"
                     )
                     slogan_o_leyenda = st.text_input(
                         "Slogan / Leyenda de Marca", 
-                        value=datos_empresa_db.get("slogan", ""),
+                        value=str(val_slogan_def),
                         placeholder="Ej: Vinos, Cervezas y Licores Premium"
                     )
                 with col_f2:
                     direccion_local = st.text_input(
                         "Dirección Visible en Ticket", 
-                        value=datos_empresa_db.get("direccion_local", datos_empresa_db.get("direccion", "AVENIDA MAIPU 1512")),
+                        value=str(val_dir_local_def),
                         placeholder="Ej: AVENIDA MAIPU 1512"
                     )
                     telefono_local = st.text_input(
                         "Teléfono de Atención al Cliente", 
-                        value=datos_empresa_db.get("telefono", ""),
+                        value=str(val_telefono_def),
                         placeholder="Ej: +56 9 1234 5678"
                     )
 
                 mostrar_fantasia_en_ticket = st.checkbox(
                     "Imprimir Nombre de Fantasía en el encabezado de los tickets de venta", 
-                    value=datos_empresa_db.get("usar_nombre_fantasia_ticket", True)
+                    value=bool(val_ticket_def)
                 )
 
                 btn_guardar_fantasia = st.form_submit_button("💾 Guardar Nombre de Fantasía", type="primary", use_container_width=True)
 
                 if btn_guardar_fantasia:
-                    if not nombre_fantasia_val.strip():
+                    str_fantasia = (nombre_fantasia_val or "").strip()
+
+                    if not str_fantasia:
                         st.warning("⚠️ El Nombre de Fantasía no puede estar vacío.")
                     else:
                         payload_fantasia = {
-                            "nombre_fantasia": nombre_fantasia_val.strip(),
-                            "slogan": slogan_o_leyenda.strip(),
-                            "direccion_local": direccion_local.strip(),
-                            "telefono": telefono_local.strip(),
+                            "nombre_fantasia": str_fantasia,
+                            "slogan": (slogan_o_leyenda or "").strip(),
+                            "direccion_local": (direccion_local or "").strip(),
+                            "telefono": (telefono_local or "").strip(),
                             "usar_nombre_fantasia_ticket": mostrar_fantasia_en_ticket
                         }
                         try:
@@ -3439,9 +3458,9 @@ elif menu == "⚙️ Configuración General":
 
                             if "config_ticket" not in st.session_state:
                                 st.session_state.config_ticket = {}
-                            st.session_state.config_ticket["nombre_fantasia"] = nombre_fantasia_val.strip()
+                            st.session_state.config_ticket["nombre_fantasia"] = str_fantasia
                             if mostrar_fantasia_en_ticket:
-                                st.session_state.config_ticket["nombre_empresa"] = nombre_fantasia_val.strip()
+                                st.session_state.config_ticket["nombre_empresa"] = str_fantasia
 
                             st.toast("✅ ¡Nombre de Fantasía guardado correctamente!", icon="🏪")
                             st.rerun()
