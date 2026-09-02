@@ -3245,63 +3245,118 @@ elif menu == "⚙️ Configuración General":
     ruta_config_json = os.path.join(tenant_dir, "config_ticket.json")
     ruta_usuarios_local = os.path.join(tenant_dir, "usuarios_negocio.json")
 
-    def cargar_usuarios_local(path):
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {}
+    rut_actual = st.session_state.get("negocio_seleccionado")
 
-    def guardar_usuarios_local(path, datos):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(datos, f, indent=4, ensure_ascii=False)
+    # --- OBTENER ID Y DATOS ACTUALES DE LA EMPRESA DESDE SUPABASE ---
+    empresa_id_actual = None
+    datos_empresa_db = {}
+    try:
+        res_empresa = supabase.table("empresas").select("*").eq("rut_empresa", rut_actual).execute()
+        if res_empresa.data:
+            datos_empresa_db = res_empresa.data[0]
+            empresa_id_actual = datos_empresa_db.get("id")
+    except Exception as e:
+        st.error(f"⚠️ Error conectando con la tabla empresas: {e}")
 
-    if "ultimo_negocio_config" not in st.session_state or st.session_state.ultimo_negocio_config != negocio_seleccionado:
-        st.session_state.ultimo_negocio_config = negocio_seleccionado
-        if os.path.exists(ruta_config_json):
-            try:
-                with open(ruta_config_json, "r", encoding="utf-8") as f:
-                    st.session_state.config_ticket = json.load(f)
-            except Exception:
-                st.session_state.config_ticket = {
-                    "nombre_empresa": negocio_seleccionado, 
-                    "rut_empresa": "", 
-                    "direccion": "", 
-                    "iva_tasa": 19.0, 
-                    "pie_pagina": "", 
-                    "formato_impresion": "80mm (Térmica Estándar)"
-                }
-        else:
-            st.session_state.config_ticket = {
-                "nombre_empresa": negocio_seleccionado, 
-                "rut_empresa": "", 
-                "direccion": "", 
-                "iva_tasa": 19.0, 
-                "pie_pagina": "", 
-                "formato_impresion": "80mm (Térmica Estándar)"
-            }
-
-    # 📜 Pestañas de Configuración incluyendo Certificado Digital (DTE)
-    tab1, tab2, tab3, tab4 = st.tabs([
+    # 📜 Pestañas de Configuración General
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🏢 Datos de la Empresa",
         "👥 Usuarios y Cajas", 
         "💳 Formas de Pago", 
-        "🖨️ Formato de Tickets e Impresión", 
+        "🖨️ Formato de Tickets", 
         "📜 Certificado Digital (DTE)"
     ])
 
+    # ==========================================
+    # PESTAÑA 1: DATOS DE LA EMPRESA
+    # ==========================================
     with tab1:
+        st.markdown("### 🏢 Datos Legales y Comerciales de la Empresa")
+        st.info("ℹ️ Esta información se imprimirá en el encabezado de tus Boletas, Facturas y Comprobantes de Venta.")
+
+        with st.form("form_datos_empresa_sii"):
+            col_e1, col_e2 = st.columns(2)
+            
+            with col_e1:
+                razon_social = st.text_input(
+                    "Razón Social / Nombre Fantasía *", 
+                    value=datos_empresa_db.get("nombre_empresa", negocio_seleccionado),
+                    placeholder="Ej: Comercial e Inversiones SpA"
+                )
+                rut_empresa_input = st.text_input(
+                    "RUT Empresa *", 
+                    value=datos_empresa_db.get("rut_empresa", rut_actual),
+                    placeholder="Ej: 77.654.321-K"
+                )
+                giro_comercial = st.text_input(
+                    "Giro Comercial (Rubro) *", 
+                    value=datos_empresa_db.get("giro", ""),
+                    placeholder="Ej: Venta al por menor de bebidas y licores"
+                )
+
+            with col_e2:
+                direccion_comercial = st.text_input(
+                    "Dirección Comercial *", 
+                    value=datos_empresa_db.get("direccion", ""),
+                    placeholder="Ej: Av. Providencia 1234, Local 5"
+                )
+                comuna_ciudad = st.text_input(
+                    "Comuna / Ciudad *", 
+                    value=datos_empresa_db.get("comuna", "Santiago"),
+                    placeholder="Ej: Santiago / Providencia"
+                )
+                telefono_contacto = st.text_input(
+                    "Teléfono de Contacto", 
+                    value=datos_empresa_db.get("telefono", ""),
+                    placeholder="Ej: +56 9 1234 5678"
+                )
+
+            email_tributario = st.text_input(
+                "Correo Electrónico Tributario (DTE)", 
+                value=datos_empresa_db.get("email_contacto", ""),
+                placeholder="contacto@miempresa.cl"
+            )
+
+            btn_guardar_empresa = st.form_submit_button("💾 Guardar Datos de la Empresa", type="primary", use_container_width=True)
+
+            if btn_guardar_empresa:
+                if not razon_social.strip() or not rut_empresa_input.strip():
+                    st.warning("⚠️ La Razón Social y el RUT son obligatorios.")
+                else:
+                    payload_empresa = {
+                        "nombre_empresa": razon_social.strip(),
+                        "rut_empresa": rut_empresa_input.strip(),
+                        "giro": giro_comercial.strip(),
+                        "direccion": direccion_comercial.strip(),
+                        "comuna": comuna_ciudad.strip(),
+                        "telefono": telefono_contacto.strip(),
+                        "email_contacto": email_tributario.strip()
+                    }
+
+                    try:
+                        if empresa_id_actual:
+                            supabase.table("empresas").update(payload_empresa).eq("id", empresa_id_actual).execute()
+                        else:
+                            supabase.table("empresas").insert(payload_empresa).execute()
+                        
+                        # Actualizar session_state
+                        if "config_ticket" not in st.session_state:
+                            st.session_state.config_ticket = {}
+                        st.session_state.config_ticket["nombre_empresa"] = razon_social.strip()
+                        st.session_state.config_ticket["rut_empresa"] = rut_empresa_input.strip()
+                        st.session_state.config_ticket["direccion"] = f"{direccion_comercial.strip()}, {comuna_ciudad.strip()}"
+
+                        st.toast("✅ ¡Datos de la empresa actualizados correctamente!", icon="🏢")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar datos de la empresa: {e}")
+
+    # ==========================================
+    # PESTAÑA 2: USUARIOS Y CAJAS
+    # ==========================================
+    with tab2:
         st.markdown("### 👥 Administración de Operadores y Permisos")
-        st.info("ℹ️ Crea usuarios, edita sus datos y define a qué módulos pueden acceder. Estos datos se guardan directamente en la tabla 'usuarios' de Supabase.")
-
-        rut_actual = st.session_state.get("negocio_seleccionado")
-
-        # --- 0. OBTENER EL ID INTERNO DE LA EMPRESA Y MÓDULOS PERMITIDOS ---
-        empresa_id_actual = None
-        try:
-            res_empresa = supabase.table("empresas").select("id, rut_empresa").eq("rut_empresa", rut_actual).execute()
-            if res_empresa.data:
-                empresa_id_actual = res_empresa.data[0]["id"]
-        except Exception as e:
-            st.error(f"⚠️ Error conectando con la tabla empresas: {e}")
+        st.info("ℹ️ Crea usuarios, edita sus datos y define a qué módulos pueden acceder.")
 
         todos_los_modulos_sistema = [
             "🏠 Home / Bienvenida", "📊 Dashboard Ejecutivo", "📦 Inventario y Productos", 
@@ -3319,7 +3374,7 @@ elif menu == "⚙️ Configuración General":
             modulos_permitidos_desarrollador = todos_los_modulos_sistema
 
         if not empresa_id_actual:
-            st.warning("⚠️ No se encontró el ID de la empresa. Verifica la conexión.")
+            st.warning("⚠️ No se encontró el ID de la empresa. Completa primero la pestaña 'Datos de la Empresa'.")
         else:
             db_usuarios = {}
             try:
@@ -3352,7 +3407,7 @@ elif menu == "⚙️ Configuración General":
             usuario_seleccionado = st.selectbox(
                 "🔍 Buscar Usuario a Editar (o Crear Nuevo):", 
                 opciones_usuarios, 
-                key="select_user_cfg_tab1"
+                key="select_user_cfg_tab2"
             )
             
             es_nuevo = (usuario_seleccionado == "-- ✨ Crear Nuevo Usuario --")
@@ -3381,7 +3436,7 @@ elif menu == "⚙️ Configuración General":
                     idx_rol = roles_opciones.index(def_rol) if def_rol in roles_opciones else 0
                     nuevo_rol_usr = st.selectbox("Rol Principal", options=roles_opciones, index=idx_rol, key=f"rol_{key_suffix}")
 
-                st.markdown("**🔐 Asignación de Permisos (Limitado por Licencia del Desarrollador)**")
+                st.markdown("**🔐 Asignación de Permisos**")
                 modulos_seleccionados = st.multiselect(
                     "Selecciona a qué módulos podrá entrar este usuario:",
                     options=todos_los_modulos,
@@ -3436,7 +3491,10 @@ elif menu == "⚙️ Configuración General":
                         except Exception as e:
                             st.error(f"❌ Error al eliminar usuario: {e}")
 
-    with tab2:
+    # ==========================================
+    # PESTAÑA 3: FORMAS DE PAGO
+    # ==========================================
+    with tab3:
         st.markdown("### 💳 Configuración de Formas de Pago Aceptadas")
         with st.form("form_nueva_forma_pago"):
             nueva_forma = st.text_input("Nueva Forma de Pago")
@@ -3447,43 +3505,25 @@ elif menu == "⚙️ Configuración General":
         for fp in st.session_state.formas_pago_erp:
             st.markdown(f"- 💳 {fp}")
 
-    with tab3:
-        st.markdown("### 🖨️ Datos del Comprobante e Impresión")
+    # ==========================================
+    # PESTAÑA 4: FORMATO DE TICKETS
+    # ==========================================
+    with tab4:
+        st.markdown("### 🖨️ Estilo e Impresión de Tickets")
         with st.form("form_config_ticket"):
-            empresa = st.text_input("Nombre Empresa", value=st.session_state.config_ticket.get("nombre_empresa", ""))
-            rut = st.text_input("RUT", value=st.session_state.config_ticket.get("rut_empresa", ""))
-            direccion = st.text_input("Dirección", value=st.session_state.config_ticket.get("direccion", ""))
-            iva_personalizado = st.number_input("Tasa de IVA Local (%)", min_value=0.0, max_value=100.0, value=float(st.session_state.config_ticket.get("iva_tasa", 19.0)), step=1.0)
-            pie = st.text_input("Pie de Página", value=st.session_state.config_ticket.get("pie_pagina", ""))
+            pie = st.text_input("Pie de Página del Ticket", value=st.session_state.config_ticket.get("pie_pagina", "¡Gracias por su preferencia!"))
           
             formatos_disponibles = ["80mm (Térmica Estándar)", "58mm (Térmica Pequeña)", "Carta / A4"]
             formato_actual = st.session_state.config_ticket.get("formato_impresion", "80mm (Térmica Estándar)")
             idx_formato = formatos_disponibles.index(formato_actual) if formato_actual in formatos_disponibles else 0
           
-            formato = st.selectbox("Formato", formatos_disponibles, index=idx_formato)
-            btn_guardar_config = st.form_submit_button("💾 Guardar Configuración")
+            formato = st.selectbox("Formato de Impresión", formatos_disponibles, index=idx_formato)
+            btn_guardar_config = st.form_submit_button("💾 Guardar Formato de Ticket")
           
             if btn_guardar_config:
-                nueva_config = {
-                    "nombre_empresa": empresa,
-                    "rut_empresa": rut,
-                    "direccion": direccion,
-                    "iva_tasa": iva_personalizado,
-                    "pie_pagina": pie,
-                    "formato_impresion": formato
-                }
-                st.session_state.config_ticket = nueva_config
-                
-                try:
-                    if empresa_id_actual:
-                        supabase.table("empresas").update(
-                            {"config_ticket": nueva_config}
-                        ).eq("id", empresa_id_actual).execute()
-                        st.success("✅ Configuración e IVA guardados permanentemente en la nube.")
-                    else:
-                        st.error("No se pudo identificar la empresa para guardar la configuración.")
-                except Exception as e:
-                    st.error(f"❌ Error al guardar en base de datos: {e}")
+                st.session_state.config_ticket["pie_pagina"] = pie
+                st.session_state.config_ticket["formato_impresion"] = formato
+                st.toast("✅ ¡Estilo de ticket guardado!", icon="🖨️")
 
         st.markdown("---")
         st.markdown("### 🖼️ Logotipo de la Empresa")
@@ -3508,14 +3548,15 @@ elif menu == "⚙️ Configuración General":
             except Exception as e:
                 st.error(f"❌ Error al subir el logo a Storage: {e}")
 
-    # 📜 PESTAÑA 4: CERTIFICADO DIGITAL PARA IMPUESTOS INTERNOS (DTE)
-    with tab4:
+    # ==========================================
+    # PESTAÑA 5: CERTIFICADO DIGITAL
+    # ==========================================
+    with tab5:
         st.markdown("### 📜 Certificado Digital (Firma Electrónica)")
         st.write("Carga tu firma digital para vincular tu negocio ante el SII a través de OpenFactura y habilitar la emisión oficial de DTEs.")
 
-        # 1. Indicaciones para la adquisición del certificado
         with st.expander("🛒 ¿Aún no tienes Certificado Digital? Cómpralo aquí", expanded=False):
-            st.info("Puedes adquirir tu certificado digital por 1 a 3 años (~$13.000 a $15.000 CLP/año) en las entidades certificadoras autorizadas por el SII:")
+            st.info("Adquiere tu firma digital autorizada por el SII:")
             col_c1, col_c2 = st.columns(2)
             with col_c1:
                 st.link_button("🌐 Comprar en Firma.cl", "https://www.firma.cl", use_container_width=True)
@@ -3524,34 +3565,31 @@ elif menu == "⚙️ Configuración General":
 
         st.divider()
 
-        # 2. Formulario de subida de archivo .pfx/.p12 y contraseña
         st.markdown("#### 📤 Cargar y Vincular Certificado Digital")
         
         archivo_pfx = st.file_uploader(
             "Selecciona el archivo de tu certificado (.pfx o .p12):", 
             type=["pfx", "p12"],
-            key="uploader_cert_pfx",
-            help="Archivo entregado por la empresa proveedora de firma."
+            key="uploader_cert_pfx"
         )
         
         password_pfx = st.text_input(
             "Contraseña del Certificado Digital:", 
             type="password", 
             placeholder="••••••••",
-            key="pass_cert_pfx",
-            help="Clave secreta creada al descargar el certificado."
+            key="pass_cert_pfx"
         )
 
         if st.button("🔐 Cargar y Activar Firma en OpenFactura", type="primary", use_container_width=True, key="btn_subir_cert_openfactura"):
             if not archivo_pfx or not password_pfx:
-                st.warning("⚠️ Debes adjuntar el archivo del certificado e ingresar la contraseña.")
+                st.warning("⚠️ Debes adjuntar el archivo e ingresar la contraseña.")
             else:
                 with st.spinner("Registrando y validando firma digital con el proveedor DTE..."):
                     import requests
                     endpoint_cert = "https://api.haulmer.com/v2/dte/organization/certificate"
                     
                     headers = {
-                        "apikey": "9245922d05404d71b84f0f03227d8e87"  # Reemplazar por tu API Key de Producción
+                        "apikey": "9245922d05404d71b84f0f03227d8e87"
                     }
                     
                     files = {
@@ -3565,63 +3603,11 @@ elif menu == "⚙️ Configuración General":
                     try:
                         response = requests.post(endpoint_cert, headers=headers, files=files, data=data, timeout=15)
                         if response.status_code in [200, 201]:
-                            st.success("🎉 ¡Certificado Digital cargado y vinculado con éxito! Tu negocio ya está habilitado para emitir documentos tributarios oficiales.")
+                            st.success("🎉 ¡Certificado Digital cargado y vinculado con éxito!")
                         else:
                             st.error(f"❌ Error al validar certificado con OpenFactura: {response.text}")
                     except Exception as e:
                         st.error(f"⚠️ Error de conexión con la API de OpenFactura: {e}")
-
-    st.markdown("---")
-    st.markdown("### 🗂️ Administración de archivos")
-    st.write("Gestiona la base de datos de tu negocio: descarga plantillas en blanco, exporta tu información actual o importa cargas masivas.")
-
-    accion = st.radio(
-        "¿Qué acción deseas realizar?",
-        ("Selecciona una opción...", "Descargar plantilla en blanco", "Exportar base de datos actual", "Importar base de datos"),
-        index=0,
-        key="radio_adm_archivos_config"
-    )
-
-    if accion == "Descargar plantilla en blanco":
-        st.info("💡 Descarga esta plantilla para completar tus productos respetando los encabezados requeridos para la carga masiva.")
-        if os.path.exists(ruta_plantilla_base):
-            with open(ruta_plantilla_base, "rb") as f:
-                st.download_button(
-                    label="⬇️ Descargar Plantilla Base (Excel)",
-                    data=f,
-                    file_name="plantilla_base_datos.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        else:
-            st.warning("⚠️ No se encontró la plantilla base en el sistema.")
-
-    elif accion == "Exportar base de datos actual":
-        st.info("📦 Obtén una copia de seguridad con todos los registros actuales de tu inventario o base de datos.")
-        if os.path.exists(ruta_bd_actual):
-            with open(ruta_bd_actual, "rb") as f:
-                st.download_button(
-                    label="⬇️ Descargar mi Base de Datos Actual (Excel)",
-                    data=f,
-                    file_name="BASE_DE_DATOS_actual.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        else:
-            st.warning("⚠️ Todavía no existe un archivo 'BASE DE DATOS.xlsx' registrado para este negocio.")
-
-    elif accion == "Importar base de datos":
-        st.warning("⚠️ *Atención:* Al importar una nueva base de datos, se sobrescribirán los datos actuales de tu negocio.")
-      
-        archivo_cargado = st.file_uploader("Selecciona tu archivo Excel desde tu equipo", type=["xlsx"], key="uploader_importar_bd")
-      
-        if archivo_cargado is not None:
-            if st.button("🚀 Confirmar y Reemplazar Base de Datos"):
-                try:
-                    df_nuevo = pd.read_excel(archivo_cargado)
-                    df_nuevo.to_excel(ruta_bd_actual, index=False)
-                    st.success("✅ ¡Base de datos importada y actualizada con éxito!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Ocurrió un error al procesar el archivo: {e}")
 
 # ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO) -----------------
 elif menu == "💰 Módulo de Ventas (POS)":
