@@ -3,8 +3,11 @@ import pandas as pd
 from datetime import datetime
 import os
 import streamlit.components.v1 as components
+
 # Importamos la conexión a tu base de datos y la seguridad de negocio
 from data_manager import supabase, get_current_tenant
+# 📜 Importamos el integrador DTE de OpenFactura
+from dte_manager import emitir_dte_openfactura
 
 def mostrar_modulo_ventas(ruta_negocio):
     st.markdown("### 💰 Módulo de Ventas (POS)")
@@ -25,6 +28,8 @@ def mostrar_modulo_ventas(ruta_negocio):
         st.session_state.estado_pago = False
     if 'ultimo_recibo' not in st.session_state:
         st.session_state.ultimo_recibo = None
+    if 'pdf_dte_actual' not in st.session_state:
+        st.session_state.pdf_dte_actual = None
     if 'items_recibo_actual' not in st.session_state:
         st.session_state.items_recibo_actual = None
 
@@ -67,14 +72,21 @@ def mostrar_modulo_ventas(ruta_negocio):
     # --- PANTALLA DE ÉXITO Y RECIBO ---
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y archivada con éxito en la Nube!")
+        
+        # Muestra botón para ver/descargar el PDF tributario oficial si fue emitido por la API
+        if st.session_state.pdf_dte_actual:
+            st.link_button("📄 Ver / Imprimir DTE Oficial (OpenFactura PDF)", st.session_state.pdf_dte_actual, use_container_width=True, type="primary")
+            st.divider()
+
         st.markdown(f'<div class="ticket-box" style="background-color:#f9f9f9; padding:15px; border-radius:10px; font-family:monospace; color:#000;">{st.session_state.ultimo_recibo.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
       
         col_r1, col_r2 = st.columns(2)
         with col_r1:
-            st.download_button("📥 Descargar Comprobante", data=st.session_state.ultimo_recibo, file_name="Comprobante.txt", mime="text/plain", use_container_width=True)
+            st.download_button("📥 Descargar Comprobante Interno", data=st.session_state.ultimo_recibo, file_name="Comprobante.txt", mime="text/plain", use_container_width=True)
         with col_r2:
             if st.button("➕ Nueva Venta", use_container_width=True, type="primary"):
                 st.session_state.ultimo_recibo = None
+                st.session_state.pdf_dte_actual = None
                 st.session_state.estado_pago = False
                 st.session_state.carrito_ventas = []
                 st.rerun()
@@ -111,7 +123,37 @@ def mostrar_modulo_ventas(ruta_negocio):
                     else:
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
-                        
+
+                        # 📜 1. EMISIÓN DE DTE EN OPENFACTURA (SANDBOX)
+                        items_para_dte = [
+                            {
+                                "nombre": item["Descripción"],
+                                "cantidad": item["Cantidad"],
+                                "precio_unitario": item["Precio Unitario"]
+                            }
+                            for item in st.session_state.carrito_ventas
+                        ]
+
+                        with st.spinner("📄 Procesando emisión con Impuestos Internos (OpenFactura)..."):
+                            res_dte = emitir_dte_openfactura(
+                                rut_emisor=rut_actual,
+                                tipo_documento=tipo_documento,
+                                items=items_para_dte,
+                                rut_receptor=cliente_rut if cliente_rut else "66666666-6",
+                                razon_social_receptor=cliente_nombre if cliente_nombre else "Cliente General"
+                            )
+
+                        folio_oficial = transaccion_id_actual
+                        pdf_oficial_url = None
+
+                        if res_dte.get("exito"):
+                            folio_oficial = str(res_dte.get("folio"))
+                            pdf_oficial_url = res_dte.get("pdf_url")
+                            st.session_state.pdf_dte_actual = pdf_oficial_url
+                        else:
+                            st.warning(f"⚠️ Alerta DTE: {res_dte.get('error')}. Se registrará la venta localmente.")
+
+                        # ☁️ 2. PREPARAR Y GUARDAR EN SUPABASE
                         registros_para_nube = []
                         lineas_productos = ""
                         
@@ -123,6 +165,8 @@ def mostrar_modulo_ventas(ruta_negocio):
                             registros_para_nube.append({
                                 "rut_empresa": rut_actual,
                                 "transaccion_id": transaccion_id_actual,
+                                "folio_sii": folio_oficial,
+                                "pdf_url": pdf_oficial_url,
                                 "fecha_hora": fecha_hora_actual.isoformat(),
                                 "caja": caja_actual, 
                                 "documento": tipo_documento,
@@ -136,12 +180,11 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 "total_boleta": float(total_venta)
                             })
 
-                        # ☁️ SINCRONIZACIÓN CON SUPABASE
                         try:
                             respuesta_venta = supabase.table("ventas").insert(registros_para_nube).execute()
 
                             if not respuesta_venta.data:
-                                st.error("❌ Supabase no guardó los datos. Verifica que las columnas existan en la tabla 'ventas'.")
+                                st.error("❌ Supabase no guardó los datos. Verifica las columnas 'folio_sii' y 'pdf_url' en la tabla 'ventas'.")
                             else:
                                 for item in st.session_state.carrito_ventas:
                                     try:
@@ -161,7 +204,7 @@ def mostrar_modulo_ventas(ruta_negocio):
        {cfg.get('direccion', 'Dirección')}
 ========================================
 DOCUMENTO: {tipo_documento.upper()}
-FOLIO: {transaccion_id_actual}
+FOLIO SII / ID: {folio_oficial}
 FECHA: {fecha_hora_actual.strftime('%d/%m/%Y %H:%M:%S')}
 TERMINAL: {caja_actual}
 ----------------------------------------
@@ -190,7 +233,6 @@ PAGO: {forma_pago.upper()}
     else:
         df_nube = pd.DataFrame()
         try:
-            # Traemos la columna 'unidad' desde Supabase
             res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, unidad").eq("rut_empresa", rut_actual).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
@@ -224,7 +266,6 @@ PAGO: {forma_pago.upper()}
                         else:
                             st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_ingresado}")
                     
-                    # 🔑 Borra la caja para que el siguiente escaneo no acumule caracteres
                     st.session_state["input_escan_pos"] = ""
 
                 st.text_input(
@@ -258,7 +299,6 @@ PAGO: {forma_pago.upper()}
                 on_change=actualizar_desde_selectbox
             )
 
-            # --- IDENTIFICAR UNIDAD Y DETERMINAR FORMATO DE CANTIDAD ---
             unidad_actual = "UN"
             if st.session_state.prod_seleccionado_key != "-- Selecciona o busca un producto --":
                 c_buscado = st.session_state.prod_seleccionado_key.split(" - ")[0]
@@ -268,7 +308,6 @@ PAGO: {forma_pago.upper()}
                     if val_u:
                         unidad_actual = val_u
 
-            # Es decimal si es GR, KG, GRAMO, etc.
             es_decimal = unidad_actual in ["GR", "KG", "GRAMO", "GRAMOS", "KILO", "KILOS", "LT", "LITRO"]
 
             with st.form("form_agregar_item"):
