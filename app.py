@@ -3245,6 +3245,16 @@ elif menu == "⚙️ Configuración General":
     ruta_config_json = os.path.join(tenant_dir, "config_ticket.json")
     ruta_usuarios_local = os.path.join(tenant_dir, "usuarios_negocio.json")
 
+    def cargar_usuarios_local(path):
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {}
+
+    def guardar_usuarios_local(path, datos):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(datos, f, indent=4, ensure_ascii=False)
+
     rut_actual = st.session_state.get("negocio_seleccionado")
 
     # --- OBTENER ID Y DATOS ACTUALES DE LA EMPRESA DESDE SUPABASE ---
@@ -3258,7 +3268,32 @@ elif menu == "⚙️ Configuración General":
     except Exception as e:
         st.error(f"⚠️ Error conectando con la tabla empresas: {e}")
 
-    # 📜 Pestañas de Configuración General
+    if "ultimo_negocio_config" not in st.session_state or st.session_state.ultimo_negocio_config != negocio_seleccionado:
+        st.session_state.ultimo_negocio_config = negocio_seleccionado
+        if os.path.exists(ruta_config_json):
+            try:
+                with open(ruta_config_json, "r", encoding="utf-8") as f:
+                    st.session_state.config_ticket = json.load(f)
+            except Exception:
+                st.session_state.config_ticket = {
+                    "nombre_empresa": negocio_seleccionado, 
+                    "rut_empresa": "", 
+                    "direccion": "", 
+                    "iva_tasa": 19.0, 
+                    "pie_pagina": "", 
+                    "formato_impresion": "80mm (Térmica Estándar)"
+                }
+        else:
+            st.session_state.config_ticket = {
+                "nombre_empresa": negocio_seleccionado, 
+                "rut_empresa": "", 
+                "direccion": "", 
+                "iva_tasa": 19.0, 
+                "pie_pagina": "", 
+                "formato_impresion": "80mm (Térmica Estándar)"
+            }
+
+    # 📜 Pestañas Principales de Configuración General
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🏢 Datos de la Empresa",
         "👥 Usuarios y Cajas", 
@@ -3271,92 +3306,154 @@ elif menu == "⚙️ Configuración General":
     # PESTAÑA 1: DATOS DE LA EMPRESA
     # ==========================================
     with tab1:
-        st.markdown("### 🏢 Datos Legales y Comerciales de la Empresa")
-        st.info("ℹ️ Esta información se imprimirá en el encabezado de tus Boletas, Facturas y Comprobantes de Venta.")
+        st.markdown("### 🏢 Configuración de Identidad de la Empresa")
+        st.info("ℹ️ Separa la Razón Social exigida legalmente por el SII del Nombre de Fantasía que verán tus clientes en los tickets impresos.")
 
-        with st.form("form_datos_empresa_sii"):
-            col_e1, col_e2 = st.columns(2)
-            
-            with col_e1:
-                razon_social = st.text_input(
-                    "Razón Social / Nombre Fantasía *", 
-                    value=datos_empresa_db.get("nombre_empresa", negocio_seleccionado),
-                    placeholder="Ej: Comercial e Inversiones SpA"
+        # Sub-pestañas para Razón Social y Nombre de Fantasía
+        subtab_razon, subtab_fantasia = st.tabs([
+            "🏛️ Razón Social (Datos Legales SII)", 
+            "🏪 Nombre de Fantasía (Marca / POS)"
+        ])
+
+        # --- SUB-PESTAÑA 1: RAZÓN SOCIAL (LEGAL / DTE) ---
+        with subtab_razon:
+            st.markdown("#### 🏛️ Datos Legales para Impuestos Internos (SII / DTE)")
+            with st.form("form_razon_social_sii"):
+                col_r1, col_r2 = st.columns(2)
+                with col_r1:
+                    razon_social_val = st.text_input(
+                        "Razón Social Legítima (SII) *", 
+                        value=datos_empresa_db.get("razon_social", datos_empresa_db.get("nombre_empresa", negocio_seleccionado)),
+                        placeholder="Ej: SOCIEDAD COMERCIAL E INVERSIONES LIMITADA"
+                    )
+                    rut_empresa_input = st.text_input(
+                        "RUT Empresa *", 
+                        value=datos_empresa_db.get("rut_empresa", rut_actual),
+                        placeholder="Ej: 77.654.321-K"
+                    )
+                    giro_comercial = st.text_input(
+                        "Giro Comercial (SII) *", 
+                        value=datos_empresa_db.get("giro", ""),
+                        placeholder="Ej: Venta al por menor de bebidas y licores"
+                    )
+                with col_r2:
+                    direccion_tributaria = st.text_input(
+                        "Dirección Casa Matriz / Tributaria *", 
+                        value=datos_empresa_db.get("direccion_tributaria", datos_empresa_db.get("direccion", "")),
+                        placeholder="Ej: Av. Providencia 1234, Of. 501"
+                    )
+                    comuna_ciudad = st.text_input(
+                        "Comuna / Ciudad *", 
+                        value=datos_empresa_db.get("comuna", "Santiago"),
+                        placeholder="Ej: Santiago"
+                    )
+                    email_tributario = st.text_input(
+                        "Correo Electrónico Tributario (DTE) *", 
+                        value=datos_empresa_db.get("email_contacto", ""),
+                        placeholder="dte@miempresa.cl"
+                    )
+
+                btn_guardar_razon = st.form_submit_button("💾 Guardar Razón Social y Datos Legales", type="primary", use_container_width=True)
+
+                if btn_guardar_razon:
+                    if not razon_social_val.strip() or not rut_empresa_input.strip():
+                        st.warning("⚠️ La Razón Social y el RUT son obligatorios.")
+                    else:
+                        payload_razon = {
+                            "razon_social": razon_social_val.strip(),
+                            "nombre_empresa": razon_social_val.strip(),
+                            "rut_empresa": rut_empresa_input.strip(),
+                            "giro": giro_comercial.strip(),
+                            "direccion_tributaria": direccion_tributaria.strip(),
+                            "direccion": direccion_tributaria.strip(),
+                            "comuna": comuna_ciudad.strip(),
+                            "email_contacto": email_tributario.strip()
+                        }
+                        try:
+                            if empresa_id_actual:
+                                supabase.table("empresas").update(payload_razon).eq("id", empresa_id_actual).execute()
+                            else:
+                                supabase.table("empresas").insert(payload_razon).execute()
+
+                            if "config_ticket" not in st.session_state:
+                                st.session_state.config_ticket = {}
+                            st.session_state.config_ticket["razon_social"] = razon_social_val.strip()
+                            st.session_state.config_ticket["rut_empresa"] = rut_empresa_input.strip()
+
+                            st.toast("✅ ¡Razón Social y datos legales guardados correctamente!", icon="🏛️")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al guardar Razón Social: {e}")
+
+        # --- SUB-PESTAÑA 2: NOMBRE DE FANTASÍA (MARCA / TICKETS) ---
+        with subtab_fantasia:
+            st.markdown("#### 🏪 Identidad Comercial para Punto de Venta (POS)")
+            with st.form("form_nombre_fantasia"):
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    nombre_fantasia_val = st.text_input(
+                        "Nombre de Fantasía (Marca Comercial) *", 
+                        value=datos_empresa_db.get("nombre_fantasia", negocio_seleccionado),
+                        placeholder="Ej: BOTILLERIA SAPIRON"
+                    )
+                    slogan_o_leyenda = st.text_input(
+                        "Slogan / Leyenda de Marca", 
+                        value=datos_empresa_db.get("slogan", ""),
+                        placeholder="Ej: Vinos, Cervezas y Licores Premium"
+                    )
+                with col_f2:
+                    direccion_local = st.text_input(
+                        "Dirección Visible en Ticket", 
+                        value=datos_empresa_db.get("direccion_local", datos_empresa_db.get("direccion", "AVENIDA MAIPU 1512")),
+                        placeholder="Ej: AVENIDA MAIPU 1512"
+                    )
+                    telefono_local = st.text_input(
+                        "Teléfono de Atención al Cliente", 
+                        value=datos_empresa_db.get("telefono", ""),
+                        placeholder="Ej: +56 9 1234 5678"
+                    )
+
+                mostrar_fantasia_en_ticket = st.checkbox(
+                    "Imprimir Nombre de Fantasía en el encabezado de los tickets de venta", 
+                    value=datos_empresa_db.get("usar_nombre_fantasia_ticket", True)
                 )
-                rut_empresa_input = st.text_input(
-                    "RUT Empresa *", 
-                    value=datos_empresa_db.get("rut_empresa", rut_actual),
-                    placeholder="Ej: 77.654.321-K"
-                )
-                giro_comercial = st.text_input(
-                    "Giro Comercial (Rubro) *", 
-                    value=datos_empresa_db.get("giro", ""),
-                    placeholder="Ej: Venta al por menor de bebidas y licores"
-                )
 
-            with col_e2:
-                direccion_comercial = st.text_input(
-                    "Dirección Comercial *", 
-                    value=datos_empresa_db.get("direccion", ""),
-                    placeholder="Ej: Av. Providencia 1234, Local 5"
-                )
-                comuna_ciudad = st.text_input(
-                    "Comuna / Ciudad *", 
-                    value=datos_empresa_db.get("comuna", "Santiago"),
-                    placeholder="Ej: Santiago / Providencia"
-                )
-                telefono_contacto = st.text_input(
-                    "Teléfono de Contacto", 
-                    value=datos_empresa_db.get("telefono", ""),
-                    placeholder="Ej: +56 9 1234 5678"
-                )
+                btn_guardar_fantasia = st.form_submit_button("💾 Guardar Nombre de Fantasía", type="primary", use_container_width=True)
 
-            email_tributario = st.text_input(
-                "Correo Electrónico Tributario (DTE)", 
-                value=datos_empresa_db.get("email_contacto", ""),
-                placeholder="contacto@miempresa.cl"
-            )
+                if btn_guardar_fantasia:
+                    if not nombre_fantasia_val.strip():
+                        st.warning("⚠️ El Nombre de Fantasía no puede estar vacío.")
+                    else:
+                        payload_fantasia = {
+                            "nombre_fantasia": nombre_fantasia_val.strip(),
+                            "slogan": slogan_o_leyenda.strip(),
+                            "direccion_local": direccion_local.strip(),
+                            "telefono": telefono_local.strip(),
+                            "usar_nombre_fantasia_ticket": mostrar_fantasia_en_ticket
+                        }
+                        try:
+                            if empresa_id_actual:
+                                supabase.table("empresas").update(payload_fantasia).eq("id", empresa_id_actual).execute()
+                            else:
+                                supabase.table("empresas").insert(payload_fantasia).execute()
 
-            btn_guardar_empresa = st.form_submit_button("💾 Guardar Datos de la Empresa", type="primary", use_container_width=True)
+                            if "config_ticket" not in st.session_state:
+                                st.session_state.config_ticket = {}
+                            st.session_state.config_ticket["nombre_fantasia"] = nombre_fantasia_val.strip()
+                            if mostrar_fantasia_en_ticket:
+                                st.session_state.config_ticket["nombre_empresa"] = nombre_fantasia_val.strip()
 
-            if btn_guardar_empresa:
-                if not razon_social.strip() or not rut_empresa_input.strip():
-                    st.warning("⚠️ La Razón Social y el RUT son obligatorios.")
-                else:
-                    payload_empresa = {
-                        "nombre_empresa": razon_social.strip(),
-                        "rut_empresa": rut_empresa_input.strip(),
-                        "giro": giro_comercial.strip(),
-                        "direccion": direccion_comercial.strip(),
-                        "comuna": comuna_ciudad.strip(),
-                        "telefono": telefono_contacto.strip(),
-                        "email_contacto": email_tributario.strip()
-                    }
-
-                    try:
-                        if empresa_id_actual:
-                            supabase.table("empresas").update(payload_empresa).eq("id", empresa_id_actual).execute()
-                        else:
-                            supabase.table("empresas").insert(payload_empresa).execute()
-                        
-                        # Actualizar session_state
-                        if "config_ticket" not in st.session_state:
-                            st.session_state.config_ticket = {}
-                        st.session_state.config_ticket["nombre_empresa"] = razon_social.strip()
-                        st.session_state.config_ticket["rut_empresa"] = rut_empresa_input.strip()
-                        st.session_state.config_ticket["direccion"] = f"{direccion_comercial.strip()}, {comuna_ciudad.strip()}"
-
-                        st.toast("✅ ¡Datos de la empresa actualizados correctamente!", icon="🏢")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error al guardar datos de la empresa: {e}")
+                            st.toast("✅ ¡Nombre de Fantasía guardado correctamente!", icon="🏪")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al guardar Nombre de Fantasía: {e}")
 
     # ==========================================
     # PESTAÑA 2: USUARIOS Y CAJAS
     # ==========================================
     with tab2:
         st.markdown("### 👥 Administración de Operadores y Permisos")
-        st.info("ℹ️ Crea usuarios, edita sus datos y define a qué módulos pueden acceder.")
+        st.info("ℹ️ Crea usuarios, edita sus datos y define a qué módulos pueden acceder. Estos datos se guardan directamente en la tabla 'usuarios' de Supabase.")
 
         todos_los_modulos_sistema = [
             "🏠 Home / Bienvenida", "📊 Dashboard Ejecutivo", "📦 Inventario y Productos", 
@@ -3436,7 +3533,7 @@ elif menu == "⚙️ Configuración General":
                     idx_rol = roles_opciones.index(def_rol) if def_rol in roles_opciones else 0
                     nuevo_rol_usr = st.selectbox("Rol Principal", options=roles_opciones, index=idx_rol, key=f"rol_{key_suffix}")
 
-                st.markdown("**🔐 Asignación de Permisos**")
+                st.markdown("**🔐 Asignación de Permisos (Limitado por Licencia del Desarrollador)**")
                 modulos_seleccionados = st.multiselect(
                     "Selecciona a qué módulos podrá entrar este usuario:",
                     options=todos_los_modulos,
@@ -3509,24 +3606,35 @@ elif menu == "⚙️ Configuración General":
     # PESTAÑA 4: FORMATO DE TICKETS
     # ==========================================
     with tab4:
-        st.markdown("### 🖨️ Estilo e Impresión de Tickets")
+        st.markdown("### 🖨️ Datos del Comprobante e Impresión")
         with st.form("form_config_ticket"):
-            pie = st.text_input("Pie de Página del Ticket", value=st.session_state.config_ticket.get("pie_pagina", "¡Gracias por su preferencia!"))
+            pie = st.text_input("Pie de Página", value=st.session_state.config_ticket.get("pie_pagina", ""))
           
             formatos_disponibles = ["80mm (Térmica Estándar)", "58mm (Térmica Pequeña)", "Carta / A4"]
             formato_actual = st.session_state.config_ticket.get("formato_impresion", "80mm (Térmica Estándar)")
             idx_formato = formatos_disponibles.index(formato_actual) if formato_actual in formatos_disponibles else 0
           
-            formato = st.selectbox("Formato de Impresión", formatos_disponibles, index=idx_formato)
-            btn_guardar_config = st.form_submit_button("💾 Guardar Formato de Ticket")
+            formato = st.selectbox("Formato", formatos_disponibles, index=idx_formato)
+            btn_guardar_config = st.form_submit_button("💾 Guardar Configuración")
           
             if btn_guardar_config:
                 st.session_state.config_ticket["pie_pagina"] = pie
                 st.session_state.config_ticket["formato_impresion"] = formato
-                st.toast("✅ ¡Estilo de ticket guardado!", icon="🖨️")
+                
+                try:
+                    if empresa_id_actual:
+                        supabase.table("empresas").update(
+                            {"config_ticket": st.session_state.config_ticket}
+                        ).eq("id", empresa_id_actual).execute()
+                        st.success("✅ Configuración de ticket guardada permanentemente en la nube.")
+                    else:
+                        st.error("No se pudo identificar la empresa para guardar la configuración.")
+                except Exception as e:
+                    st.error(f"❌ Error al guardar en base de datos: {e}")
 
         st.markdown("---")
         st.markdown("### 🖼️ Logotipo de la Empresa")
+        
         ruta_storage_logo = f"{rut_actual}/logo_empresa.png"
         try:
             url_logo = supabase.storage.from_("archivos_clientes").get_public_url(ruta_storage_logo)
@@ -3535,6 +3643,7 @@ elif menu == "⚙️ Configuración General":
             st.info("No hay un logotipo cargado en la nube aún.")
    
         logo_cargado = st.file_uploader("Sube una imagen para tu logo (PNG o JPG)", type=["png", "jpg", "jpeg"], key="uploader_logo_empresa")
+        
         if logo_cargado is not None:
             try:
                 file_bytes = logo_cargado.getvalue()
@@ -3543,6 +3652,7 @@ elif menu == "⚙️ Configuración General":
                     file=file_bytes, 
                     file_options={"content-type": logo_cargado.type, "upsert": "true"}
                 )
+                
                 st.success("✅ ¡Logotipo subido y actualizado en la nube con éxito!")
                 st.rerun()
             except Exception as e:
@@ -3608,6 +3718,61 @@ elif menu == "⚙️ Configuración General":
                             st.error(f"❌ Error al validar certificado con OpenFactura: {response.text}")
                     except Exception as e:
                         st.error(f"⚠️ Error de conexión con la API de OpenFactura: {e}")
+
+    # ==========================================
+    # SECCIÓN INFERIOR: ADMINISTRACIÓN DE ARCHIVOS
+    # ==========================================
+    st.markdown("---")
+    st.markdown("### 🗂️ Administración de archivos")
+    st.write("Gestiona la base de datos de tu negocio: descarga plantillas en blanco, exporta tu información actual o importa cargas masivas.")
+
+    accion = st.radio(
+        "¿Qué acción deseas realizar?",
+        ("Selecciona una opción...", "Descargar plantilla en blanco", "Exportar base de datos actual", "Importar base de datos"),
+        index=0,
+        key="radio_adm_archivos_config"
+    )
+
+    if accion == "Descargar plantilla en blanco":
+        st.info("💡 Descarga esta plantilla para completar tus productos respetando los encabezados requeridos para la carga masiva.")
+        if os.path.exists(ruta_plantilla_base):
+            with open(ruta_plantilla_base, "rb") as f:
+                st.download_button(
+                    label="⬇️ Descargar Plantilla Base (Excel)",
+                    data=f,
+                    file_name="plantilla_base_datos.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.warning("⚠️ No se encontró la plantilla base en el sistema.")
+
+    elif accion == "Exportar base de datos actual":
+        st.info("📦 Obtén una copia de seguridad con todos los registros actuales de tu inventario o base de datos.")
+        if os.path.exists(ruta_bd_actual):
+            with open(ruta_bd_actual, "rb") as f:
+                st.download_button(
+                    label="⬇️ Descargar mi Base de Datos Actual (Excel)",
+                    data=f,
+                    file_name="BASE_DE_DATOS_actual.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.warning("⚠️ Todavía no existe un archivo 'BASE DE DATOS.xlsx' registrado para este negocio.")
+
+    elif accion == "Importar base de datos":
+        st.warning("⚠️ *Atención:* Al importar una nueva base de datos, se sobrescribirán los datos actuales de tu negocio.")
+      
+        archivo_cargado = st.file_uploader("Selecciona tu archivo Excel desde tu equipo", type=["xlsx"], key="uploader_importar_bd")
+      
+        if archivo_cargado is not None:
+            if st.button("🚀 Confirmar y Reemplazar Base de Datos"):
+                try:
+                    df_nuevo = pd.read_excel(archivo_cargado)
+                    df_nuevo.to_excel(ruta_bd_actual, index=False)
+                    st.success("✅ ¡Base de datos importada y actualizada con éxito!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Ocurrió un error al procesar el archivo: {e}")
 
 # ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO) -----------------
 elif menu == "💰 Módulo de Ventas (POS)":
