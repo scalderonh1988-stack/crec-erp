@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 # Importamos la conexión a tu base de datos y la seguridad de negocio
-from data_manager import supabase, get_current_tenant
+from modulos.servicios.data_manager import supabase, get_current_tenant
 
 def mostrar_modulo_notas_credito(ruta_negocio):
     # --- 1. BOTÓN DE VOLVER AL HOME ---
