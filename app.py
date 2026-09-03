@@ -1,24 +1,48 @@
-import streamlit as st
-import pandas as pd
 import os
+import sys
 import json
 from datetime import datetime, timedelta, date
+
+import streamlit as st
 import streamlit.components.v1 as components
-import sys
+import pandas as pd
 import plotly.express as px
-from data_manager import guardar_nuevo_cliente, cargar_maestro_clientes
-from calendario_pagos import mostrar_modulo_calendario_pagos
-from compras_cpp import mostrar_modulo_compras
 from supabase import create_client, Client
 from fpdf import FPDF
 from PIL import Image
-from cuadratura import mostrar_modulo_cuadratura_diaria
-from historial_ventas import mostrar_modulo_historial_ventas
-from notas_credito import mostrar_modulo_notas_credito
-from cuentas_por_pagar import mostrar_modulo_cuentas_por_pagar
-from modulos.distribucion import mostrar_modulo_distribucion
-from produccion_recetas import mostrar_modulo_produccion
 from werkzeug.security import generate_password_hash
+
+# --- MÓDULOS REESTRUCTURADOS ---
+
+# Servicios y Gestión de Datos
+from modulos.servicios.data_manager import guardar_nuevo_cliente, cargar_maestro_clientes
+from modulos.servicios import data_manager, dte_manager, integrar_productos
+
+# Ventas e Inventario
+from modulos.ventas_inventario.compras_cpp import mostrar_modulo_compras
+from modulos.ventas_inventario.notas_credito import mostrar_modulo_notas_credito
+from modulos.ventas_inventario import (
+    caja_ventas,
+    control_mermas,
+    alerta_sobrestock
+)
+
+# Finanzas y Contabilidad
+from modulos.finanzas.calendario_pagos import mostrar_modulo_calendario_pagos
+from modulos.finanzas.cuadratura import mostrar_modulo_cuadratura_diaria
+from modulos.finanzas.cuentas_por_pagar import mostrar_modulo_cuentas_por_pagar
+from modulos.finanzas import (
+    calculadora_impuestos,
+    estado_resultados,
+    comparativa_costos,
+    calendario_vencimientos
+)
+
+# Módulos de raíz y distribución
+from historial_ventas import mostrar_modulo_historial_ventas
+from produccion_recetas import mostrar_modulo_produccion
+from modulos.distribucion import mostrar_modulo_distribucion
+
 # Ocultar el menú predeterminado y la marca de agua de Streamlit
 hide_st_style = """
             <style>
@@ -53,7 +77,6 @@ def guardar_nuevo_proveedor(ruta_negocio, nombre, rut="", contacto="", telefono=
     
     df_actualizado = pd.concat([df_prov, nuevo], ignore_index=True)
     df_actualizado.to_excel(archivo_prov, index=False)
-
 # ⚙️ 1. CONFIGURACIÓN DE PÁGINA (SIEMPRE LO PRIMERO)
 st.set_page_config(
     page_title="CREC-ERP - Gestión Inteligente",

@@ -1,14 +1,22 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime
 import os
+import sys
+import json
+from datetime import datetime, date, timedelta
+
+import streamlit as st
 import streamlit.components.v1 as components
+import pandas as pd
 
-# Importamos la conexión a tu base de datos y la seguridad de negocio
-from data_manager import supabase, get_current_tenant
-# 📜 Importamos el integrador DTE de OpenFactura
-from dte_manager import emitir_dte_openfactura
+# Importaciones desde los módulos de servicios
+from modulos.servicios import data_manager
+from modulos.servicios import dte_manager
 
+# Funciones y objetos globales requeridos dentro de caja_ventas
+from modulos.servicios.data_manager import (
+    get_current_tenant,
+    supabase
+)
+from modulos.servicios.dte_manager import emitir_dte_openfactura
 
 def _normalizar_datos_empresa(datos):
     """Auxiliar para formatear la salida del diccionario con todas sus variantes de nombres."""
