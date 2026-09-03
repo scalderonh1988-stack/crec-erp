@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 import io
 # Importamos la conexión a tu base de datos y la seguridad de negocio
-from data_manager import supabase, get_current_tenant
+from modulos.servicios.data_manager import supabase, get_current_tenant
 
 def mostrar_modulo_historial_ventas(ruta_negocio):
     # --- 🛠️ CORRECCIÓN ESTÉTICA Y LÓGICA DEL ENCABEZADO ---
