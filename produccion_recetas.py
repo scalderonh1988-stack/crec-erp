@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from data_manager import supabase, get_current_tenant
+from modulos.servicios.data_manager import supabase, get_current_tenant
 
 def guardado_receta(tenant_id, codigo_final, cod_comp, nom_comp, cantidad_usada):
     nueva_linea = {
