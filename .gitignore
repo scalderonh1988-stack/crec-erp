@@ -2,3 +2,15 @@ __pycache__/
 *.xlsx
 app_local.py
 migrar_*.py
+
+# Secretos y credenciales
+.streamlit/secrets.toml
+
+# Datos de clientes
+clientes/
+
+# Compilación y entornos virtuales
+.venv/
+venv/
+build/
+dist/
