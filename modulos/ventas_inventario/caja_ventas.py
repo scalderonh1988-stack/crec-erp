@@ -8,11 +8,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 
-# Importaciones desde los módulos de servicios
 from modulos.servicios import data_manager
 from modulos.servicios import dte_manager
 
-# Importar funciones centralizadas desde data_manager
 from modulos.servicios.data_manager import (
     get_current_tenant,
     obtener_datos_empresa,
@@ -22,18 +20,12 @@ from modulos.servicios.dte_manager import emitir_dte_openfactura
 
 
 def generar_nombre_archivo_doc(tipo_doc, folio, nombre_cliente, fecha_dt):
-    """
-    Genera el nombre estandarizado del archivo:
-    EJ: GD#3MARISELAVALLE04092026
-    """
     prefijos = {
         "Guía de Despacho": "GD",
         "Factura Electrónica": "FE",
         "Boleta Electrónica": "BE"
     }
     prefijo = prefijos.get(tipo_doc, "DOC")
-    
-    # Limpiar nombre del cliente: solo caracteres alfanuméricos en mayúsculas
     nombre_clean = re.sub(r'[^A-Za-z0-9]', '', str(nombre_cliente or "CLIENTE")).upper()
     if not nombre_clean:
         nombre_clean = "CLIENTEGENERAL"
@@ -77,6 +69,10 @@ def mostrar_modulo_ventas(ruta_negocio):
         st.session_state.cliente_rut = "66666666-6"
     if 'cliente_direccion' not in st.session_state:
         st.session_state.cliente_direccion = "Sin Dirección"
+    if 'cliente_giro' not in st.session_state:
+        st.session_state.cliente_giro = "Sin Giro"
+    if 'cliente_comuna' not in st.session_state:
+        st.session_state.cliente_comuna = "Santiago"
 
     # --- ENCABEZADOS Y CONFIGURACIÓN DEL POS ---
     col_doc, col_inv = st.columns(2)
@@ -94,7 +90,7 @@ def mostrar_modulo_ventas(ruta_negocio):
     # --- LÓGICA DE SELECCIÓN DE CLIENTE ---
     st.markdown("#### 👤 Datos del Cliente / Receptor")
     try:
-        res_clientes = supabase.table("clientes").select("rut, nombre, direccion").eq("id_negocio", rut_actual).execute()
+        res_clientes = supabase.table("clientes").select("rut, nombre, direccion, giro, comuna").eq("id_negocio", rut_actual).execute()
         df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
     except Exception:
         df_clientes_pos = pd.DataFrame()
@@ -105,10 +101,13 @@ def mostrar_modulo_ventas(ruta_negocio):
         cliente_elegido = st.selectbox("Selecciona o busca un cliente registrado:", lista_clientes)
       
         if cliente_elegido == "+ Ingresar Cliente Manualmente":
-            col_f1, col_f2, col_f3 = st.columns(3)
+            col_f1, col_f2 = st.columns(2)
             with col_f1: st.session_state.cliente_nombre = st.text_input("Razón Social / Nombre", key="input_cli_nom")
             with col_f2: st.session_state.cliente_rut = st.text_input("RUT Cliente", key="input_cli_rut")
-            with col_f3: st.session_state.cliente_direccion = st.text_input("Dirección Cliente", key="input_cli_dir")
+            col_f3, col_f4, col_f5 = st.columns(3)
+            with col_f3: st.session_state.cliente_giro = st.text_input("Giro Comercial", value="Sin Giro", key="input_cli_giro")
+            with col_f4: st.session_state.cliente_direccion = st.text_input("Dirección", value="Sin Dirección", key="input_cli_dir")
+            with col_f5: st.session_state.cliente_comuna = st.text_input("Comuna", value="Santiago", key="input_cli_comuna")
         elif cliente_elegido != "-- Cliente General --":
             r_sel = cliente_elegido.split(" (")[1].replace(")", "").strip()
             match_cli = df_clientes_pos[df_clientes_pos["rut"].astype(str) == r_sel]
@@ -116,15 +115,22 @@ def mostrar_modulo_ventas(ruta_negocio):
                 st.session_state.cliente_nombre = str(match_cli.iloc[0]["nombre"])
                 st.session_state.cliente_rut = str(match_cli.iloc[0]["rut"])
                 st.session_state.cliente_direccion = str(match_cli.iloc[0].get("direccion") or "Sin Dirección")
+                st.session_state.cliente_giro = str(match_cli.iloc[0].get("giro") or "Sin Giro")
+                st.session_state.cliente_comuna = str(match_cli.iloc[0].get("comuna") or "Santiago")
         else:
             st.session_state.cliente_nombre = "Cliente General"
             st.session_state.cliente_rut = "66666666-6"
             st.session_state.cliente_direccion = "Sin Dirección"
+            st.session_state.cliente_giro = "Sin Giro"
+            st.session_state.cliente_comuna = "Santiago"
     else:
-        col_f1, col_f2, col_f3 = st.columns(3)
+        col_f1, col_f2 = st.columns(2)
         with col_f1: st.session_state.cliente_nombre = st.text_input("Razón Social / Nombre", value=st.session_state.cliente_nombre, key="input_c1")
         with col_f2: st.session_state.cliente_rut = st.text_input("RUT Cliente", value=st.session_state.cliente_rut, key="input_c2")
-        with col_f3: st.session_state.cliente_direccion = st.text_input("Dirección Cliente", value=st.session_state.cliente_direccion, key="input_c3")
+        col_f3, col_f4, col_f5 = st.columns(3)
+        with col_f3: st.session_state.cliente_giro = st.text_input("Giro Comercial", value=st.session_state.cliente_giro, key="input_c3")
+        with col_f4: st.session_state.cliente_direccion = st.text_input("Dirección", value=st.session_state.cliente_direccion, key="input_c4")
+        with col_f5: st.session_state.cliente_comuna = st.text_input("Comuna", value=st.session_state.cliente_comuna, key="input_c5")
 
     st.divider()
 
@@ -195,16 +201,22 @@ def mostrar_modulo_ventas(ruta_negocio):
                     if forma_pago == "Efectivo" and efectivo_recibido < total_venta:
                         st.warning("⚠️ Monto insuficiente para procesar la venta.")
                     else:
+                        cli_nombre = st.session_state.get("cliente_nombre") or "Cliente General"
+                        cli_rut = str(st.session_state.get("cliente_rut") or "66666666-6").replace(".", "").strip().upper()
+                        cli_dir = st.session_state.get("cliente_direccion") or "Sin Dirección"
+                        cli_giro = st.session_state.get("cliente_giro") or "Sin Giro"
+                        cli_comuna = st.session_state.get("cliente_comuna") or "Santiago"
+
+                        # VALIDACIÓN CRÍTICA SII: Facturas y Guías requieren RUT real
+                        if tipo_documento in ["Factura Electrónica", "Guía de Despacho"] and cli_rut in ["66666666-6", "666666666"]:
+                            st.error(f"🚨 **No se puede emitir {tipo_documento} a Cliente General (RUT 66666666-6).** Por favor selecciona o ingresa un cliente con RUT válido, Giro y Dirección.")
+                            st.stop()
+
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
 
-                        # 1. DATOS DINÁMICOS DEL EMISOR (DESDE DATA_MANAGER CENTRALIZADO)
+                        # 1. DATOS DEL EMISOR
                         datos_empresa = obtener_datos_empresa(rut_actual)
-
-                        # 2. DATOS DEL RECEPTOR (CLIENTE COMPRADOR)
-                        cli_nombre = st.session_state.get("cliente_nombre") or "Cliente General"
-                        cli_rut = st.session_state.get("cliente_rut") or "66666666-6"
-                        cli_dir = st.session_state.get("cliente_direccion") or "Sin Dirección"
 
                         items_para_dte = [
                             {
@@ -215,25 +227,30 @@ def mostrar_modulo_ventas(ruta_negocio):
                             for item in st.session_state.carrito_ventas
                         ]
 
-                        with st.spinner("📄 Procesando emisión DTE..."):
+                        # 2. EMISIÓN DTE EN OPENFACTURA
+                        with st.spinner("📄 Emitiendo documento tributario en OpenFactura..."):
                             res_dte = emitir_dte_openfactura(
                                 rut_emisor=datos_empresa.get("rut"),
                                 tipo_documento=tipo_documento,
                                 items=items_para_dte,
                                 rut_receptor=cli_rut,
                                 razon_social_receptor=cli_nombre,
+                                giro_receptor=cli_giro,
+                                direccion_receptor=cli_dir,
+                                comuna_receptor=cli_comuna,
                                 datos_empresa=datos_empresa
                             )
 
-                        folio_oficial = "3" if "Guía" in tipo_documento else transaccion_id_actual
-                        pdf_oficial_url = None
+                        # 3. VERIFICAR ÉXITO DE EMISIÓN (DETENER SI HAY ERROR)
+                        if not res_dte.get("exito"):
+                            st.error(f"🚨 **Error de Emisión OpenFactura:** {res_dte.get('error')}")
+                            st.stop()  # Detiene la ejecución para no registrar una venta con DTE fallido
 
-                        if res_dte.get("exito"):
-                            folio_oficial = str(res_dte.get("folio", folio_oficial))
-                            pdf_oficial_url = res_dte.get("pdf_url")
-                            st.session_state.pdf_dte_actual = pdf_oficial_url
+                        folio_oficial = str(res_dte.get("folio", transaccion_id_actual))
+                        pdf_oficial_url = res_dte.get("pdf_url")
+                        st.session_state.pdf_dte_actual = pdf_oficial_url
 
-                        # Generar nombre de archivo estandarizado
+                        # Nombre estandarizado de archivo
                         nombre_archivo_doc = generar_nombre_archivo_doc(
                             tipo_doc=tipo_documento,
                             folio=folio_oficial,
@@ -267,7 +284,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                             """
 
                             registros_para_nube.append({
-                                "rut_empresa": datos_empresa.get("rut"),
+                                "rut_empresa": datos_empresa.get("rut") or rut_actual,
                                 "transaccion_id": transaccion_id_actual,
                                 "folio": folio_oficial,
                                 "folio_sii": folio_oficial,
@@ -309,12 +326,11 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 pie_pag = datos_empresa.get("pie_pagina") or "¡Gracias por su preferencia!"
                                 logo_emp = datos_empresa.get("logo") or datos_empresa.get("logo_url") or datos_empresa.get("logo_path")
 
-                                # Renderizado HTML del Logo si existe
                                 logo_html = ""
                                 if logo_emp:
                                     logo_html = f'<div style="text-align: center; margin-bottom: 10px;"><img src="{logo_emp}" style="max-height: 70px; max-width: 200px; object-fit: contain;" /></div>'
 
-                                # 📄 FORMATO HTML COMPROBANTE
+                                # FORMATO HTML COMPROBANTE
                                 html_recibo = f"""
                                 <div style="font-family: Arial, sans-serif; max-width: 650px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fff; color: #000;">
                                     {logo_html}
@@ -326,7 +342,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                                     </div>
 
                                     <div style="text-align: center; margin: 15px 0;">
-                                        <h3 style="margin: 0; font-size: 16px; font-weight: bold; text-transform: uppercase;">{tipo_documento.upper()} ELECTRÓNICA</h3>
+                                        <h3 style="margin: 0; font-size: 16px; font-weight: bold; text-transform: uppercase;">{tipo_documento.upper()}</h3>
                                         <p style="margin: 3px 0; font-size: 13px;"><b>Folio N°:</b> {folio_oficial} &nbsp;|&nbsp; <b>Fecha:</b> {fecha_hora_actual.strftime('%d/%m/%Y')}</p>
                                     </div>
 
@@ -338,8 +354,8 @@ def mostrar_modulo_ventas(ruta_negocio):
                                                 <td style="padding: 5px; border: 1px solid #000;"><b>RUT:</b> {cli_rut}</td>
                                             </tr>
                                             <tr>
-                                                <td style="padding: 5px; border: 1px solid #000;"><b>Dirección:</b> {cli_dir}</td>
-                                                <td style="padding: 5px; border: 1px solid #000;"><b>Condición de Pago:</b> {forma_pago.upper()}</td>
+                                                <td style="padding: 5px; border: 1px solid #000;"><b>Giro:</b> {cli_giro}</td>
+                                                <td style="padding: 5px; border: 1px solid #000;"><b>Dirección:</b> {cli_dir}, {cli_comuna}</td>
                                             </tr>
                                         </table>
                                     </div>
@@ -358,7 +374,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                                         </tbody>
                                     </table>
 
-                                    <!-- DESGLOSE DE VALORES -->
                                     <div style="display: flex; justify-content: flex-end; margin-bottom: 15px;">
                                         <table style="width: 50%; font-size: 12px; border-collapse: collapse; border: 1px solid #000;">
                                             <tr>
@@ -368,10 +383,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                                             <tr>
                                                 <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;"><b>IVA (19%):</b></td>
                                                 <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;">${monto_iva:,.2f}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;"><b>Imp. Específicos:</b></td>
-                                                <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;">${imp_especifico:,.2f}</td>
                                             </tr>
                                             <tr style="background-color: #f2f2f2;">
                                                 <td style="padding: 6px 8px; border: 1px solid #000; text-align: right; font-weight: bold;">TOTAL GENERAL:</td>
@@ -386,7 +397,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 </div>
                                 """
 
-                                # 📝 FORMATO TEXTO PLANO
+                                # FORMATO TEXTO PLANO
                                 texto_recibo = f"""========================================
        {nombre_emp}
        RUT: {rut_emp}
@@ -401,15 +412,14 @@ TERMINAL: {caja_actual}
 DATOS DEL CLIENTE:
 Razón Social / Nombre: {cli_nombre}
 RUT Cliente: {cli_rut}
-Dirección: {cli_dir}
-Condición de Pago: {forma_pago.upper()}
+Giro: {cli_giro}
+Dirección: {cli_dir}, {cli_comuna}
 ----------------------------------------
 DETALLE:
 {lineas_productos}----------------------------------------
 DESGLOSE DE VALORES:
 MONTO NETO:        ${monto_neto:,.2f}
 IVA (19%):         ${monto_iva:,.2f}
-IMP. ESPECÍFICOS:  ${imp_especifico:,.2f}
 TOTAL GENERAL:     ${total_venta:,.2f}
 ----------------------------------------
 PAGO: {forma_pago.upper()}

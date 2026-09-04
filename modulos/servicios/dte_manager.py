@@ -4,8 +4,6 @@ from datetime import datetime
 
 # URL Sandbox de OpenFactura (Haulmer)
 OPENFACTURA_SANDBOX_URL = "https://dev-api.haulmer.com/v2/dte/issue"
-
-# API Key de prueba pública (Reemplazar por tu API Key personal si aplica)
 SANDBOX_API_KEY = "9245922d05404d71b84f0f03227d8e87"
 
 
@@ -22,20 +20,12 @@ def emitir_dte_openfactura(
     api_key: str = None,
     **kwargs
 ) -> dict:
-    """
-    Emite un Documento Tributario Electrónico (DTE) a través de la API de OpenFactura.
-    
-    Tipos de Documento soportados por código SII:
-    - 'Boleta Electrónica': 39
-    - 'Factura Electrónica': 33
-    - 'Guía de Despacho': 52
-    """
     if items is None:
         items = []
 
     datos_empresa = datos_empresa or {}
 
-    # 1. Obtención dinámica de API Key (Prioridad: parámetro > datos_empresa > Sandbox por defecto)
+    # 1. API Key (Empresa u OpenFactura Sandbox)
     key_final = (
         api_key 
         or datos_empresa.get("api_key") 
@@ -43,7 +33,7 @@ def emitir_dte_openfactura(
         or SANDBOX_API_KEY
     )
 
-    # 2. Mapeo de códigos SII
+    # 2. Mapeo de código SII
     mapa_sii = {
         "Boleta Electrónica": 39,
         "Factura Electrónica": 33,
@@ -51,7 +41,7 @@ def emitir_dte_openfactura(
     }
     codigo_sii = mapa_sii.get(tipo_documento, 39)
 
-    # 3. Resolución de RUT Emisor
+    # 3. RUT Emisor
     rut_emisor_final = (
         rut_emisor 
         or datos_empresa.get("rut") 
@@ -60,7 +50,13 @@ def emitir_dte_openfactura(
     )
     rut_emisor_clean = str(rut_emisor_final).replace(".", "").strip().upper()
 
-    # 4. Formatear detalle de productos (soporta enteros y decimales)
+    if not rut_emisor_clean or "SIN" in rut_emisor_clean:
+        return {
+            "exito": False,
+            "error": "El RUT del emisor es inválido o no está registrado ('Sin RUT'). Revisa la configuración de la empresa."
+        }
+
+    # 4. Detalle de Ítems
     detalles = []
     for item in items:
         cant = float(item.get("cantidad", 1))
@@ -75,10 +71,26 @@ def emitir_dte_openfactura(
             "PrcItem": prc_val
         })
 
-    # 5. Fecha actual de emisión (YYYY-MM-DD)
     fecha_emision = datetime.now().strftime("%Y-%m-%d")
 
-    # 6. Construcción del payload JSON para OpenFactura
+    # 5. Encabezado completo según requerimiento de OpenFactura / SII
+    emisor_payload = {
+        "RUTEmisor": rut_emisor_clean,
+        "RznSoc": str(datos_empresa.get("razon_social") or datos_empresa.get("nombre_negocio") or "MI EMPRESA")[:100],
+        "GiroEmis": str(datos_empresa.get("giro") or "GIRO COMERCIAL")[:80],
+        "Acteco": int(datos_empresa.get("acteco") or 471100),
+        "DirOrigen": str(datos_empresa.get("direccion") or "Santiago")[:70],
+        "CmnaOrigen": str(datos_empresa.get("comuna") or datos_empresa.get("ciudad") or "Santiago")[:20]
+    }
+
+    receptor_payload = {
+        "RUTRecep": str(rut_receptor).replace(".", "").strip().upper(),
+        "RznSocRecep": str(razon_social_receptor).strip()[:100],
+        "GiroRecep": str(giro_receptor or "Sin Giro").strip()[:40],
+        "DirRecep": str(direccion_receptor or "Sin Dirección").strip()[:70],
+        "CmnaRecep": str(comuna_receptor or "Santiago").strip()[:20]
+    }
+
     payload = {
         "response": ["PDF", "TIMBRE", "XML"],
         "dte": {
@@ -87,16 +99,8 @@ def emitir_dte_openfactura(
                     "TipoDTE": codigo_sii,
                     "FchEmis": fecha_emision
                 },
-                "Emisor": {
-                    "RUTEmisor": rut_emisor_clean
-                },
-                "Receptor": {
-                    "RUTRecep": str(rut_receptor).replace(".", "").strip().upper(),
-                    "RznSocRecep": str(razon_social_receptor).strip(),
-                    "GiroRecep": str(giro_receptor).strip(),
-                    "DirRecep": str(direccion_receptor).strip(),
-                    "CmnaRecep": str(comuna_receptor).strip()
-                }
+                "Emisor": emisor_payload,
+                "Receptor": receptor_payload
             },
             "Detalle": detalles
         }
@@ -112,12 +116,11 @@ def emitir_dte_openfactura(
             OPENFACTURA_SANDBOX_URL, 
             data=json.dumps(payload), 
             headers=headers,
-            timeout=10
+            timeout=12
         )
         
         if response.status_code in [200, 201]:
             data = response.json()
-            
             folio_obtenido = data.get("FOLIO") or data.get("folio") or data.get("TOKEN") or "N/A"
             pdf_url = data.get("pdf") or data.get("pdf_url") or data.get("url")
 
@@ -129,13 +132,19 @@ def emitir_dte_openfactura(
                 "raw_response": data
             }
         else:
+            msg_err = response.text
+            try:
+                err_json = response.json()
+                msg_err = err_json.get("message") or err_json.get("error") or response.text
+            except Exception:
+                pass
             return {
                 "exito": False,
-                "error": f"Error API {response.status_code}: {response.text}"
+                "error": f"OpenFactura HTTP {response.status_code}: {msg_err}"
             }
             
     except Exception as e:
         return {
             "exito": False,
-            "error": f"Excepción de conexión: {str(e)}"
+            "error": f"Fallo de conexión DTE: {str(e)}"
         }
