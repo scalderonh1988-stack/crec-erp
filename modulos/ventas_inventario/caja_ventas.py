@@ -12,9 +12,10 @@ import pandas as pd
 from modulos.servicios import data_manager
 from modulos.servicios import dte_manager
 
-# Funciones y objetos globales requeridos dentro de caja_ventas
+# Importar funciones centralizadas desde data_manager
 from modulos.servicios.data_manager import (
     get_current_tenant,
+    obtener_datos_empresa,
     supabase
 )
 from modulos.servicios.dte_manager import emitir_dte_openfactura
@@ -43,127 +44,6 @@ def generar_nombre_archivo_doc(tipo_doc, folio, nombre_cliente, fecha_dt):
     return f"{prefijo}#{folio_clean}{nombre_clean}{fecha_str}"
 
 
-def _normalizar_datos_empresa(datos):
-    """Auxiliar para formatear los datos de la empresa emisora."""
-    nombre_val = datos.get("razon_social") or datos.get("empresa_nombre") or datos.get("nombre_fantasia") or datos.get("nombre") or "MI EMPRESA"
-    rut_val = datos.get("rut_empresa") or datos.get("rut") or datos.get("rut_emisor") or "Sin RUT"
-    dir_val = datos.get("direccion_tributaria") or datos.get("direccion") or datos.get("direccion_local") or "Sin Dirección"
-    giro_val = datos.get("giro") or datos.get("giro_emisor") or ""
-    comuna_val = datos.get("comuna") or datos.get("comuna_emisor") or ""
-    tel_val = datos.get("telefono") or datos.get("telefono_emisor") or datos.get("celular") or ""
-    email_val = datos.get("email") or datos.get("correo") or ""
-    pie_val = datos.get("pie_pagina") or datos.get("pie_ticket") or "¡Gracias por su preferencia!"
-
-    return {
-        "rut": rut_val,
-        "rut_empresa": rut_val,
-        "rut_emisor": rut_val,
-        "direccion": dir_val,
-        "direccion_tributaria": dir_val,
-        "direccion_emisor": dir_val,
-        "razon_social": nombre_val,
-        "empresa_nombre": nombre_val,
-        "nombre": nombre_val,
-        "giro": giro_val,
-        "giro_emisor": giro_val,
-        "comuna": comuna_val,
-        "telefono": tel_val,
-        "email": email_val,
-        "pie_pagina": pie_val
-    }
-
-
-def obtener_datos_empresa(tenant_id=None):
-    """Recopila los datos de la empresa emisora."""
-    datos = {}
-    
-    for cfg_key in ['datos_empresa', 'config_ticket', 'empresa']:
-        if cfg_key in st.session_state and isinstance(st.session_state[cfg_key], dict):
-            for k, v in st.session_state[cfg_key].items():
-                if v and not datos.get(k):
-                    datos[k] = str(v).strip()
-
-    for k in ["rut_empresa", "direccion_tributaria", "direccion", "razon_social", "giro", "comuna", "telefono", "email"]:
-        if k in st.session_state and st.session_state[k]:
-            datos[k] = str(st.session_state[k]).strip()
-
-    candidatos = []
-    if isinstance(tenant_id, dict):
-        if tenant_id.get("empresa_id"): candidatos.append(str(tenant_id["empresa_id"]))
-        if tenant_id.get("rut_usuario"): candidatos.append(str(tenant_id["rut_usuario"]))
-        if tenant_id.get("id"): candidatos.append(str(tenant_id["id"]))
-    elif tenant_id:
-        candidatos.append(str(tenant_id))
-
-    usr_sess = st.session_state.get("usuario") or st.session_state.get("user") or {}
-    if isinstance(usr_sess, dict):
-        if usr_sess.get("empresa_id"): candidatos.append(str(usr_sess["empresa_id"]))
-        if usr_sess.get("rut_usuario"): candidatos.append(str(usr_sess["rut_usuario"]))
-        if usr_sess.get("id"): candidatos.append(str(usr_sess["id"]))
-
-    if st.session_state.get("empresa_id_actual"):
-        candidatos.append(str(st.session_state["empresa_id_actual"]))
-    if st.session_state.get("rut"):
-        candidatos.append(str(st.session_state["rut"]))
-
-    candidatos_limpios = []
-    for c in candidatos:
-        c_clean = str(c).split("-")[0].replace(".", "").strip()
-        if c_clean and c_clean not in candidatos_limpios:
-            candidatos_limpios.append(c_clean)
-
-    empresa_ids_a_buscar = list(candidatos_limpios)
-    for cand in candidatos_limpios:
-        try:
-            res_u = None
-            if cand.isdigit():
-                res_u = supabase.table("usuarios").select("empresa_id").eq("id", int(cand)).execute()
-            if not res_u or not res_u.data:
-                res_u = supabase.table("usuarios").select("empresa_id").ilike("rut_usuario", f"{cand}%").execute()
-
-            if res_u and res_u.data:
-                emp_id_found = str(res_u.data[0].get("empresa_id") or "").strip()
-                if emp_id_found and emp_id_found not in empresa_ids_a_buscar:
-                    empresa_ids_a_buscar.insert(0, emp_id_found)
-        except Exception:
-            pass
-
-    empresa_encontrada = None
-    for target in empresa_ids_a_buscar:
-        for tabla in ["empresas", "tenants", "configuracion_negocio"]:
-            try:
-                res = supabase.table(tabla).select("*").ilike("rut_empresa", f"{target}%").execute()
-                if not res.data:
-                    res = supabase.table(tabla).select("*").ilike("rut", f"{target}%").execute()
-                if not res.data and target.isdigit():
-                    res = supabase.table(tabla).select("*").eq("id", int(target)).execute()
-
-                if res.data and len(res.data) > 0:
-                    empresa_encontrada = res.data[0]
-                    break
-            except Exception:
-                continue
-        if empresa_encontrada:
-            break
-
-    if not empresa_encontrada:
-        for tabla in ["empresas", "tenants"]:
-            try:
-                res_fb = supabase.table(tabla).select("*").order("id", desc=True).limit(1).execute()
-                if res_fb.data:
-                    empresa_encontrada = res_fb.data[0]
-                    break
-            except Exception:
-                pass
-
-    if empresa_encontrada:
-        for k, v in empresa_encontrada.items():
-            if v:
-                datos[k] = str(v).strip()
-
-    return _normalizar_datos_empresa(datos)
-
-
 def mostrar_modulo_ventas(ruta_negocio):
     st.markdown("### 💰 Módulo de Ventas (POS)")
     st.write("Registra tus ventas y actualiza tu inventario en tiempo real (100% Nube).")
@@ -190,7 +70,7 @@ def mostrar_modulo_ventas(ruta_negocio):
     if 'nombre_archivo_descarga' not in st.session_state:
         st.session_state.nombre_archivo_descarga = "Comprobante"
 
-    # Persistent client state variables
+    # Datos persistentes del cliente
     if 'cliente_nombre' not in st.session_state:
         st.session_state.cliente_nombre = "Cliente General"
     if 'cliente_rut' not in st.session_state:
@@ -318,7 +198,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
 
-                        # 1. DATOS DEL EMISOR (VENDEDOR)
+                        # 1. DATOS DINÁMICOS DEL EMISOR (DESDE DATA_MANAGER CENTRALIZADO)
                         datos_empresa = obtener_datos_empresa(rut_actual)
 
                         # 2. DATOS DEL RECEPTOR (CLIENTE COMPRADOR)
@@ -353,7 +233,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                             pdf_oficial_url = res_dte.get("pdf_url")
                             st.session_state.pdf_dte_actual = pdf_oficial_url
 
-                        # Generar el nombre de archivo estandarizado
+                        # Generar nombre de archivo estandarizado
                         nombre_archivo_doc = generar_nombre_archivo_doc(
                             tipo_doc=tipo_documento,
                             folio=folio_oficial,
@@ -362,10 +242,10 @@ def mostrar_modulo_ventas(ruta_negocio):
                         )
                         st.session_state.nombre_archivo_descarga = nombre_archivo_doc
 
-                        # CÁLCULOS TRIBUTARIOS DE DESGLOSE (ESTÁNDAR CHILENO)
+                        # CÁLCULOS TRIBUTARIOS
                         monto_neto = round(total_venta / 1.19)
                         monto_iva = round(total_venta - monto_neto)
-                        imp_especifico = 0.0  # Ajustable según productos con ILA u otros impuestos
+                        imp_especifico = 0.0
 
                         # Guardar en Supabase
                         registros_para_nube = []
@@ -420,19 +300,28 @@ def mostrar_modulo_ventas(ruta_negocio):
                                     except Exception:
                                         pass
 
-                                # Datos Emisor
-                                nombre_emp = datos_empresa.get("razon_social", "MI EMPRESA")
-                                rut_emp = datos_empresa.get("rut", rut_actual)
-                                dir_emp = datos_empresa.get("direccion", "Sin Dirección")
-                                com_emp = datos_empresa.get("comuna", "")
+                                # Extraer datos normalizados de la empresa
+                                nombre_emp = datos_empresa.get("razon_social") or datos_empresa.get("nombre_negocio") or "MI EMPRESA"
+                                rut_emp = datos_empresa.get("rut") or datos_empresa.get("rut_empresa") or rut_actual
+                                dir_emp = datos_empresa.get("direccion") or "Sin Dirección"
+                                com_emp = datos_empresa.get("comuna") or datos_empresa.get("ciudad") or ""
+                                giro_emp = datos_empresa.get("giro") or "GIRO COMERCIAL"
                                 pie_pag = datos_empresa.get("pie_pagina") or "¡Gracias por su preferencia!"
+                                logo_emp = datos_empresa.get("logo") or datos_empresa.get("logo_url") or datos_empresa.get("logo_path")
 
-                                # 📄 FORMATO HTML
+                                # Renderizado HTML del Logo si existe
+                                logo_html = ""
+                                if logo_emp:
+                                    logo_html = f'<div style="text-align: center; margin-bottom: 10px;"><img src="{logo_emp}" style="max-height: 70px; max-width: 200px; object-fit: contain;" /></div>'
+
+                                # 📄 FORMATO HTML COMPROBANTE
                                 html_recibo = f"""
                                 <div style="font-family: Arial, sans-serif; max-width: 650px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fff; color: #000;">
+                                    {logo_html}
                                     <div style="text-align: center; margin-bottom: 15px;">
                                         <h2 style="margin: 0; font-size: 20px; font-weight: bold; text-transform: uppercase;">{nombre_emp}</h2>
-                                        <p style="margin: 3px 0; font-size: 13px;">Dirección: {dir_emp}{', ' + com_emp if com_emp else ''}</p>
+                                        <p style="margin: 3px 0; font-size: 13px;"><b>Giro:</b> {giro_emp}</p>
+                                        <p style="margin: 3px 0; font-size: 13px;"><b>Dirección:</b> {dir_emp}{', ' + com_emp if com_emp else ''}</p>
                                         <p style="margin: 3px 0; font-size: 13px; font-weight: bold;">RUT: {rut_emp}</p>
                                     </div>
 
@@ -469,7 +358,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                                         </tbody>
                                     </table>
 
-                                    <!-- DESGLOSE AL PIE DE PÁGINA -->
+                                    <!-- DESGLOSE DE VALORES -->
                                     <div style="display: flex; justify-content: flex-end; margin-bottom: 15px;">
                                         <table style="width: 50%; font-size: 12px; border-collapse: collapse; border: 1px solid #000;">
                                             <tr>
@@ -501,6 +390,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 texto_recibo = f"""========================================
        {nombre_emp}
        RUT: {rut_emp}
+       Giro: {giro_emp}
        Dirección: {dir_emp}{', ' + com_emp if com_emp else ''}
 ========================================
 DOCUMENTO: {tipo_documento.upper()}
