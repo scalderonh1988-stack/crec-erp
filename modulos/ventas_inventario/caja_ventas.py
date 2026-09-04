@@ -18,12 +18,18 @@ from modulos.servicios.data_manager import (
 )
 from modulos.servicios.dte_manager import emitir_dte_openfactura
 
+
 def _normalizar_datos_empresa(datos):
     """Auxiliar para formatear la salida del diccionario con todas sus variantes de nombres."""
-    nombre_val = datos.get("razon_social") or datos.get("empresa_nombre") or datos.get("nombre_fantasia") or "MI EMPRESA"
-    rut_val = datos.get("rut_empresa") or datos.get("rut") or "Sin RUT"
+    nombre_val = datos.get("razon_social") or datos.get("empresa_nombre") or datos.get("nombre_fantasia") or datos.get("nombre") or "MI EMPRESA"
+    rut_val = datos.get("rut_empresa") or datos.get("rut") or datos.get("rut_emisor") or "Sin RUT"
     dir_val = datos.get("direccion_tributaria") or datos.get("direccion") or datos.get("direccion_local") or "Sin Dirección"
-    giro_val = datos.get("giro") or ""
+    giro_val = datos.get("giro") or datos.get("giro_emisor") or ""
+    comuna_val = datos.get("comuna") or datos.get("comuna_emisor") or ""
+    ciudad_val = datos.get("ciudad") or datos.get("ciudad_emisor") or ""
+    tel_val = datos.get("telefono") or datos.get("telefono_emisor") or datos.get("celular") or ""
+    email_val = datos.get("email") or datos.get("correo") or ""
+    pie_val = datos.get("pie_pagina") or datos.get("pie_ticket") or "¡Gracias por su preferencia!"
 
     return {
         "rut": rut_val,
@@ -36,14 +42,19 @@ def _normalizar_datos_empresa(datos):
         "empresa_nombre": nombre_val,
         "nombre": nombre_val,
         "giro": giro_val,
-        "giro_emisor": giro_val
+        "giro_emisor": giro_val,
+        "comuna": comuna_val,
+        "ciudad": ciudad_val,
+        "telefono": tel_val,
+        "email": email_val,
+        "pie_pagina": pie_val
     }
 
 
 def obtener_datos_empresa(tenant_id=None):
     """
     Recopila los datos de la empresa.
-    Maneja tanto al Propietario (RUT empresa) como al Cajero (RUT usuario -> empresa_id -> datos empresa).
+    Maneja tanto al Propietario como al Cajero consultando en 'empresas', 'tenants' y 'configuracion_negocio'.
     """
     datos = {}
     
@@ -54,12 +65,9 @@ def obtener_datos_empresa(tenant_id=None):
                 if v and not datos.get(k):
                     datos[k] = str(v).strip()
 
-    for k in ["rut_empresa", "direccion_tributaria", "razon_social", "giro"]:
+    for k in ["rut_empresa", "direccion_tributaria", "direccion", "razon_social", "giro", "comuna", "telefono", "email"]:
         if k in st.session_state and st.session_state[k]:
             datos[k] = str(st.session_state[k]).strip()
-
-    if datos.get("rut_empresa") and datos.get("direccion_tributaria") and datos.get("rut_empresa") != "Sin RUT":
-        return _normalizar_datos_empresa(datos)
 
     # 2. Recolectar todos los posibles identificadores
     candidatos = []
@@ -89,9 +97,8 @@ def obtener_datos_empresa(tenant_id=None):
         if c_clean and c_clean not in candidatos_limpios:
             candidatos_limpios.append(c_clean)
 
-    # 3. PASO PUENTE: Si el identificador es de un Cajero, consultar su empresa_id en 'usuarios'
+    # 3. Buscar 'empresa_id' si se trata de un usuario/cajero
     empresa_ids_a_buscar = list(candidatos_limpios)
-
     for cand in candidatos_limpios:
         try:
             res_u = None
@@ -103,37 +110,39 @@ def obtener_datos_empresa(tenant_id=None):
             if res_u and res_u.data:
                 emp_id_found = str(res_u.data[0].get("empresa_id") or "").strip()
                 if emp_id_found and emp_id_found not in empresa_ids_a_buscar:
-                    empresa_ids_a_buscar.insert(0, emp_id_found)  # Priorizar el empresa_id encontrado
+                    empresa_ids_a_buscar.insert(0, emp_id_found)
         except Exception:
             pass
 
-    # 4. CONSULTA A LA TABLA 'empresas'
+    # 4. Búsqueda multinube (empresas, tenants, configuracion_negocio)
     empresa_encontrada = None
     for target in empresa_ids_a_buscar:
-        try:
-            # Buscar coincidencia con inicio de rut_empresa
-            res = supabase.table("empresas").select("*").ilike("rut_empresa", f"{target}%").execute()
-            
-            # Buscar en password o ID primaria de la empresa
-            if not res.data:
-                res = supabase.table("empresas").select("*").eq("password", target).execute()
-            if not res.data and target.isdigit():
-                res = supabase.table("empresas").select("*").eq("id", int(target)).execute()
+        for tabla in ["empresas", "tenants", "configuracion_negocio"]:
+            try:
+                res = supabase.table(tabla).select("*").ilike("rut_empresa", f"{target}%").execute()
+                if not res.data:
+                    res = supabase.table(tabla).select("*").ilike("rut", f"{target}%").execute()
+                if not res.data and target.isdigit():
+                    res = supabase.table(tabla).select("*").eq("id", int(target)).execute()
 
-            if res.data and len(res.data) > 0:
-                empresa_encontrada = res.data[0]
-                break
-        except Exception:
-            continue
+                if res.data and len(res.data) > 0:
+                    empresa_encontrada = res.data[0]
+                    break
+            except Exception:
+                continue
+        if empresa_encontrada:
+            break
 
-    # 5. RESCATE DE SEGURIDAD (Si no lo ubica, usa la empresa registrada activa)
+    # 5. Rescate si no hay coincidencias
     if not empresa_encontrada:
-        try:
-            res_fb = supabase.table("empresas").select("*").order("id", desc=True).limit(1).execute()
-            if res_fb.data:
-                empresa_encontrada = res_fb.data[0]
-        except Exception:
-            pass
+        for tabla in ["empresas", "tenants"]:
+            try:
+                res_fb = supabase.table(tabla).select("*").order("id", desc=True).limit(1).execute()
+                if res_fb.data:
+                    empresa_encontrada = res_fb.data[0]
+                    break
+            except Exception:
+                pass
 
     if empresa_encontrada:
         for k, v in empresa_encontrada.items():
@@ -334,21 +343,25 @@ def mostrar_modulo_ventas(ruta_negocio):
                                     except Exception as e:
                                         st.warning(f"⚠️ No se pudo descontar el stock del producto {item['Código']}")
 
-                                # Generar Recibo de texto impreso
+                                # Generar Recibo de texto impreso con Ficha Completa
                                 nombre_emp = datos_empresa.get("razon_social", "MI EMPRESA")
                                 rut_emp = datos_empresa.get("rut", rut_actual)
                                 dir_emp = datos_empresa.get("direccion", "Sin Dirección")
+                                com_emp = datos_empresa.get("comuna", "")
+                                tel_emp = datos_empresa.get("telefono", "")
+                                email_emp = datos_empresa.get("email", "")
                                 giro_emp = datos_empresa.get("giro", "")
-                                pie_pag = st.session_state.get('config_ticket', {}).get('pie_pagina', 'Gracias por su preferencia')
+                                pie_pag = datos_empresa.get("pie_pagina") or st.session_state.get('config_ticket', {}).get('pie_pagina', 'Gracias por su preferencia')
 
+                                str_dir_completa = f"{dir_emp}{', ' + com_emp if com_emp else ''}\n"
                                 str_giro = f"GIRO: {giro_emp}\n" if giro_emp else ""
+                                str_contacto = f"{'TEL: ' + tel_emp if tel_emp else ''}{' | ' if tel_emp and email_emp else ''}{'EMAIL: ' + email_emp if email_emp else ''}\n" if (tel_emp or email_emp) else ""
                                 str_cliente = f"CLIENTE: {cliente_nombre}\nRUT CLIENTE: {cliente_rut}\n----------------------------------------\n" if (tipo_documento in ['Factura Electrónica', 'Guía de Despacho'] or cliente_nombre) else ""
 
                                 texto_recibo = f"""========================================
        {nombre_emp}
        RUT: {rut_emp}
-       {dir_emp}
-       {str_giro}========================================
+       {str_dir_completa}{str_contacto}{str_giro}========================================
 DOCUMENTO: {tipo_documento.upper()}
 FOLIO SII: N° {folio_oficial}
 FECHA: {fecha_hora_actual.strftime('%d/%m/%Y %H:%M:%S')}

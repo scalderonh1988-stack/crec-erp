@@ -40,6 +40,37 @@ def save_excel_data(df: pd.DataFrame, filename: str):
     file_path = get_tenant_path(filename)
     df.to_excel(file_path, index=False)
 
+def obtener_datos_empresa(tenant_id: str = None) -> dict:
+    """
+    Consulta en Supabase la configuración e identidad del negocio (RUT, Giro, Dirección, etc.).
+    """
+    target_tenant = tenant_id or get_current_tenant()
+    if not target_tenant:
+        return {}
+
+    # 1. Intento de búsqueda en tablas típicas de configuración
+    for tabla in ["tenants", "empresas", "configuracion_negocio"]:
+        for col in ["rut_empresa", "rut", "tenant_id", "id_negocio"]:
+            try:
+                res = supabase.table(tabla).select("*").eq(col, target_tenant).execute()
+                if res.data and len(res.data) > 0:
+                    return res.data[0]
+            except Exception:
+                continue
+
+    # 2. Respaldos desde la sesión de Streamlit si no existen registros remotos aún
+    datos_sesion = {
+        "rut_empresa": target_tenant,
+        "razon_social": st.session_state.get("nombre_negocio") or st.session_state.get("razon_social") or "MI NEGOCIO",
+        "giro": st.session_state.get("giro_negocio") or "GIRO COMERCIAL",
+        "direccion": st.session_state.get("direccion_negocio") or "",
+        "comuna": st.session_state.get("comuna_negocio") or "",
+        "ciudad": st.session_state.get("ciudad_negocio") or "",
+        "telefono": st.session_state.get("telefono_negocio") or "",
+        "email": st.session_state.get("email_negocio") or ""
+    }
+    return datos_sesion
+
 def cargar_maestro_clientes():
     """
     Carga los clientes asegurando un aislamiento total entre empresas.
@@ -49,28 +80,24 @@ def cargar_maestro_clientes():
         tenant_id = get_current_tenant()
         maestro = {}
         
-        # Si no hay tenant en sesión, bloqueamos la salida por seguridad absoluta
         if not tenant_id:
             print("⚠️ Advertencia: No hay un tenant activo en la sesión para cargar clientes.")
             return {}
 
         respuesta_data = []
 
-        # Intentamos consultar ordenadamente probando las columnas clave en Supabase
         for col in ["rut_empresa", "id_negocio", "rut_negocio", "negocio_id"]:
             try:
                 res = supabase.table("clientes").select("*").eq(col, tenant_id).execute()
                 if res.data and len(res.data) > 0:
                     respuesta_data = res.data
-                    break # Encontramos la columna correcta, salimos del ciclo
+                    break
             except Exception:
                 continue
                 
-        # Si ninguna columna dio resultado directo, hacemos una última pasada de seguridad estricta
         if not respuesta_data:
             res_general = supabase.table("clientes").select("*").execute()
             if res_general.data:
-                # Filtro manual estricto en memoria línea por línea
                 for cliente in res_general.data:
                     empresa_cliente = str(
                         cliente.get("rut_empresa") or 
@@ -84,7 +111,6 @@ def cargar_maestro_clientes():
         if not respuesta_data:
             return {}
         
-        # Transformamos la lista filtrada al formato de diccionario {rut: datos}
         for cliente in respuesta_data:
             rut = cliente.get("rut")
             if rut:
@@ -97,7 +123,6 @@ def cargar_maestro_clientes():
 
 def guardar_nuevo_cliente(id_negocio, datos_cliente):
     try:
-        # Inyectamos el ID de forma unificada en todas las variantes de columna posibles
         target_id = id_negocio if id_negocio else get_current_tenant()
         datos_cliente["rut_empresa"] = target_id
         datos_cliente["id_negocio"] = target_id
