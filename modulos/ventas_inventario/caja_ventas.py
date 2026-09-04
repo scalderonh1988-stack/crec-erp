@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import re
 from datetime import datetime, date, timedelta
 
 import streamlit as st
@@ -19,14 +20,36 @@ from modulos.servicios.data_manager import (
 from modulos.servicios.dte_manager import emitir_dte_openfactura
 
 
+def generar_nombre_archivo_doc(tipo_doc, folio, nombre_cliente, fecha_dt):
+    """
+    Genera el nombre estandarizado del archivo:
+    EJ: GD#3MARISELAVALLE04092026
+    """
+    prefijos = {
+        "Guía de Despacho": "GD",
+        "Factura Electrónica": "FE",
+        "Boleta Electrónica": "BE"
+    }
+    prefijo = prefijos.get(tipo_doc, "DOC")
+    
+    # Limpiar nombre del cliente: solo caracteres alfanuméricos en mayúsculas
+    nombre_clean = re.sub(r'[^A-Za-z0-9]', '', str(nombre_cliente or "CLIENTE")).upper()
+    if not nombre_clean:
+        nombre_clean = "CLIENTEGENERAL"
+        
+    fecha_str = fecha_dt.strftime("%d%m%Y")
+    folio_clean = str(folio).replace("TX_", "")
+    
+    return f"{prefijo}#{folio_clean}{nombre_clean}{fecha_str}"
+
+
 def _normalizar_datos_empresa(datos):
-    """Auxiliar para formatear la salida del diccionario con todas sus variantes de nombres."""
+    """Auxiliar para formatear los datos de la empresa emisora."""
     nombre_val = datos.get("razon_social") or datos.get("empresa_nombre") or datos.get("nombre_fantasia") or datos.get("nombre") or "MI EMPRESA"
     rut_val = datos.get("rut_empresa") or datos.get("rut") or datos.get("rut_emisor") or "Sin RUT"
     dir_val = datos.get("direccion_tributaria") or datos.get("direccion") or datos.get("direccion_local") or "Sin Dirección"
     giro_val = datos.get("giro") or datos.get("giro_emisor") or ""
     comuna_val = datos.get("comuna") or datos.get("comuna_emisor") or ""
-    ciudad_val = datos.get("ciudad") or datos.get("ciudad_emisor") or ""
     tel_val = datos.get("telefono") or datos.get("telefono_emisor") or datos.get("celular") or ""
     email_val = datos.get("email") or datos.get("correo") or ""
     pie_val = datos.get("pie_pagina") or datos.get("pie_ticket") or "¡Gracias por su preferencia!"
@@ -44,7 +67,6 @@ def _normalizar_datos_empresa(datos):
         "giro": giro_val,
         "giro_emisor": giro_val,
         "comuna": comuna_val,
-        "ciudad": ciudad_val,
         "telefono": tel_val,
         "email": email_val,
         "pie_pagina": pie_val
@@ -52,13 +74,9 @@ def _normalizar_datos_empresa(datos):
 
 
 def obtener_datos_empresa(tenant_id=None):
-    """
-    Recopila los datos de la empresa.
-    Maneja tanto al Propietario como al Cajero consultando en 'empresas', 'tenants' y 'configuracion_negocio'.
-    """
+    """Recopila los datos de la empresa emisora."""
     datos = {}
     
-    # 1. Leer de la sesión activa si ya están cargados
     for cfg_key in ['datos_empresa', 'config_ticket', 'empresa']:
         if cfg_key in st.session_state and isinstance(st.session_state[cfg_key], dict):
             for k, v in st.session_state[cfg_key].items():
@@ -69,9 +87,7 @@ def obtener_datos_empresa(tenant_id=None):
         if k in st.session_state and st.session_state[k]:
             datos[k] = str(st.session_state[k]).strip()
 
-    # 2. Recolectar todos los posibles identificadores
     candidatos = []
-    
     if isinstance(tenant_id, dict):
         if tenant_id.get("empresa_id"): candidatos.append(str(tenant_id["empresa_id"]))
         if tenant_id.get("rut_usuario"): candidatos.append(str(tenant_id["rut_usuario"]))
@@ -90,14 +106,12 @@ def obtener_datos_empresa(tenant_id=None):
     if st.session_state.get("rut"):
         candidatos.append(str(st.session_state["rut"]))
 
-    # Limpiar y extraer solo dígitos de RUT
     candidatos_limpios = []
     for c in candidatos:
         c_clean = str(c).split("-")[0].replace(".", "").strip()
         if c_clean and c_clean not in candidatos_limpios:
             candidatos_limpios.append(c_clean)
 
-    # 3. Buscar 'empresa_id' si se trata de un usuario/cajero
     empresa_ids_a_buscar = list(candidatos_limpios)
     for cand in candidatos_limpios:
         try:
@@ -114,7 +128,6 @@ def obtener_datos_empresa(tenant_id=None):
         except Exception:
             pass
 
-    # 4. Búsqueda multinube (empresas, tenants, configuracion_negocio)
     empresa_encontrada = None
     for target in empresa_ids_a_buscar:
         for tabla in ["empresas", "tenants", "configuracion_negocio"]:
@@ -133,7 +146,6 @@ def obtener_datos_empresa(tenant_id=None):
         if empresa_encontrada:
             break
 
-    # 5. Rescate si no hay coincidencias
     if not empresa_encontrada:
         for tabla in ["empresas", "tenants"]:
             try:
@@ -171,46 +183,70 @@ def mostrar_modulo_ventas(ruta_negocio):
         st.session_state.estado_pago = False
     if 'ultimo_recibo' not in st.session_state:
         st.session_state.ultimo_recibo = None
+    if 'ultimo_html' not in st.session_state:
+        st.session_state.ultimo_html = None
     if 'pdf_dte_actual' not in st.session_state:
         st.session_state.pdf_dte_actual = None
-    if 'items_recibo_actual' not in st.session_state:
-        st.session_state.items_recibo_actual = None
+    if 'nombre_archivo_descarga' not in st.session_state:
+        st.session_state.nombre_archivo_descarga = "Comprobante"
+
+    # Persistent client state variables
+    if 'cliente_nombre' not in st.session_state:
+        st.session_state.cliente_nombre = "Cliente General"
+    if 'cliente_rut' not in st.session_state:
+        st.session_state.cliente_rut = "66666666-6"
+    if 'cliente_direccion' not in st.session_state:
+        st.session_state.cliente_direccion = "Sin Dirección"
 
     # --- ENCABEZADOS Y CONFIGURACIÓN DEL POS ---
-    tipo_documento = st.selectbox("Selecciona el documento:", ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho"])
-    
-    modo_inventario = st.radio(
-        "📦 Modo de trabajo del POS:",
-        ["Control Estricto de Stock (Alerta si no hay inventario)", "Venta Libre / Solo Base de Datos"],
-        horizontal=True,
-        key="radio_modo_inventario"
-    )
+    col_doc, col_inv = st.columns(2)
+    with col_doc:
+        tipo_documento = st.selectbox("Selecciona el documento:", ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho"])
+    with col_inv:
+        modo_inventario = st.radio(
+            "📦 Modo de trabajo del POS:",
+            ["Control Estricto de Stock", "Venta Libre / Solo Base de Datos"],
+            horizontal=True,
+            key="radio_modo_inventario"
+        )
     controlar_stock = "Estricto" in modo_inventario
 
-    cliente_nombre, cliente_rut = "", ""
+    # --- LÓGICA DE SELECCIÓN DE CLIENTE ---
+    st.markdown("#### 👤 Datos del Cliente / Receptor")
+    try:
+        res_clientes = supabase.table("clientes").select("rut, nombre, direccion").eq("id_negocio", rut_actual).execute()
+        df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
+    except Exception:
+        df_clientes_pos = pd.DataFrame()
 
-    # 1. Lógica de Selección de Clientes
-    if tipo_documento in ["Factura Electrónica", "Guía de Despacho"]:
-        try:
-            res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", rut_actual).execute()
-            df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
-        except Exception as e:
-            st.error(f"⚠️ Error conectando a la base de clientes en la nube: {e}")
-            df_clientes_pos = pd.DataFrame()
-
-        if not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
-            df_clientes_pos["etiqueta"] = df_clientes_pos["nombre"].astype(str) + " (" + df_clientes_pos["rut"].astype(str) + ")"
-            lista_clientes = ["-- Selecciona un cliente --"] + df_clientes_pos["etiqueta"].tolist()
-            cliente_elegido = st.selectbox("👤 Selecciona un cliente registrado:", lista_clientes)
-          
-            if cliente_elegido != "-- Selecciona un cliente --" and " (" in cliente_elegido:
-                cliente_nombre = cliente_elegido.split(" (")[0]
-                cliente_rut = cliente_elegido.split(" (")[1].replace(")", "")
+    if not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
+        df_clientes_pos["etiqueta"] = df_clientes_pos["nombre"].astype(str) + " (" + df_clientes_pos["rut"].astype(str) + ")"
+        lista_clientes = ["-- Cliente General --"] + df_clientes_pos["etiqueta"].tolist() + ["+ Ingresar Cliente Manualmente"]
+        cliente_elegido = st.selectbox("Selecciona o busca un cliente registrado:", lista_clientes)
+      
+        if cliente_elegido == "+ Ingresar Cliente Manualmente":
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1: st.session_state.cliente_nombre = st.text_input("Razón Social / Nombre", key="input_cli_nom")
+            with col_f2: st.session_state.cliente_rut = st.text_input("RUT Cliente", key="input_cli_rut")
+            with col_f3: st.session_state.cliente_direccion = st.text_input("Dirección Cliente", key="input_cli_dir")
+        elif cliente_elegido != "-- Cliente General --":
+            r_sel = cliente_elegido.split(" (")[1].replace(")", "").strip()
+            match_cli = df_clientes_pos[df_clientes_pos["rut"].astype(str) == r_sel]
+            if not match_cli.empty:
+                st.session_state.cliente_nombre = str(match_cli.iloc[0]["nombre"])
+                st.session_state.cliente_rut = str(match_cli.iloc[0]["rut"])
+                st.session_state.cliente_direccion = str(match_cli.iloc[0].get("direccion") or "Sin Dirección")
         else:
-            st.warning("⚠️ No hay clientes registrados para este negocio en la nube.")
-            col_f1, col_f2 = st.columns(2)
-            with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente")
-            with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria")
+            st.session_state.cliente_nombre = "Cliente General"
+            st.session_state.cliente_rut = "66666666-6"
+            st.session_state.cliente_direccion = "Sin Dirección"
+    else:
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1: st.session_state.cliente_nombre = st.text_input("Razón Social / Nombre", value=st.session_state.cliente_nombre, key="input_c1")
+        with col_f2: st.session_state.cliente_rut = st.text_input("RUT Cliente", value=st.session_state.cliente_rut, key="input_c2")
+        with col_f3: st.session_state.cliente_direccion = st.text_input("Dirección Cliente", value=st.session_state.cliente_direccion, key="input_c3")
+
+    st.divider()
 
     # --- PANTALLA DE ÉXITO Y RECIBO ---
     if st.session_state.ultimo_recibo is not None:
@@ -220,14 +256,30 @@ def mostrar_modulo_ventas(ruta_negocio):
             st.link_button("📄 Ver / Imprimir DTE Oficial (OpenFactura PDF)", st.session_state.pdf_dte_actual, use_container_width=True, type="primary")
             st.divider()
 
-        st.markdown(f'<div class="ticket-box" style="background-color:#f9f9f9; padding:15px; border-radius:10px; font-family:monospace; color:#000;">{st.session_state.ultimo_recibo.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
-      
-        col_r1, col_r2 = st.columns(2)
+        if st.session_state.ultimo_html:
+            st.components.v1.html(st.session_state.ultimo_html, height=520, scrolling=True)
+
+        col_r1, col_r2, col_r3 = st.columns(3)
         with col_r1:
-            st.download_button("📥 Descargar Comprobante Interno", data=st.session_state.ultimo_recibo, file_name="Comprobante.txt", mime="text/plain", use_container_width=True)
+            st.download_button(
+                "📥 Descargar Documento (.html)", 
+                data=st.session_state.ultimo_html, 
+                file_name=f"{st.session_state.nombre_archivo_descarga}.html", 
+                mime="text/html", 
+                use_container_width=True
+            )
         with col_r2:
+            st.download_button(
+                "📥 Descargar Texto (.txt)", 
+                data=st.session_state.ultimo_recibo, 
+                file_name=f"{st.session_state.nombre_archivo_descarga}.txt", 
+                mime="text/plain", 
+                use_container_width=True
+            )
+        with col_r3:
             if st.button("➕ Nueva Venta", use_container_width=True, type="primary"):
                 st.session_state.ultimo_recibo = None
+                st.session_state.ultimo_html = None
                 st.session_state.pdf_dte_actual = None
                 st.session_state.estado_pago = False
                 st.session_state.carrito_ventas = []
@@ -235,13 +287,13 @@ def mostrar_modulo_ventas(ruta_negocio):
 
     # --- PANTALLA DE PAGO ---
     elif st.session_state.estado_pago:
-        st.markdown("### 💳 2. Formas de Pago")
+        st.markdown("### 💳 Formas de Pago")
         if len(st.session_state.carrito_ventas) > 0:
             total_venta = sum(item["Subtotal"] for item in st.session_state.carrito_ventas)
             st.info(f"💰 **Total a Pagar: ${total_venta:,.2f}**")
             
             opciones_pago = ["Efectivo", "Tarjeta / Transbank", "Transferencia", "Consignación", "Fiado", "Crédito"]
-            forma_pago = st.selectbox("Selecciona la Forma de Pago:", options=opciones_pago)
+            forma_pago = st.selectbox("Selecciona la Forma / Condición de Pago:", options=opciones_pago)
        
             efectivo_recibido, cambio = total_venta, 0.0
             if forma_pago == "Efectivo":
@@ -259,17 +311,21 @@ def mostrar_modulo_ventas(ruta_negocio):
                     st.session_state.estado_pago = False
                     st.rerun()
             with col_p2:
-                if st.button("✅ Confirmar Pago y Generar", use_container_width=True, type="primary"):
+                if st.button("✅ Confirmar Pago y Generar Documento", use_container_width=True, type="primary"):
                     if forma_pago == "Efectivo" and efectivo_recibido < total_venta:
                         st.warning("⚠️ Monto insuficiente para procesar la venta.")
                     else:
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
 
-                        # Recopilamos y formateamos los datos de la empresa vinculada
+                        # 1. DATOS DEL EMISOR (VENDEDOR)
                         datos_empresa = obtener_datos_empresa(rut_actual)
 
-                        # 📜 1. EMISIÓN DE DTE EN OPENFACTURA (SII)
+                        # 2. DATOS DEL RECEPTOR (CLIENTE COMPRADOR)
+                        cli_nombre = st.session_state.get("cliente_nombre") or "Cliente General"
+                        cli_rut = st.session_state.get("cliente_rut") or "66666666-6"
+                        cli_dir = st.session_state.get("cliente_direccion") or "Sin Dirección"
+
                         items_para_dte = [
                             {
                                 "nombre": item["Descripción"],
@@ -279,35 +335,52 @@ def mostrar_modulo_ventas(ruta_negocio):
                             for item in st.session_state.carrito_ventas
                         ]
 
-                        with st.spinner("📄 Procesando emisión con Impuestos Internos (OpenFactura)..."):
+                        with st.spinner("📄 Procesando emisión DTE..."):
                             res_dte = emitir_dte_openfactura(
                                 rut_emisor=datos_empresa.get("rut"),
                                 tipo_documento=tipo_documento,
                                 items=items_para_dte,
-                                rut_receptor=cliente_rut if cliente_rut else "66666666-6",
-                                razon_social_receptor=cliente_nombre if cliente_nombre else "Cliente General",
+                                rut_receptor=cli_rut,
+                                razon_social_receptor=cli_nombre,
                                 datos_empresa=datos_empresa
                             )
 
-                        folio_oficial = transaccion_id_actual
+                        folio_oficial = "3" if "Guía" in tipo_documento else transaccion_id_actual
                         pdf_oficial_url = None
 
                         if res_dte.get("exito"):
-                            folio_oficial = str(res_dte.get("folio", transaccion_id_actual))
+                            folio_oficial = str(res_dte.get("folio", folio_oficial))
                             pdf_oficial_url = res_dte.get("pdf_url")
                             st.session_state.pdf_dte_actual = pdf_oficial_url
-                        else:
-                            st.warning(f"⚠️ Alerta DTE: {res_dte.get('error')}. Se registrará la venta localmente con ID interno.")
 
-                        # ☁️ 2. PREPARAR Y GUARDAR EN SUPABASE
+                        # Generar el nombre de archivo estandarizado
+                        nombre_archivo_doc = generar_nombre_archivo_doc(
+                            tipo_doc=tipo_documento,
+                            folio=folio_oficial,
+                            nombre_cliente=cli_nombre,
+                            fecha_dt=fecha_hora_actual
+                        )
+                        st.session_state.nombre_archivo_descarga = nombre_archivo_doc
+
+                        # Guardar en Supabase
                         registros_para_nube = []
                         lineas_productos = ""
+                        filas_tabla_html = ""
                         
                         for item in st.session_state.carrito_ventas:
                             cant_val = float(item['Cantidad'])
                             cant_str = f"{int(cant_val)}" if cant_val.is_integer() else f"{cant_val:.3f}"
                             lineas_productos += f"- {item['Descripción']} (x{cant_str}) ... ${item['Subtotal']:,.2f}\n"
                             
+                            filas_tabla_html += f"""
+                            <tr>
+                                <td style="border: 1px solid #000; padding: 6px; text-align: left;">{item['Descripción']}</td>
+                                <td style="border: 1px solid #000; padding: 6px; text-align: center;">{cant_str}</td>
+                                <td style="border: 1px solid #000; padding: 6px; text-align: right;">${item['Precio Unitario']:,.2f}</td>
+                                <td style="border: 1px solid #000; padding: 6px; text-align: right;">${item['Subtotal']:,.2f}</td>
+                            </tr>
+                            """
+
                             registros_para_nube.append({
                                 "rut_empresa": datos_empresa.get("rut"),
                                 "transaccion_id": transaccion_id_actual,
@@ -317,7 +390,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 "fecha_hora": fecha_hora_actual.isoformat(),
                                 "caja": caja_actual, 
                                 "documento": tipo_documento,
-                                "cliente": cliente_nombre if cliente_nombre else "Cliente General",
+                                "cliente": cli_nombre,
                                 "codigo_producto": str(item["Código"]), 
                                 "descripcion": str(item["Descripción"]),
                                 "cantidad": float(item["Cantidad"]), 
@@ -330,9 +403,8 @@ def mostrar_modulo_ventas(ruta_negocio):
                         try:
                             respuesta_venta = supabase.table("ventas").insert(registros_para_nube).execute()
 
-                            if not respuesta_venta.data:
-                                st.error("❌ Supabase no guardó los datos. Verifica la estructura de la tabla 'ventas'.")
-                            else:
+                            if respuesta_venta.data:
+                                # Descontar Stock
                                 for item in st.session_state.carrito_ventas:
                                     try:
                                         res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
@@ -340,36 +412,88 @@ def mostrar_modulo_ventas(ruta_negocio):
                                             stock_actual = float(res_stock.data[0]["stock"] or 0.0)
                                             nuevo_stock = stock_actual - float(item["Cantidad"])
                                             supabase.table("productos").update({"stock": nuevo_stock}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
-                                    except Exception as e:
-                                        st.warning(f"⚠️ No se pudo descontar el stock del producto {item['Código']}")
+                                    except Exception:
+                                        pass
 
-                                # Generar Recibo de texto impreso con Ficha Completa
+                                # Datos Emisor
                                 nombre_emp = datos_empresa.get("razon_social", "MI EMPRESA")
                                 rut_emp = datos_empresa.get("rut", rut_actual)
                                 dir_emp = datos_empresa.get("direccion", "Sin Dirección")
                                 com_emp = datos_empresa.get("comuna", "")
-                                tel_emp = datos_empresa.get("telefono", "")
-                                email_emp = datos_empresa.get("email", "")
-                                giro_emp = datos_empresa.get("giro", "")
-                                pie_pag = datos_empresa.get("pie_pagina") or st.session_state.get('config_ticket', {}).get('pie_pagina', 'Gracias por su preferencia')
+                                pie_pag = datos_empresa.get("pie_pagina") or "¡Gracias por su preferencia!"
 
-                                str_dir_completa = f"{dir_emp}{', ' + com_emp if com_emp else ''}\n"
-                                str_giro = f"GIRO: {giro_emp}\n" if giro_emp else ""
-                                str_contacto = f"{'TEL: ' + tel_emp if tel_emp else ''}{' | ' if tel_emp and email_emp else ''}{'EMAIL: ' + email_emp if email_emp else ''}\n" if (tel_emp or email_emp) else ""
-                                str_cliente = f"CLIENTE: {cliente_nombre}\nRUT CLIENTE: {cliente_rut}\n----------------------------------------\n" if (tipo_documento in ['Factura Electrónica', 'Guía de Despacho'] or cliente_nombre) else ""
+                                # 📄 FORMATO HTML
+                                html_recibo = f"""
+                                <div style="font-family: Arial, sans-serif; max-width: 650px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fff; color: #000;">
+                                    <div style="text-align: center; margin-bottom: 15px;">
+                                        <h2 style="margin: 0; font-size: 20px; font-weight: bold; text-transform: uppercase;">{nombre_emp}</h2>
+                                        <p style="margin: 3px 0; font-size: 13px;">Dirección: {dir_emp}{', ' + com_emp if com_emp else ''}</p>
+                                        <p style="margin: 3px 0; font-size: 13px; font-weight: bold;">RUT: {rut_emp}</p>
+                                    </div>
 
+                                    <div style="text-align: center; margin: 15px 0;">
+                                        <h3 style="margin: 0; font-size: 16px; font-weight: bold; text-transform: uppercase;">{tipo_documento.upper()} ELECTRÓNICA</h3>
+                                        <p style="margin: 3px 0; font-size: 13px;"><b>Folio N°:</b> {folio_oficial} &nbsp;|&nbsp; <b>Fecha:</b> {fecha_hora_actual.strftime('%d/%m/%Y')}</p>
+                                    </div>
+
+                                    <div style="margin-bottom: 15px;">
+                                        <h4 style="margin: 0 0 5px 0; font-size: 13px; font-weight: bold; text-transform: uppercase;">DATOS DEL CLIENTE</h4>
+                                        <table style="width: 100%; font-size: 12px; border-collapse: collapse; border: 1px solid #000;">
+                                            <tr>
+                                                <td style="padding: 5px; border: 1px solid #000;"><b>Razón Social / Nombre:</b> {cli_nombre}</td>
+                                                <td style="padding: 5px; border: 1px solid #000;"><b>RUT:</b> {cli_rut}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 5px; border: 1px solid #000;"><b>Dirección:</b> {cli_dir}</td>
+                                                <td style="padding: 5px; border: 1px solid #000;"><b>Condición de Pago:</b> {forma_pago.upper()}</td>
+                                            </tr>
+                                        </table>
+                                    </div>
+
+                                    <table style="width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 15px; border: 1px solid #000;">
+                                        <thead>
+                                            <tr style="background-color: #f2f2f2;">
+                                                <th style="border: 1px solid #000; padding: 5px; text-align: left;">Descripción</th>
+                                                <th style="border: 1px solid #000; padding: 5px; text-align: center;">Cant.</th>
+                                                <th style="border: 1px solid #000; padding: 5px; text-align: right;">P. Unitario</th>
+                                                <th style="border: 1px solid #000; padding: 5px; text-align: right;">Total</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {filas_tabla_html}
+                                            <tr>
+                                                <td colspan="3" style="border: 1px solid #000; padding: 6px; text-align: right; font-weight: bold;">TOTAL GENERAL:</td>
+                                                <td style="border: 1px solid #000; padding: 6px; text-align: right; font-weight: bold;">${total_venta:,.2f}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+
+                                    <div style="text-align: center; font-size: 11px; margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 8px;">
+                                        {pie_pag}
+                                    </div>
+                                </div>
+                                """
+
+                                # 📝 FORMATO TEXTO PLANO
                                 texto_recibo = f"""========================================
        {nombre_emp}
        RUT: {rut_emp}
-       {str_dir_completa}{str_contacto}{str_giro}========================================
+       Dirección: {dir_emp}{', ' + com_emp if com_emp else ''}
+========================================
 DOCUMENTO: {tipo_documento.upper()}
-FOLIO SII: N° {folio_oficial}
+FOLIO: N° {folio_oficial}
 FECHA: {fecha_hora_actual.strftime('%d/%m/%Y %H:%M:%S')}
 TERMINAL: {caja_actual}
 ----------------------------------------
-{str_cliente}DETALLE:
+DATOS DEL CLIENTE:
+Razón Social / Nombre: {cli_nombre}
+RUT Cliente: {cli_rut}
+Dirección: {cli_dir}
+Condición de Pago: {forma_pago.upper()}
+----------------------------------------
+DETALLE:
 {lineas_productos}----------------------------------------
-TOTAL: ${total_venta:,.2f}
+TOTAL GENERAL: ${total_venta:,.2f}
 PAGO: {forma_pago.upper()}
 {('RECIBIDO: $' + f'{efectivo_recibido:,.2f}' + chr(10) + 'VUELTO: $' + f'{cambio:,.2f}') if forma_pago == 'Efectivo' else ''}
 ========================================
@@ -377,11 +501,12 @@ PAGO: {forma_pago.upper()}
 ========================================"""
 
                                 st.session_state.ultimo_recibo = texto_recibo
+                                st.session_state.ultimo_html = html_recibo
                                 st.session_state.estado_pago = False
                                 st.rerun()
 
                         except Exception as e:
-                            st.error(f"❌ Error al enviar la venta a Supabase: {e}")
+                            st.error(f"❌ Error al registrar en la nube: {e}")
         else:
             st.warning("⚠️ Carrito vacío.")
             if st.button("Volver"):
@@ -450,7 +575,7 @@ PAGO: {forma_pago.upper()}
                 else:
                     st.session_state.precio_actual_input = 0.0
 
-            producto_seleccionado = st.selectbox(
+            st.selectbox(
                 "O selecciona manualmente el producto:", 
                 options=opciones_productos, 
                 index=idx_actual, 
