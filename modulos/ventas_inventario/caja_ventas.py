@@ -257,7 +257,7 @@ def mostrar_modulo_ventas(ruta_negocio):
             st.divider()
 
         if st.session_state.ultimo_html:
-            st.components.v1.html(st.session_state.ultimo_html, height=520, scrolling=True)
+            st.components.v1.html(st.session_state.ultimo_html, height=580, scrolling=True)
 
         col_r1, col_r2, col_r3 = st.columns(3)
         with col_r1:
@@ -362,6 +362,11 @@ def mostrar_modulo_ventas(ruta_negocio):
                         )
                         st.session_state.nombre_archivo_descarga = nombre_archivo_doc
 
+                        # CÁLCULOS TRIBUTARIOS DE DESGLOSE (ESTÁNDAR CHILENO)
+                        monto_neto = round(total_venta / 1.19)
+                        monto_iva = round(total_venta - monto_neto)
+                        imp_especifico = 0.0  # Ajustable según productos con ILA u otros impuestos
+
                         # Guardar en Supabase
                         registros_para_nube = []
                         lineas_productos = ""
@@ -450,7 +455,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                                         </table>
                                     </div>
 
-                                    <table style="width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 15px; border: 1px solid #000;">
+                                    <table style="width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 10px; border: 1px solid #000;">
                                         <thead>
                                             <tr style="background-color: #f2f2f2;">
                                                 <th style="border: 1px solid #000; padding: 5px; text-align: left;">Descripción</th>
@@ -461,12 +466,30 @@ def mostrar_modulo_ventas(ruta_negocio):
                                         </thead>
                                         <tbody>
                                             {filas_tabla_html}
-                                            <tr>
-                                                <td colspan="3" style="border: 1px solid #000; padding: 6px; text-align: right; font-weight: bold;">TOTAL GENERAL:</td>
-                                                <td style="border: 1px solid #000; padding: 6px; text-align: right; font-weight: bold;">${total_venta:,.2f}</td>
-                                            </tr>
                                         </tbody>
                                     </table>
+
+                                    <!-- DESGLOSE AL PIE DE PÁGINA -->
+                                    <div style="display: flex; justify-content: flex-end; margin-bottom: 15px;">
+                                        <table style="width: 50%; font-size: 12px; border-collapse: collapse; border: 1px solid #000;">
+                                            <tr>
+                                                <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;"><b>Monto Neto:</b></td>
+                                                <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;">${monto_neto:,.2f}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;"><b>IVA (19%):</b></td>
+                                                <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;">${monto_iva:,.2f}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;"><b>Imp. Específicos:</b></td>
+                                                <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;">${imp_especifico:,.2f}</td>
+                                            </tr>
+                                            <tr style="background-color: #f2f2f2;">
+                                                <td style="padding: 6px 8px; border: 1px solid #000; text-align: right; font-weight: bold;">TOTAL GENERAL:</td>
+                                                <td style="padding: 6px 8px; border: 1px solid #000; text-align: right; font-weight: bold;">${total_venta:,.2f}</td>
+                                            </tr>
+                                        </table>
+                                    </div>
 
                                     <div style="text-align: center; font-size: 11px; margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 8px;">
                                         {pie_pag}
@@ -493,7 +516,12 @@ Condición de Pago: {forma_pago.upper()}
 ----------------------------------------
 DETALLE:
 {lineas_productos}----------------------------------------
-TOTAL GENERAL: ${total_venta:,.2f}
+DESGLOSE DE VALORES:
+MONTO NETO:        ${monto_neto:,.2f}
+IVA (19%):         ${monto_iva:,.2f}
+IMP. ESPECÍFICOS:  ${imp_especifico:,.2f}
+TOTAL GENERAL:     ${total_venta:,.2f}
+----------------------------------------
 PAGO: {forma_pago.upper()}
 {('RECIBIDO: $' + f'{efectivo_recibido:,.2f}' + chr(10) + 'VUELTO: $' + f'{cambio:,.2f}') if forma_pago == 'Efectivo' else ''}
 ========================================
