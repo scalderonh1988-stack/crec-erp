@@ -2966,7 +2966,7 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
             st.markdown("### 🔄 Generar Guía de Recepción Interna (GRI)")
             st.info("ℹ️ Use este módulo para ingresos de inventario generados internamente (devoluciones, producción propia, hallazgos o ajustes positivos de bodega).")
 
-            # Identificador único de la empresa en Supabase (Linter Safe)
+            # Identificador único de la empresa en Supabase
             func_tenant = globals().get("get_current_tenant")
             if callable(func_tenant):
                 tenant_id = func_tenant()
@@ -2975,11 +2975,23 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
             
             rut_actual = str(tenant_id) if tenant_id else ""
 
+            # Cargar lista de bodegas desde Supabase
+            opciones_bodegas = ["Bodega Principal"]
+            try:
+                res_bodegas = supabase.table("bodegas").select("nombre").eq("id_negocio", rut_actual).execute()
+                if res_bodegas.data:
+                    bodegas_db = [b.get("nombre") for b in res_bodegas.data if b.get("nombre")]
+                    if bodegas_db:
+                        opciones_bodegas = bodegas_db
+            except Exception:
+                pass
+
             with st.form("form_gri_interno"):
                 col_g1, col_g2 = st.columns(2)
                 with col_g1:
                     folio_gri = st.text_input("N° Folio GRI interno (ej. GRI-2026-001)")
                     motivo_gri = st.selectbox("Motivo del Ingreso Interno", ["Producción Propia", "Hallazgo de Inventario / Conteo", "Devolución de Cliente", "Ajuste Positivo de Bodega", "Otro"])
+                    bodega_destino = st.selectbox("Bodega de Destino / Recepción", options=opciones_bodegas)
                 with col_g2:
                     fecha_gri = st.date_input("Fecha de Recepción Interna", value=date.today())
                     responsable_gri = st.text_input("Responsable / Autorizado por")
@@ -3028,10 +3040,10 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
                                 nuevo_stock_sb = stock_actual_sb + float(cant_gri)
                                 supabase.table("productos").update({"stock": nuevo_stock_sb}).eq("codigo", str(codigo_gri)).execute()
 
-                            # 2. REGISTRAR LOTE EN TABLA 'lotes' (Si aplica)
+                            # 2. REGISTRAR LOTE EN TABLA 'lotes' CON LA BODEGA CORRESPONDIENTE
                             if maneja_lote_gri == "Sí":
                                 try:
-                                    supabase.table("lotes").insert([{
+                                    datos_lote = {
                                         "id_negocio": rut_actual,
                                         "codigo": str(codigo_gri),
                                         "descripcion": desc_gri,
@@ -3039,12 +3051,18 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
                                         "cantidad_disponible": float(cant_gri),
                                         "fecha_vencimiento": str(venc_gri),
                                         "costo_unitario": float(costo_estimado_gri)
-                                    }]).execute()
+                                    }
+                                    try:
+                                        datos_lote["bodega"] = bodega_destino
+                                        supabase.table("lotes").insert([datos_lote]).execute()
+                                    except Exception:
+                                        datos_lote.pop("bodega", None)
+                                        supabase.table("lotes").insert([datos_lote]).execute()
                                 except Exception as e_lote:
                                     print(f"Advertencia al registrar lote: {e_lote}")
 
-                            # 3. REGISTRAR HISTORIAL EN TABLA 'compras' CON ESQUEMA EXACTO
-                            supabase.table("compras").insert([{
+                            # 3. REGISTRAR HISTORIAL EN TABLA 'compras'
+                            datos_compra = {
                                 "fecha_hora": datetime.now().isoformat(),
                                 "tipo_recepcion": "GRI",
                                 "proveedor": f"INTERNO ({motivo_gri})",
@@ -3059,14 +3077,21 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
                                 "condicion_pago": "Interno",
                                 "id_negocio": rut_actual,
                                 "usuario": responsable_gri
-                            }]).execute()
+                            }
+                            
+                            try:
+                                datos_compra["bodega"] = bodega_destino
+                                supabase.table("compras").insert([datos_compra]).execute()
+                            except Exception:
+                                datos_compra.pop("bodega", None)
+                                supabase.table("compras").insert([datos_compra]).execute()
 
-                            st.success(f"✅ ¡GRI #{folio_gri} guardada con éxito! Stock actualizado en Supabase.")
+                            st.success(f"✅ ¡GRI #{folio_gri} guardada en la bodega '{bodega_destino}' y stock actualizado!")
                             st.rerun()
 
                         except Exception as e:
                             st.error(f"❌ Error al comunicar la GRI con Supabase: {e}")
-
+                            
         # --- 3. CREAR PRODUCTO NUEVO (MÓDULO DE COMPRAS) ---
         elif accion_producto == "➕ Crear Producto Nuevo":
             st.markdown("### 🆕 Ingresar Nuevo Producto a la Base de Datos")
