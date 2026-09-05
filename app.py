@@ -2966,6 +2966,15 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
             st.markdown("### 🔄 Generar Guía de Recepción Interna (GRI)")
             st.info("ℹ️ Use este módulo para ingresos de inventario generados internamente (devoluciones, producción propia, hallazgos o ajustes positivos de bodega).")
 
+            # Identificador único de la empresa en Supabase (Linter Safe)
+            func_tenant = globals().get("get_current_tenant")
+            if callable(func_tenant):
+                tenant_id = func_tenant()
+            else:
+                tenant_id = st.session_state.get("rut_empresa") or st.session_state.get("empresa_activa") or st.session_state.get("negocio")
+            
+            rut_actual = str(tenant_id) if tenant_id else ""
+
             with st.form("form_gri_interno"):
                 col_g1, col_g2 = st.columns(2)
                 with col_g1:
@@ -3007,90 +3016,61 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
                     elif cant_gri <= 0:
                         st.warning("⚠️ La cantidad debe ser mayor a 0.")
                     else:
-                        codigo_gri = prod_gri_sel.split(" - ")[0]
-                        desc_gri = prod_gri_sel.split(" - ")[1]
+                        codigo_gri = prod_gri_sel.split(" - ")[0].strip()
+                        desc_gri = prod_gri_sel.split(" - ")[1].strip()
                         
-                        # 1. Actualizar Stock en base principal
-                        match_gri = df_base[df_base[col_cod].astype(str) == str(codigo_gri)]
-                        if not match_gri.empty:
-                            idx_g = match_gri.index[0]
-                            stock_actual_g = float(df_base.at[idx_g, col_stock]) if col_stock and not pd.isna(df_base.at[idx_g, col_stock]) else 0.0
-                            df_base.at[idx_g, col_stock] = stock_actual_g + cant_gri
-                            df_base.to_excel(archivo_base, index=False)
-
-                        # 2. Registrar en base de lotes si aplica
-                        if maneja_lote_gri == "Sí":
-                            archivo_lotes = os.path.join(ruta_negocio, "base_lotes.xlsx") if 'ruta_negocio' in globals() else "base_lotes.xlsx"
-                            nuevo_reg_lote_gri = pd.DataFrame([{
-                                "Código": codigo_gri,
-                                "Descripción": desc_gri,
-                                "Lote": lote_gri,
-                                "CantidadDisponible": cant_gri,
-                                "FechaVencimiento": venc_gri,
-                                "CostoUnitarioFinal": costo_estimado_gri
-                            }])
-                            if os.path.exists(archivo_lotes):
-                                df_lotes_g = pd.read_excel(archivo_lotes, dtype={'Código': str})
-                                pd.concat([df_lotes_g, nuevo_reg_lote_gri], ignore_index=True).to_excel(archivo_lotes, index=False)
-                            else:
-                                nuevo_reg_lote_gri.to_excel(archivo_lotes, index=False)
-
-                        # 3. Registrar en Registro de Compras/Recepciones como GRI
-                        nuevo_reg_gri_hist = pd.DataFrame([{
-                            "FechaHora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "TipoRecepcion": "GRI",
-                            "Proveedor": f"INTERNO ({motivo_gri})",
-                            "Factura": folio_gri,
-                            "Código": codigo_gri,
-                            "Descripción": desc_gri,
-                            "Cantidad": cant_gri,
-                            "NetoUnitario": costo_estimado_gri,
-                            "SubtotalNeto": cant_gri * costo_estimado_gri,
-                            "IVA": 0.0,
-                            "ImpuestoEspecifico": 0.0,
-                            "CostoTotal": cant_gri * costo_estimado_gri,
-                            "ManejaLote": maneja_lote_gri,
-                            "Lote": lote_gri,
-                            "FechaVencimientoLote": venc_gri,
-                            "Condicion_Pago": "Interno",
-                            "FechaVencimientoPago": str(fecha_gri),
-                            "Banco": "",
-                            "N_Serie": responsable_gri,
-                            "Estado": "Completado"
-                        }])
-                        archivo_compras_path = os.path.join(ruta_negocio, "Registro_Compras.xlsx") if 'ruta_negocio' in globals() else "Registro_Compras.xlsx"
-                        if os.path.exists(archivo_compras_path):
-                            df_ec_g = pd.read_excel(archivo_compras_path, dtype={'Código': str, 'Factura': str})
-                            pd.concat([df_ec_g, nuevo_reg_gri_hist], ignore_index=True).to_excel(archivo_compras_path, index=False)
-                        else:
-                            nuevo_reg_gri_hist.to_excel(archivo_compras_path, index=False)
-
-                        # 🗂️ 4. ARCHIVADOR AUTOMÁTICO GRI (Subdirectorio)
                         try:
-                            dir_arch_gri = os.path.join(ruta_negocio, "archivador_compras", "gri")
-                            os.makedirs(dir_arch_gri, exist_ok=True)
-                            doc_gri_txt = f"""========================================
- GUÍA DE RECEPCIÓN INTERNA (GRI)
-========================================
-FOLIO: {folio_gri}
-MOTIVO: {motivo_gri}
-RESPONSABLE: {responsable_gri}
-FECHA: {fecha_gri}
-----------------------------------------
-PRODUCTO INGRESADO:
-- {desc_gri} (Código: {codigo_gri})
-- Cantidad: {cant_gri}
-- Costo Ref: ${costo_estimado_gri:,.2f}
-- Lote: {lote_gri} (Venc: {venc_gri})
-========================================"""
-                            ruta_doc_gri = os.path.join(dir_arch_gri, f"GRI_{folio_gri}.txt")
-                            with open(ruta_doc_gri, "w", encoding="utf-8") as f_gri:
-                                f_gri.write(doc_gri_txt)
-                        except Exception as e:
-                            print(f"Error archivando GRI: {e}")
+                            # 1. ACTUALIZAR STOCK EN SUPABASE (TABLA 'productos')
+                            res_prod = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(codigo_gri)).execute()
+                            
+                            if res_prod.data:
+                                stock_actual_sb = float(res_prod.data[0].get("stock") or 0.0)
+                                nuevo_stock_sb = stock_actual_sb + float(cant_gri)
+                                
+                                supabase.table("productos").update({"stock": nuevo_stock_sb}).eq("rut_empresa", rut_actual).eq("codigo", str(codigo_gri)).execute()
+                            else:
+                                res_alt = supabase.table("productos").select("stock").eq("codigo", str(codigo_gri)).execute()
+                                if res_alt.data:
+                                    stock_actual_sb = float(res_alt.data[0].get("stock") or 0.0)
+                                    nuevo_stock_sb = stock_actual_sb + float(cant_gri)
+                                    supabase.table("productos").update({"stock": nuevo_stock_sb}).eq("codigo", str(codigo_gri)).execute()
 
-                        st.success(f"✅ ¡GRI #{folio_gri} procesada con éxito! Stock actualizado y documento archivado automáticamente.")
-                        st.rerun()
+                            # 2. REGISTRAR LOTE EN SUPABASE (Si aplica)
+                            if maneja_lote_gri == "Sí":
+                                try:
+                                    supabase.table("lotes").insert([{
+                                        "rut_empresa": rut_actual,
+                                        "codigo_producto": str(codigo_gri),
+                                        "descripcion": desc_gri,
+                                        "lote": lote_gri,
+                                        "cantidad_disponible": float(cant_gri),
+                                        "fecha_vencimiento": str(venc_gri),
+                                        "costo_unitario": float(costo_estimado_gri)
+                                    }]).execute()
+                                except Exception as e_lote:
+                                    print(f"Advertencia al registrar lote en Nube: {e_lote}")
+
+                            # 3. REGISTRAR HISTORIAL DE GRI EN SUPABASE (TABLA 'compras')
+                            supabase.table("compras").insert([{
+                                "rut_empresa": rut_actual,
+                                "tipo_documento": "GRI",
+                                "folio": str(folio_gri),
+                                "codigo_producto": str(codigo_gri),
+                                "descripcion": desc_gri,
+                                "cantidad": float(cant_gri),
+                                "costo_unitario": float(costo_estimado_gri),
+                                "subtotal": float(cant_gri * costo_estimado_gri),
+                                "proveedor": f"INTERNO ({motivo_gri})",
+                                "responsable": responsable_gri,
+                                "fecha": str(fecha_gri),
+                                "lote": lote_gri if maneja_lote_gri == "Sí" else ""
+                            }]).execute()
+
+                            st.success(f"✅ ¡GRI #{folio_gri} guardada en Supabase! Stock actualizado correctamente.")
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"❌ Error al comunicar la GRI con Supabase: {e}")
 
         # --- 3. CREAR PRODUCTO NUEVO (MÓDULO DE COMPRAS) ---
         elif accion_producto == "➕ Crear Producto Nuevo":
