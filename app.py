@@ -3020,27 +3020,20 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
                         desc_gri = prod_gri_sel.split(" - ")[1].strip()
                         
                         try:
-                            # 1. ACTUALIZAR STOCK EN SUPABASE (TABLA 'productos')
-                            res_prod = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(codigo_gri)).execute()
+                            # 1. ACTUALIZAR STOCK EN TABLA 'productos'
+                            res_prod = supabase.table("productos").select("stock").eq("codigo", str(codigo_gri)).execute()
                             
                             if res_prod.data:
                                 stock_actual_sb = float(res_prod.data[0].get("stock") or 0.0)
                                 nuevo_stock_sb = stock_actual_sb + float(cant_gri)
-                                
-                                supabase.table("productos").update({"stock": nuevo_stock_sb}).eq("rut_empresa", rut_actual).eq("codigo", str(codigo_gri)).execute()
-                            else:
-                                res_alt = supabase.table("productos").select("stock").eq("codigo", str(codigo_gri)).execute()
-                                if res_alt.data:
-                                    stock_actual_sb = float(res_alt.data[0].get("stock") or 0.0)
-                                    nuevo_stock_sb = stock_actual_sb + float(cant_gri)
-                                    supabase.table("productos").update({"stock": nuevo_stock_sb}).eq("codigo", str(codigo_gri)).execute()
+                                supabase.table("productos").update({"stock": nuevo_stock_sb}).eq("codigo", str(codigo_gri)).execute()
 
-                            # 2. REGISTRAR LOTE EN SUPABASE (Si aplica)
+                            # 2. REGISTRAR LOTE EN TABLA 'lotes' (Si aplica)
                             if maneja_lote_gri == "Sí":
                                 try:
                                     supabase.table("lotes").insert([{
-                                        "rut_empresa": rut_actual,
-                                        "codigo_producto": str(codigo_gri),
+                                        "id_negocio": rut_actual,
+                                        "codigo": str(codigo_gri),
                                         "descripcion": desc_gri,
                                         "lote": lote_gri,
                                         "cantidad_disponible": float(cant_gri),
@@ -3048,25 +3041,27 @@ TOTAL GRC: ${monto_total_factura_general:,.2f}
                                         "costo_unitario": float(costo_estimado_gri)
                                     }]).execute()
                                 except Exception as e_lote:
-                                    print(f"Advertencia al registrar lote en Nube: {e_lote}")
+                                    print(f"Advertencia al registrar lote: {e_lote}")
 
-                            # 3. REGISTRAR HISTORIAL DE GRI EN SUPABASE (TABLA 'compras')
+                            # 3. REGISTRAR HISTORIAL EN TABLA 'compras' CON ESQUEMA EXACTO
                             supabase.table("compras").insert([{
-                                "rut_empresa": rut_actual,
-                                "tipo_documento": "GRI",
-                                "folio": str(folio_gri),
-                                "codigo_producto": str(codigo_gri),
+                                "fecha_hora": datetime.now().isoformat(),
+                                "tipo_recepcion": "GRI",
+                                "proveedor": f"INTERNO ({motivo_gri})",
+                                "factura": str(folio_gri),
+                                "codigo": str(codigo_gri),
                                 "descripcion": desc_gri,
                                 "cantidad": float(cant_gri),
-                                "costo_unitario": float(costo_estimado_gri),
-                                "subtotal": float(cant_gri * costo_estimado_gri),
-                                "proveedor": f"INTERNO ({motivo_gri})",
-                                "responsable": responsable_gri,
-                                "fecha": str(fecha_gri),
-                                "lote": lote_gri if maneja_lote_gri == "Sí" else ""
+                                "neto_unitario": float(costo_estimado_gri),
+                                "costo_total": float(cant_gri * costo_estimado_gri),
+                                "lote": lote_gri if maneja_lote_gri == "Sí" else "",
+                                "fecha_vencimiento_lote": str(venc_gri) if maneja_lote_gri == "Sí" else "",
+                                "condicion_pago": "Interno",
+                                "id_negocio": rut_actual,
+                                "usuario": responsable_gri
                             }]).execute()
 
-                            st.success(f"✅ ¡GRI #{folio_gri} guardada en Supabase! Stock actualizado correctamente.")
+                            st.success(f"✅ ¡GRI #{folio_gri} guardada con éxito! Stock actualizado en Supabase.")
                             st.rerun()
 
                         except Exception as e:
