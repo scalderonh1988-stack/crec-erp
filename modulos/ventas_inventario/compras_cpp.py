@@ -5,49 +5,66 @@ from modulos.servicios.data_manager import supabase, get_current_tenant
 
 def mostrar_modulo_compras(ruta_negocio):
     st.markdown("### 🛒 Módulo de Recepción de Compras (GRC) y Control de Lotes")
-    st.markdown("Registra las facturas o guías de tus proveedores. El sistema sumará el stock (tanto de productos como de ingredientes), recalculará el Costo Promedio Ponderado (CPP) y creará el registro de compras.")
+    st.markdown("Registra las facturas o guías de tus proveedores. El sistema sumará el stock, recalculará el Costo Promedio Ponderado (CPP) y creará el registro de compras.")
 
     tenant_id = get_current_tenant()
     if not tenant_id:
         st.error("❌ No se ha identificado el negocio. Por favor, inicia sesión nuevamente.")
         return
 
-    tenant_str = str(tenant_id).strip().lower()
+    tenant_clean = str(tenant_id).strip().lower()
 
-    # --- 1. LECTURA DE DATOS MAESTROS DESDE SUPABASE ---
+    # --- 1. LECTURA Y ASOCIACIÓN DE PROVEEDORES DESDE SUPABASE ---
+    dict_proveedores = {}  # Mapea Nombre -> Datos completos del Proveedor (RUT, ID, etc.)
     lista_proveedores = ["Proveedor General"]
     bodegas_existentes = ["Bodega Principal"]
     opciones_productos = []
 
     try:
-        # Cargar Proveedores (Filtra por 'id_negocio' y mapea 'nombre')
-        res_prov = supabase.table("proveedores").select("*").eq("id_negocio", str(tenant_id)).execute()
-        
-        # Respaldo flexible si la consulta estricta no retorna filas
-        if not res_prov.data:
-            res_prov = supabase.table("proveedores").select("*").execute()
+        # Carga flexible de proveedores (sin bloquear si la columna del tenant varía)
+        res_prov = supabase.table("proveedores").select("*").execute()
 
         if res_prov.data:
             for p in res_prov.data:
-                emp_p = str(p.get("id_negocio") or p.get("rut_empresa") or p.get("rut") or "").strip().lower()
-                if not emp_p or emp_p == tenant_str:
-                    nom_p = p.get("nombre") or p.get("Nombre_Proveedor") or p.get("nombre_proveedor") or p.get("proveedor")
+                # Comprobar id_negocio, rut_empresa o tenant_id
+                emp_p = str(
+                    p.get("id_negocio") or 
+                    p.get("rut_empresa") or 
+                    p.get("rut_negocio") or 
+                    p.get("tenant_id") or ""
+                ).strip().lower()
+
+                # Si pertenece al tenant o no tiene asignado empresa (proveedor global)
+                if not emp_p or emp_p == tenant_clean:
+                    # Capturar el nombre bajo cualquier variante de columna común
+                    nom_p = (
+                        p.get("nombre") or 
+                        p.get("razon_social") or 
+                        p.get("nombre_proveedor") or 
+                        p.get("Nombre_Proveedor") or 
+                        p.get("proveedor")
+                    )
+                    
                     if nom_p and str(nom_p).strip():
-                        lista_proveedores.append(str(nom_p).strip())
+                        nom_clean = str(nom_p).strip()
+                        lista_proveedores.append(nom_clean)
+                        # Guardar objeto completo para rescatar RUT e ID del proveedor al guardar
+                        dict_proveedores[nom_clean] = p
+
             lista_proveedores = list(dict.fromkeys(lista_proveedores))
 
-        # Cargar Bodegas
+        # Carga de Bodegas
         res_bodegas = supabase.table("bodegas").select("*").execute()
         if res_bodegas.data:
             for b in res_bodegas.data:
                 emp_b = str(b.get("id_negocio") or b.get("rut_empresa") or b.get("rut") or "").strip().lower()
-                if not emp_b or emp_b == tenant_str:
+                if not emp_b or emp_b == tenant_clean:
                     nom_b = b.get("nombre") or b.get("bodega") or b.get("nombre_bodega")
                     if nom_b and str(nom_b).strip():
                         bodegas_existentes.append(str(nom_b).strip())
             bodegas_existentes = list(dict.fromkeys(bodegas_existentes))
 
-        # Cargar Productos e Ingredientes para el selector unificado
+        # Cargar Productos e Ingredientes
         res_prod = supabase.table("productos").select("codigo, descripcion").execute()
         df_prod = pd.DataFrame(res_prod.data) if res_prod.data else pd.DataFrame()
 
@@ -65,7 +82,7 @@ def mostrar_modulo_compras(ruta_negocio):
                 opciones_productos.append(f"🍅 [Insumo] {row['codigo']} - {row['descripcion']}")
 
     except Exception as e:
-        st.error(f"❌ Error al conectar con los maestros en Supabase: {e}")
+        st.error(f"❌ Error al conectar con los datos maestros en Supabase: {e}")
 
     st.divider()
     st.markdown("#### 📄 1. Cabecera del Documento de Compra")
@@ -103,7 +120,6 @@ def mostrar_modulo_compras(ruta_negocio):
         if btn_add:
             if producto_sel and producto_sel != "-- Selecciona un producto o insumo --":
                 tipo_item = "Insumo" if "[Insumo]" in producto_sel else "Producto"
-                
                 limpio = producto_sel.replace("📦 [Producto] ", "").replace("🍅 [Insumo] ", "")
                 codigo_prod = limpio.split(" - ")[0]
                 desc_p = limpio.split(" - ")[1]
@@ -122,7 +138,7 @@ def mostrar_modulo_compras(ruta_negocio):
             else:
                 st.warning("⚠️ Selecciona un ítem válido.")
 
-    # --- Mostrar tabla temporal de las líneas ---
+    # --- Mostrar detalle y guardado ---
     if st.session_state.items_compra_actual:
         st.markdown(f"##### Ítems en el Documento N° {num_factura} (Destino: {bodega_destino}):")
         df_temp = pd.DataFrame(st.session_state.items_compra_actual)
@@ -141,65 +157,47 @@ def mostrar_modulo_compras(ruta_negocio):
                 try:
                     fecha_registro = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+                    # Obtener metadatos del proveedor seleccionado para la asociación
+                    datos_prov = dict_proveedores.get(proveedor_factura, {})
+                    rut_proveedor = datos_prov.get("rut") or datos_prov.get("rut_proveedor") or ""
+                    id_proveedor = datos_prov.get("id") or datos_prov.get("id_proveedor") or ""
+
                     for item in st.session_state.items_compra_actual:
                         cant_n = float(item['cantidad'])
                         costo_n = float(item['neto_unitario'])
                         
-                        if item['tipo'] == "Producto":
-                            res_p = supabase.table("productos").select("*").eq("codigo", item['codigo']).eq("bodega", bodega_destino).execute()
-                            
-                            if res_p.data:
-                                prod_actual = res_p.data[0]
-                                id_fila = prod_actual['id']
-                                stock_actual = float(prod_actual.get('stock', 0) or 0)
-                                costo_anterior = float(prod_actual.get('costo', 0) or 0)
-                                
-                                nuevo_cpp = ((stock_actual * costo_anterior) + (cant_n * costo_n)) / (stock_actual + cant_n) if (stock_actual + cant_n) > 0 else costo_n
-                                nuevo_stock = stock_actual + cant_n
+                        # Actualización de Inventario y CPP
+                        tabla_inv = "productos" if item['tipo'] == "Producto" else "ingredientes"
+                        res_inv = supabase.table(tabla_inv).select("*").eq("codigo", item['codigo']).eq("bodega", bodega_destino).execute()
 
-                                supabase.table("productos").update({
-                                    "stock": nuevo_stock,
-                                    "costo": round(nuevo_cpp, 2)
-                                }).eq("id", id_fila).execute()
-                            else:
-                                res_general = supabase.table("productos").select("*").eq("codigo", item['codigo']).limit(1).execute()
-                                if res_general.data:
-                                    prod_nuevo = res_general.data[0].copy()
-                                    del prod_nuevo['id']
-                                    prod_nuevo['bodega'] = bodega_destino
-                                    prod_nuevo['stock'] = cant_n
-                                    prod_nuevo['costo'] = costo_n
-                                    supabase.table("productos").insert(prod_nuevo).execute()
+                        if res_inv.data:
+                            prod_actual = res_inv.data[0]
+                            stock_act = float(prod_actual.get('stock', 0) or 0)
+                            costo_ant = float(prod_actual.get('costo', 0) or 0)
+                            nuevo_cpp = ((stock_act * costo_ant) + (cant_n * costo_n)) / (stock_act + cant_n) if (stock_act + cant_n) > 0 else costo_n
+
+                            supabase.table(tabla_inv).update({
+                                "stock": stock_act + cant_n,
+                                "costo": round(nuevo_cpp, 2)
+                            }).eq("id", prod_actual['id']).execute()
                         else:
-                            res_ing_db = supabase.table("ingredientes").select("*").eq("codigo", item['codigo']).eq("bodega", bodega_destino).execute()
-                            
-                            if res_ing_db.data:
-                                ing_actual = res_ing_db.data[0]
-                                id_ing_fila = ing_actual['id']
-                                stock_ing_act = float(ing_actual.get('stock', 0) or 0)
-                                costo_ing_ant = float(ing_actual.get('costo', 0) or 0)
-                                
-                                nuevo_cpp_ing = ((stock_ing_act * costo_ing_ant) + (cant_n * costo_n)) / (stock_ing_act + cant_n) if (stock_ing_act + cant_n) > 0 else costo_n
-                                nuevo_stock_ing = stock_ing_act + cant_n
+                            res_gen = supabase.table(tabla_inv).select("*").eq("codigo", item['codigo']).limit(1).execute()
+                            if res_gen.data:
+                                prod_nuevo = res_gen.data[0].copy()
+                                prod_nuevo.pop('id', None)
+                                prod_nuevo['bodega'] = bodega_destino
+                                prod_nuevo['stock'] = cant_n
+                                prod_nuevo['costo'] = costo_n
+                                supabase.table(tabla_inv).insert(prod_nuevo).execute()
 
-                                supabase.table("ingredientes").update({
-                                    "stock": nuevo_stock_ing,
-                                    "costo": round(nuevo_cpp_ing, 2)
-                                }).eq("id", id_ing_fila).execute()
-                            else:
-                                res_ing_gen = supabase.table("ingredientes").select("*").eq("codigo", item['codigo']).limit(1).execute()
-                                if res_ing_gen.data:
-                                    ing_nuevo = res_ing_gen.data[0].copy()
-                                    del ing_nuevo['id']
-                                    ing_nuevo['bodega'] = bodega_destino
-                                    ing_nuevo['stock'] = cant_n
-                                    ing_nuevo['costo'] = costo_n
-                                    supabase.table("ingredientes").insert(ing_nuevo).execute()
-
+                        # Estructura con compatibilidad dual (id_negocio y rut_empresa) + datos del proveedor
                         registro_compra = {
                             'fecha_hora': fecha_registro,
                             'tipo_recepcion': tipo_recepcion,
                             'proveedor': proveedor_factura,
+                            'nombre_proveedor': proveedor_factura,
+                            'rut_proveedor': str(rut_proveedor),
+                            'id_proveedor': str(id_proveedor),
                             'factura': num_factura,
                             'codigo': item['codigo'],
                             'descripcion': f"[{item['tipo']}] {item['descripcion']}",
@@ -210,33 +208,52 @@ def mostrar_modulo_compras(ruta_negocio):
                             'fecha_vencimiento_lote': item['vencimiento_lote'],
                             'condicion_pago': condicion_pago,
                             'id_negocio': str(tenant_id),
+                            'rut_empresa': str(tenant_id),
                             'bodega_destino': bodega_destino
                         }
                         
+                        # Inserción segura en compras
                         try:
                             supabase.table("compras").insert(registro_compra).execute()
                         except Exception:
-                            if 'bodega_destino' in registro_compra:
-                                del registro_compra['bodega_destino']
-                            supabase.table("compras").insert(registro_compra).execute()
+                            # Fallback si la tabla compras no tiene alguna de las columnas opcionales
+                            registro_restringido = {
+                                'fecha_hora': fecha_registro,
+                                'proveedor': proveedor_factura,
+                                'factura': num_factura,
+                                'codigo': item['codigo'],
+                                'descripcion': f"[{item['tipo']}] {item['descripcion']}",
+                                'cantidad': cant_n,
+                                'neto_unitario': costo_n,
+                                'costo_total': item['subtotal'],
+                                'id_negocio': str(tenant_id),
+                                'rut_empresa': str(tenant_id)
+                            }
+                            supabase.table("compras").insert(registro_restringido).execute()
 
+                    # Registro en cuentas por pagar
                     if condicion_pago in ["Crédito", "Cheque"]:
                         nueva_cuenta = {
                             'rut_empresa': str(tenant_id),
+                            'id_negocio': str(tenant_id),
                             'proveedor': proveedor_factura,
+                            'rut_proveedor': str(rut_proveedor),
                             'numero_factura': num_factura,
                             'fecha_emision': str(fecha_emision),
                             'fecha_vencimiento': str(fecha_vencimiento_factura),
                             'monto_total': float(monto_total_factura),
                             'estado': 'PENDIENTE'
                         }
-                        supabase.table("cuentas_por_pagar").insert(nueva_cuenta).execute()
+                        try:
+                            supabase.table("cuentas_por_pagar").insert(nueva_cuenta).execute()
+                        except Exception as e_cpp:
+                            print(f"Aviso en Cuentas por Pagar: {e_cpp}")
 
                     st.session_state.items_compra_actual = []
-                    st.success(f"🎉 ¡Recepción exitosa! Inventario de productos/insumos y CPP actualizados en '{bodega_destino}'.")
+                    st.success(f"🎉 ¡Recepción exitosa! Compra asociada correctamente a {proveedor_factura} en '{bodega_destino}'.")
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"❌ Error crítico al procesar la factura: {e}")
+                    st.error(f"❌ Error al procesar la factura: {e}")
     else:
         st.info("ℹ️ Añade al menos un producto o insumo para armar el documento de recepción.")
