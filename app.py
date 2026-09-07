@@ -314,30 +314,36 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     except Exception as e:
         st.error(f"⚠️ Error cargando Cuentas por Cobrar desde la nube: {e}")
 
+    # 2. FILTRAR EXCLUSIVAMENTE LAS CUENTAS PENDIENTES (Oculta las 'Pagada' o con Saldo 0)
+    if not df_cxp.empty and "estado" in df_cxp.columns:
+        df_cxp = df_cxp[
+            (df_cxp["estado"].astype(str).str.strip().str.capitalize() == "Pendiente") & 
+            (pd.to_numeric(df_cxp["saldo_pendiente"], errors="coerce") > 0)
+        ].copy()
+
     if df_cxp.empty:
-        st.info("ℹ️ No hay registros de cuentas por cobrar todavía.")
+        st.info("ℹ️ ¡Excelente! No hay registros de cuentas por cobrar pendientes en este momento.")
     else:
-        # 2. Calcular días de atraso en tiempo real
+        # 3. Calcular días de atraso en tiempo real
         if "fecha_vencimiento" in df_cxp.columns:
             hoy = pd.to_datetime(date.today())
             fechas_venc = pd.to_datetime(df_cxp["fecha_vencimiento"], errors='coerce')
             dias_atraso = (hoy - fechas_venc).dt.days
-            # Solo muestra atraso si los días son positivos y el estado es Pendiente
-            df_cxp["DiasAtraso"] = dias_atraso.apply(lambda x: x if x > 0 else 0)
-            df_cxp.loc[df_cxp["estado"] == "Pagada", "DiasAtraso"] = 0 
+            df_cxp["DiasAtraso"] = dias_atraso.apply(lambda x: int(x) if x > 0 else 0)
+        else:
+            df_cxp["DiasAtraso"] = 0
         
-        # 3. Buscador inteligente
+        # 4. Buscador inteligente
         cliente_filtro = st.text_input("🔍 Buscar por Cliente o Folio de Venta:")
         df_filtrado = df_cxp.copy()
         if cliente_filtro:
-            filtro_c = df_filtrado["cliente"].str.contains(cliente_filtro, case=False, na=False)
-            filtro_f = df_filtrado["folio_venta"].str.contains(cliente_filtro, case=False, na=False)
+            filtro_c = df_filtrado["cliente"].astype(str).str.contains(cliente_filtro, case=False, na=False)
+            filtro_f = df_filtrado["folio_venta"].astype(str).str.contains(cliente_filtro, case=False, na=False)
             df_filtrado = df_filtrado[filtro_c | filtro_f]
         
-        # 4. Formatear la tabla visualmente
+        # 5. Formatear la tabla visualmente
         columnas_mostrar = ["folio_venta", "cliente", "monto_total", "saldo_pendiente", "fecha_emision", "fecha_vencimiento", "DiasAtraso", "estado"]
         
-        # Validación de seguridad: asegurarse de que las columnas existan
         columnas_existentes = [col for col in columnas_mostrar if col in df_filtrado.columns]
         
         df_display = df_filtrado[columnas_existentes].rename(columns={
@@ -354,25 +360,27 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         st.dataframe(df_display, use_container_width=True)
         
         # Sumar solo lo que está pendiente
-        total_pendiente = df_filtrado.loc[df_filtrado["estado"] == "Pendiente", "saldo_pendiente"].sum()
+        total_pendiente = pd.to_numeric(df_filtrado["saldo_pendiente"], errors="coerce").sum()
         st.metric(label="💰 Total Dinero en la Calle (Por Cobrar)", value=f"${total_pendiente:,.2f}")
         
         st.divider()
         st.markdown("### 💳 Registrar Abono o Pago")
         
-        # 5. Lógica de pagos (Filtra solo las deudas pendientes, usando .copy() para evitar warnings)
-        deudas_pendientes = df_cxp[df_cxp["estado"] == "Pendiente"].copy()
+        # 6. Lógica de pagos
+        deudas_pendientes = df_cxp.copy()
         
         if not deudas_pendientes.empty:
-            # Crea un listado descriptivo: Folio | Cliente | Saldo
-            deudas_pendientes["etiqueta"] = deudas_pendientes["folio_venta"] + " | " + deudas_pendientes["cliente"] + " | Saldo: $" + deudas_pendientes["saldo_pendiente"].astype(str)
+            deudas_pendientes["etiqueta"] = (
+                deudas_pendientes["folio_venta"].astype(str) + 
+                " | " + deudas_pendientes["cliente"].astype(str) + 
+                " | Saldo: $" + deudas_pendientes["saldo_pendiente"].astype(str)
+            )
             opciones_deuda = deudas_pendientes["etiqueta"].tolist()
             
             deuda_seleccionada = st.selectbox("📌 Selecciona la boleta/factura a abonar:", options=opciones_deuda)
             
-            # Rescata los datos de la fila seleccionada
             folio_seleccionado = deuda_seleccionada.split(" | ")[0]
-            fila_deuda = deudas_pendientes[deudas_pendientes["folio_venta"] == folio_seleccionado].iloc[0]
+            fila_deuda = deudas_pendientes[deudas_pendientes["folio_venta"].astype(str) == str(folio_seleccionado)].iloc[0]
             
             saldo_actual = float(fila_deuda["saldo_pendiente"])
             id_deuda = fila_deuda["id"]
@@ -385,14 +393,13 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                     nuevo_estado = "Pagada" if nuevo_saldo <= 0 else "Pendiente"
                     
                     try:
-                        # Actualizamos la base de datos
                         supabase.table("cuentas_por_cobrar").update({
                             "saldo_pendiente": nuevo_saldo,
                             "estado": nuevo_estado
                         }).eq("id", int(id_deuda)).execute()
                         
                         if nuevo_estado == "Pagada":
-                            st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! El registro se mantendrá en el historial como 'Pagada'.")
+                            st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! La cuenta ha sido retirada de las pendientes.")
                         else:
                             st.success(f"🟢 Abono registrado con éxito. Nuevo saldo pendiente: ${nuevo_saldo:,.2f}")
                         
