@@ -20,18 +20,23 @@ def mostrar_modulo_compras(ruta_negocio):
     opciones_productos = []
 
     try:
-        # Cargar Proveedores (Soporta la columna 'Nombre_Proveedor' e 'id_negocio')
-        res_prov = supabase.table("proveedores").select("*").execute()
+        # Cargar Proveedores (Filtra por 'id_negocio' y mapea 'nombre')
+        res_prov = supabase.table("proveedores").select("*").eq("id_negocio", str(tenant_id)).execute()
+        
+        # Respaldo flexible si la consulta estricta no retorna filas
+        if not res_prov.data:
+            res_prov = supabase.table("proveedores").select("*").execute()
+
         if res_prov.data:
             for p in res_prov.data:
                 emp_p = str(p.get("id_negocio") or p.get("rut_empresa") or p.get("rut") or "").strip().lower()
                 if not emp_p or emp_p == tenant_str:
-                    nom_p = p.get("Nombre_Proveedor") or p.get("nombre_proveedor") or p.get("nombre") or p.get("proveedor")
+                    nom_p = p.get("nombre") or p.get("Nombre_Proveedor") or p.get("nombre_proveedor") or p.get("proveedor")
                     if nom_p and str(nom_p).strip():
                         lista_proveedores.append(str(nom_p).strip())
             lista_proveedores = list(dict.fromkeys(lista_proveedores))
 
-        # Cargar Bodegas (Soporta 'id_negocio' y distintas columnas de nombre)
+        # Cargar Bodegas
         res_bodegas = supabase.table("bodegas").select("*").execute()
         if res_bodegas.data:
             for b in res_bodegas.data:
@@ -42,7 +47,7 @@ def mostrar_modulo_compras(ruta_negocio):
                         bodegas_existentes.append(str(nom_b).strip())
             bodegas_existentes = list(dict.fromkeys(bodegas_existentes))
 
-        # Cargar Productos e Ingredientes
+        # Cargar Productos e Ingredientes para el selector unificado
         res_prod = supabase.table("productos").select("codigo, descripcion").execute()
         df_prod = pd.DataFrame(res_prod.data) if res_prod.data else pd.DataFrame()
 
