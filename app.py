@@ -303,7 +303,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     rut_actual = st.session_state.get("negocio_seleccionado")
 
     st.markdown("### 📊 Estado de Deudas Pendientes y Abonos")
-    st.info("💡 Este módulo está conectado en tiempo real a la caja registradora. Las ventas a crédito y consignación aparecen aquí automáticamente.")
+    st.info("💡 Este módulo está conectado en tiempo real a la caja registradora. Las ventas a crédito y consignaciones de cualquier documento aparecen aquí automáticamente.")
 
     # 1. Leer desde Supabase
     df_cxp = pd.DataFrame()
@@ -314,12 +314,16 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     except Exception as e:
         st.error(f"⚠️ Error cargando Cuentas por Cobrar desde la nube: {e}")
 
-    # 2. FILTRAR EXCLUSIVAMENTE LAS CUENTAS PENDIENTES (Oculta las 'Pagada' o con Saldo 0)
-    if not df_cxp.empty and "estado" in df_cxp.columns:
-        df_cxp = df_cxp[
-            (df_cxp["estado"].astype(str).str.strip().str.capitalize() == "Pendiente") & 
-            (pd.to_numeric(df_cxp["saldo_pendiente"], errors="coerce") > 0)
-        ].copy()
+    # 2. FILTRAR EXCLUSIVAMENTE LAS CUENTAS PENDIENTES (Oculta las 'Pagada' o con Saldo <= 0)
+    if not df_cxp.empty:
+        # Asegurar conversión numérica limpia para el saldo pendiente
+        df_cxp["saldo_pendiente"] = pd.to_numeric(df_cxp["saldo_pendiente"], errors="coerce").fillna(0)
+        
+        # Filtra cualquier registro que tenga saldo pendiente y que no esté marcado como 'Pagada'
+        condicion_estado = df_cxp["estado"].astype(str).str.strip().str.capitalize() != "Pagada"
+        condicion_saldo = df_cxp["saldo_pendiente"] > 0
+        
+        df_cxp = df_cxp[condicion_estado & condicion_saldo].copy()
 
     if df_cxp.empty:
         st.info("ℹ️ ¡Excelente! No hay registros de cuentas por cobrar pendientes en este momento.")
@@ -333,7 +337,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         else:
             df_cxp["DiasAtraso"] = 0
         
-        # 4. Buscador inteligente
+        # 4. Buscador inteligente por Cliente o Folio
         cliente_filtro = st.text_input("🔍 Buscar por Cliente o Folio de Venta:")
         df_filtrado = df_cxp.copy()
         if cliente_filtro:
@@ -343,7 +347,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         
         # 5. Formatear la tabla visualmente
         columnas_mostrar = ["folio_venta", "cliente", "monto_total", "saldo_pendiente", "fecha_emision", "fecha_vencimiento", "DiasAtraso", "estado"]
-        
         columnas_existentes = [col for col in columnas_mostrar if col in df_filtrado.columns]
         
         df_display = df_filtrado[columnas_existentes].rename(columns={
@@ -359,14 +362,14 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         
         st.dataframe(df_display, use_container_width=True)
         
-        # Sumar solo lo que está pendiente
-        total_pendiente = pd.to_numeric(df_filtrado["saldo_pendiente"], errors="coerce").sum()
+        # Métricas principales
+        total_pendiente = df_filtrado["saldo_pendiente"].sum()
         st.metric(label="💰 Total Dinero en la Calle (Por Cobrar)", value=f"${total_pendiente:,.2f}")
         
         st.divider()
         st.markdown("### 💳 Registrar Abono o Pago")
         
-        # 6. Lógica de pagos (Sincronizada con las búsquedas y el listado de pendientes)
+        # 6. Lógica de abonos y eliminación de pagados
         deudas_opciones = df_filtrado if not df_filtrado.empty else df_cxp
         
         if not deudas_opciones.empty:
@@ -378,7 +381,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             )
             opciones_deuda = deudas_opciones["etiqueta"].tolist()
             
-            deuda_seleccionada = st.selectbox("📌 Selecciona la boleta/factura a abonar:", options=opciones_deuda)
+            deuda_seleccionada = st.selectbox("📌 Selecciona el documento/venta a abonar:", options=opciones_deuda)
             
             folio_seleccionado = deuda_seleccionada.split(" | ")[0]
             fila_deuda = deudas_opciones[deudas_opciones["folio_venta"].astype(str) == str(folio_seleccionado)].iloc[0]
@@ -391,17 +394,18 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             if st.button("✅ Registrar Abono en la Nube", use_container_width=True, type="primary"):
                 if monto_abono > 0:
                     nuevo_saldo = saldo_actual - monto_abono
-                    nuevo_estado = "Pagada" if nuevo_saldo <= 0 else "Pendiente"
                     
                     try:
-                        supabase.table("cuentas_por_cobrar").update({
-                            "saldo_pendiente": nuevo_saldo,
-                            "estado": nuevo_estado
-                        }).eq("id", id_deuda).execute()
-                        
-                        if nuevo_estado == "Pagada":
-                            st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! La cuenta ha sido retirada de las pendientes.")
+                        if nuevo_saldo <= 0:
+                            # Si el monto liquida la totalidad de la deuda, se elimina directamente el registro
+                            supabase.table("cuentas_por_cobrar").delete().eq("id", id_deuda).execute()
+                            st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! La cuenta ha sido eliminada del listado de pendientes.")
                         else:
+                            # Si es un abono parcial, actualiza el saldo restante
+                            supabase.table("cuentas_por_cobrar").update({
+                                "saldo_pendiente": nuevo_saldo,
+                                "estado": "Pendiente"
+                            }).eq("id", id_deuda).execute()
                             st.success(f"🟢 Abono registrado con éxito. Nuevo saldo pendiente: ${nuevo_saldo:,.2f}")
                         
                         st.rerun()
@@ -4043,46 +4047,45 @@ elif menu == "💰 Módulo de Ventas (POS)":
     )
     controlar_stock = "Estricto" in modo_inventario
 
-    # --- 8. SELECCIÓN DE CLIENTES ---
+    # --- 8. SELECCIÓN DE CLIENTES (UNIFICADO PARA CUALQUIER TIPO DE DOCUMENTO Y FORMA DE PAGO) ---
     cliente_nombre, cliente_rut = "", ""
-    if tipo_documento in ["Factura Electrónica", "Guía de Despacho"]:
-        try:
-            res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", rut_actual).execute()
-            df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
-        except Exception:
-            df_clientes_pos = pd.DataFrame()
+    try:
+        res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", rut_actual).execute()
+        df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
+    except Exception:
+        df_clientes_pos = pd.DataFrame()
 
-        c_nombre_def = st.session_state.get("cliente_preseleccionado", "")
-        c_rut_def = ""
+    c_nombre_def = st.session_state.get("cliente_preseleccionado", "")
+    c_rut_def = ""
+    
+    if c_nombre_def and not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
+        match_rut = df_clientes_pos[df_clientes_pos["nombre"] == c_nombre_def]
+        if not match_rut.empty:
+            c_rut_def = str(match_rut.iloc[0]["rut"])
+
+    lista_clientes = []
+    if not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
+        df_clientes_pos["etiqueta"] = df_clientes_pos["nombre"].astype(str) + " (" + df_clientes_pos["rut"].astype(str) + ")"
+        lista_clientes = df_clientes_pos["etiqueta"].tolist()
         
-        if c_nombre_def and not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
-            match_rut = df_clientes_pos[df_clientes_pos["nombre"] == c_nombre_def]
-            if not match_rut.empty:
-                c_rut_def = str(match_rut.iloc[0]["rut"])
+    lista_clientes.insert(0, "-- Selecciona un cliente (Opcional / Requerido para Crédito o Consignación) --")
+    
+    idx_cliente = 0
+    if c_nombre_def:
+        for i, etiqueta in enumerate(lista_clientes):
+            if etiqueta.startswith(c_nombre_def + " ("):
+                idx_cliente = i
+                break
 
-        lista_clientes = []
-        if not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
-            df_clientes_pos["etiqueta"] = df_clientes_pos["nombre"].astype(str) + " (" + df_clientes_pos["rut"].astype(str) + ")"
-            lista_clientes = df_clientes_pos["etiqueta"].tolist()
-            
-        lista_clientes.insert(0, "-- Selecciona un cliente --")
-        
-        idx_cliente = 0
-        if c_nombre_def:
-            for i, etiqueta in enumerate(lista_clientes):
-                if etiqueta.startswith(c_nombre_def + " ("):
-                    idx_cliente = i
-                    break
-
-        cliente_elegido = st.selectbox("👤 Selecciona un cliente registrado:", lista_clientes, index=idx_cliente)
-      
-        if cliente_elegido and cliente_elegido != "-- Selecciona un cliente --" and " (" in cliente_elegido:
-            cliente_nombre = cliente_elegido.split(" (")[0]
-            cliente_rut = cliente_elegido.split(" (")[1].replace(")", "")
-        else:
-            col_f1, col_f2 = st.columns(2)
-            with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def)
-            with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def)
+    cliente_elegido = st.selectbox("👤 Selecciona o asigna un cliente:", lista_clientes, index=idx_cliente)
+  
+    if cliente_elegido and cliente_elegido != "-- Selecciona un cliente (Opcional / Requerido para Crédito o Consignación) --" and " (" in cliente_elegido:
+        cliente_nombre = cliente_elegido.split(" (")[0]
+        cliente_rut = cliente_elegido.split(" (")[1].replace(")", "")
+    else:
+        col_f1, col_f2 = st.columns(2)
+        with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def, placeholder="Ej: Juan Pérez / Empresa SpA")
+        with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def, placeholder="Ej: 12.345.678-9")
 
     # =========================================================================
     # --- VISTA 1: PANTALLA DE ÉXITO ---
@@ -4143,7 +4146,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 else:
                     st.error("🔴 Monto insuficiente.")
             elif forma_pago in ["Crédito", "Consignación"]:
-                st.warning(f"⚖️ Esta venta en {forma_pago} se enviará automáticamente al módulo de Cuentas por Cobrar.")
+                st.warning(f"⚖️ Esta venta en {forma_pago} se enviará automáticamente al módulo de Cuentas por Cobrar (independiente del tipo de documento).")
                 dias_credito = st.number_input(f"⏳ Días de Plazo para pagar ({forma_pago}):", min_value=1, value=30, step=1)
                 fecha_estimada = datetime.now() + timedelta(days=dias_credito)
                 st.info(f"📅 Fecha de vencimiento calculada: **{fecha_estimada.strftime('%d/%m/%Y')}**")
@@ -4281,14 +4284,14 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             st.error(f"❌ Error al registrar las líneas de venta: {e}")
                             st.stop()
 
-                        # Inserción en Cuentas por Cobrar para Crédito y Consignación
+                        # Inserción universal en Cuentas por Cobrar para Crédito y Consignación (Indistinto del Tipo de Documento)
                         if forma_pago in ["Crédito", "Consignación"]:
                             fecha_vencimiento_str = (fecha_hora_actual + timedelta(days=dias_credito)).strftime("%Y-%m-%d")
                             registro_cxc = {
                                 "rut_empresa": rut_actual,
-                                "folio_venta": transaccion_id_actual,
-                                "cliente": cliente_nombre if cliente_nombre else "Cliente General",
-                                "rut_cliente": cliente_rut if cliente_rut else "Sin RUT",
+                                "folio_venta": str(transaccion_id_actual),
+                                "cliente": cliente_nombre.strip() if cliente_nombre and cliente_nombre.strip() else "Cliente General",
+                                "rut_cliente": cliente_rut.strip() if cliente_rut and cliente_rut.strip() else "Sin RUT",
                                 "monto_total": float(total_venta),
                                 "saldo_pendiente": float(total_venta),
                                 "fecha_emision": fecha_emision_venta.strftime("%Y-%m-%d"),
@@ -4320,7 +4323,7 @@ FOLIO N°: {numero_folio_actual}
 FECHA EMISIÓN: {fecha_emision_venta.strftime('%d/%m/%Y')}
 TERMINAL: {caja_actual}
 ----------------------------------------
-{('CLIENTE: ' + cliente_nombre + ' | RUT: ' + cliente_rut + '\n----------------------------------------\n') if tipo_documento in ['Factura Electrónica', 'Guía de Despacho'] else ''}DETALLE:
+{('CLIENTE: ' + cliente_nombre + (' | RUT: ' + cliente_rut if cliente_rut else '') + '\n----------------------------------------\n') if cliente_nombre else ''}DETALLE:
 {lineas_productos}----------------------------------------
 SUBTOTAL NETO: ${total_neto_ticket:,.2f}
 IVA ({iva_porcentaje:g}%): ${total_iva_ticket:,.2f}
