@@ -300,33 +300,40 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
 # ----------------- SECCIÓN CUENTAS POR COBRAR (NUBE) -----------------
 def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     mostrar_encabezado_con_home("📑 Gestión de Cuentas por Cobrar")
-    rut_actual = st.session_state.get("negocio_seleccionado")
+    rut_actual = str(st.session_state.get("negocio_seleccionado", "")).strip()
+
+    if not rut_actual:
+        st.error("⚠️ No hay un negocio seleccionado en la sesión.")
+        st.stop()
 
     st.markdown("### 📊 Estado de Deudas Pendientes y Abonos")
     st.info("💡 Este módulo está conectado en tiempo real a la caja registradora. Las ventas a crédito y consignaciones de cualquier documento aparecen aquí automáticamente.")
 
-    # 1. Leer desde Supabase
+    # 1. Leer desde Supabase estandarizando el RUT
     df_cxp = pd.DataFrame()
     try:
         res_cxc = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual).execute()
         if res_cxc.data:
             df_cxp = pd.DataFrame(res_cxc.data)
+        else:
+            # Reintento de respaldo sin espacios por inconsistencias de formato de RUT
+            res_cxc_alt = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+            if res_cxc_alt.data:
+                df_cxp = pd.DataFrame(res_cxc_alt.data)
     except Exception as e:
         st.error(f"⚠️ Error cargando Cuentas por Cobrar desde la nube: {e}")
 
-    # 2. FILTRAR EXCLUSIVAMENTE LAS CUENTAS PENDIENTES (Oculta las 'Pagada' o con Saldo <= 0)
+    # 2. Filtrar exclusivamente deudas pendientes con saldo positivo
     if not df_cxp.empty:
-        # Asegurar conversión numérica limpia para el saldo pendiente
         df_cxp["saldo_pendiente"] = pd.to_numeric(df_cxp["saldo_pendiente"], errors="coerce").fillna(0)
+        df_cxp["monto_total"] = pd.to_numeric(df_cxp["monto_total"], errors="coerce").fillna(0)
         
-        # Filtra cualquier registro que tenga saldo pendiente y que no esté marcado como 'Pagada'
         condicion_estado = df_cxp["estado"].astype(str).str.strip().str.capitalize() != "Pagada"
         condicion_saldo = df_cxp["saldo_pendiente"] > 0
-        
         df_cxp = df_cxp[condicion_estado & condicion_saldo].copy()
 
     if df_cxp.empty:
-        st.info("ℹ️ ¡Excelente! No hay registros de cuentas por cobrar pendientes en este momento.")
+        st.info("ℹ️ ¡Excelente! No hay registros de cuentas por cobrar pendientes para este negocio.")
     else:
         # 3. Calcular días de atraso en tiempo real
         if "fecha_vencimiento" in df_cxp.columns:
@@ -346,12 +353,13 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             df_filtrado = df_filtrado[filtro_c | filtro_f]
         
         # 5. Formatear la tabla visualmente
-        columnas_mostrar = ["folio_venta", "cliente", "monto_total", "saldo_pendiente", "fecha_emision", "fecha_vencimiento", "DiasAtraso", "estado"]
+        columnas_mostrar = ["folio_venta", "cliente", "rut_cliente", "monto_total", "saldo_pendiente", "fecha_emision", "fecha_vencimiento", "DiasAtraso", "estado"]
         columnas_existentes = [col for col in columnas_mostrar if col in df_filtrado.columns]
         
         df_display = df_filtrado[columnas_existentes].rename(columns={
             "folio_venta": "Folio Venta",
             "cliente": "Cliente",
+            "rut_cliente": "RUT Cliente",
             "monto_total": "Monto Original",
             "saldo_pendiente": "Saldo Pendiente",
             "fecha_emision": "Emisión",
@@ -369,13 +377,12 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         st.divider()
         st.markdown("### 💳 Registrar Abono o Pago")
         
-        # 6. Lógica de abonos y eliminación de pagados
-        deudas_opciones = df_filtrado if not df_filtrado.empty else df_cxp
+        # 6. Lógica de abonos
+        deudas_opciones = df_filtrado.copy() if not df_filtrado.empty else df_cxp.copy()
         
         if not deudas_opciones.empty:
-            deudas_opciones = deudas_opciones.copy()
             deudas_opciones["etiqueta"] = (
-                deudas_opciones["folio_venta"].astype(str) + 
+                "Folio: " + deudas_opciones["folio_venta"].astype(str) + 
                 " | " + deudas_opciones["cliente"].astype(str) + 
                 " | Saldo: $" + deudas_opciones["saldo_pendiente"].astype(str)
             )
@@ -383,7 +390,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             
             deuda_seleccionada = st.selectbox("📌 Selecciona el documento/venta a abonar:", options=opciones_deuda)
             
-            folio_seleccionado = deuda_seleccionada.split(" | ")[0]
+            folio_seleccionado = deuda_seleccionada.split(" | ")[0].replace("Folio: ", "").strip()
             fila_deuda = deudas_opciones[deudas_opciones["folio_venta"].astype(str) == str(folio_seleccionado)].iloc[0]
             
             saldo_actual = float(fila_deuda["saldo_pendiente"])
@@ -397,11 +404,9 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                     
                     try:
                         if nuevo_saldo <= 0:
-                            # Si el monto liquida la totalidad de la deuda, se elimina directamente el registro
                             supabase.table("cuentas_por_cobrar").delete().eq("id", id_deuda).execute()
-                            st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! La cuenta ha sido eliminada del listado de pendientes.")
+                            st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! Registro eliminado.")
                         else:
-                            # Si es un abono parcial, actualiza el saldo restante
                             supabase.table("cuentas_por_cobrar").update({
                                 "saldo_pendiente": nuevo_saldo,
                                 "estado": "Pendiente"
@@ -413,8 +418,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                         st.error(f"❌ Error al registrar el abono en la nube: {e}")
                 else:
                     st.warning("⚠️ Ingresa un monto mayor a cero.")
-        else:
-            st.info("ℹ️ ¡Excelente! No hay clientes con deudas pendientes.")
 
 def mostrar_modulo_registro_gastos(supabase):
     st.markdown("### 📋 Registro y Control de Gastos")
