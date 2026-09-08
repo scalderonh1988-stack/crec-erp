@@ -1,13 +1,14 @@
 import os
+import shutil
+from pathlib import Path
 import pandas as pd
 import streamlit as st
-from pathlib import Path
-import shutil
-from supabase import create_client, Client
+from supabase import Client, create_client
 
 # --- CONFIGURACIÓN DE LA NUBE (SUPABASE) ---
 SUPABASE_URL = "https://dmkjlcjrobszhwasrofc.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRta2psY2pyb2Jzemh3YXNyb2ZjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjA1NjY3OCwiZXhwIjoyMTAxNjMyNjc4fQ.PSk-oNFl16Inaidztx3ixOz0ahzQuV1SvF4CBhl44gg"
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 BASE_TENANTS_DIR = "clientes"
@@ -15,7 +16,7 @@ BASE_TENANTS_DIR = "clientes"
 def get_current_tenant() -> str:
     """
     Obtiene el identificador exacto del negocio activo (RUT o Tenant ID)
-    desde cualquier variable de sesión posible en Streamlit.
+    desde cualquier variable de sesión posible en Streamlit o desde los permisos.
     """
     keys_to_check = [
         "negocio_actual", "negocio_seleccionado", "tenant_id", 
@@ -26,12 +27,19 @@ def get_current_tenant() -> str:
     for key in keys_to_check:
         if key in st.session_state and st.session_state[key]:
             val = st.session_state[key]
-            # Si en la sesión se guardó un diccionario completo con datos
             if isinstance(val, dict):
                 val = val.get("rut") or val.get("rut_empresa") or val.get("tenant_id") or val.get("id") or ""
             val = str(val).strip()
             if val and val.lower() != "admin_general":
                 return val
+
+    # Respaldo: Recuperar desde permisos_usuario si se pierde la clave principal
+    permisos = st.session_state.get("permisos_usuario", {})
+    if isinstance(permisos, dict):
+        negocios = permisos.get("negocios", [])
+        if negocios and len(negocios) > 0:
+            return str(negocios[0]).strip()
+
     return ""
 
 def get_tenant_path(filename: str) -> str:
@@ -156,17 +164,20 @@ def cargar_maestro_clientes():
                 continue
                 
         if not respuesta_data:
-            res_general = supabase.table("clientes").select("*").execute()
-            if res_general.data:
-                for cliente in res_general.data:
-                    empresa_cliente = str(
-                        cliente.get("rut_empresa") or 
-                        cliente.get("id_negocio") or 
-                        cliente.get("rut_negocio") or 
-                        cliente.get("negocio_id") or ""
-                    ).strip()
-                    if empresa_cliente == tenant_id:
-                        respuesta_data.append(cliente)
+            try:
+                res_general = supabase.table("clientes").select("*").execute()
+                if res_general.data:
+                    for cliente in res_general.data:
+                        empresa_cliente = str(
+                            cliente.get("rut_empresa") or 
+                            cliente.get("id_negocio") or 
+                            cliente.get("rut_negocio") or 
+                            cliente.get("negocio_id") or ""
+                        ).strip()
+                        if empresa_cliente == tenant_id:
+                            respuesta_data.append(cliente)
+            except Exception:
+                pass
 
         if not respuesta_data:
             return {}

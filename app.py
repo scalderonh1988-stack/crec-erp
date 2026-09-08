@@ -11,6 +11,7 @@ from supabase import create_client, Client
 from fpdf import FPDF
 from PIL import Image
 from werkzeug.security import generate_password_hash
+from modulos.servicios.data_manager import get_current_tenant
 
 # --- MÓDULOS REESTRUCTURADOS ---
 
@@ -3895,15 +3896,24 @@ elif menu == "⚙️ Configuración General":
                 except Exception as e:
                     st.error(f"❌ Ocurrió un error al procesar el archivo: {e}")
 
+
 # ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO) -----------------
 elif menu == "💰 Módulo de Ventas (POS)":
 
     # --- 🛡️ 1. GUARDIA DE SESIÓN Y ATRIBUTOS BÁSICOS ---
-    rut_actual = st.session_state.get("negocio_seleccionado")
-    if not rut_actual:
+    rut_actual = get_current_tenant()
+
+if not rut_actual:
+    # Intentar recuperar el primer negocio asociado al usuario si existe en permisos
+    permisos = st.session_state.get("permisos_usuario", {})
+    negocios = permisos.get("negocios", []) if isinstance(permisos, dict) else []
+    
+    if negocios:
+        rut_actual = str(negocios[0]).replace(".", "").strip()
+        st.session_state["negocio_seleccionado"] = rut_actual
+    else:
         st.error("⚠️ No se ha detectado ningún negocio seleccionado en la sesión. Selecciona una empresa en el menú principal.")
         st.stop()
-
     caja_actual = param_caja if ('param_caja' in locals() and param_caja) else "Caja Principal"
     mostrar_encabezado_con_home(f"Terminal de Ventas - {caja_actual}")
 
@@ -3917,24 +3927,35 @@ elif menu == "💰 Módulo de Ventas (POS)":
     if "precio_actual_input" not in st.session_state: st.session_state.precio_actual_input = 0.0
 
     # --- 3. SELECTOR MULTI-BODEGA PARA EL POS ---
-    bodegas_pos = ["Bodega Principal"]
-    try:
-        res_bod = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_actual).execute()
-        if res_bod.data:
-            for r in res_bod.data:
-                nb = str(r.get("nombre", "")).strip(' "\'')
-                if nb and nb not in bodegas_pos:
-                    bodegas_pos.append(nb)
-    except Exception:
-        pass
-        
-    bodega_actual = st.selectbox("🏢 Selecciona la Bodega / Sucursal de origen:", bodegas_pos)
-    st.markdown("---")
+    rut_limpio = str(rut_actual if 'rut_actual' in locals() else get_current_tenant()).replace(".", "").strip()
 
+    bodegas_pos = []
+
+    if rut_limpio:
+        try:
+            res_bod = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_limpio).execute()
+            if res_bod.data:
+                for r in res_bod.data:
+                    nb = str(r.get("nombre", "")).strip(' "\'')
+                    if nb and nb not in bodegas_pos:
+                        bodegas_pos.append(nb)
+        except Exception:
+            pass
+
+    if not bodegas_pos:
+        bodegas_pos = ["Bodega Principal"]
+
+    bodega_actual = st.selectbox(
+        "🏢 Selecciona la Bodega / Sucursal de origen:",
+        options=bodegas_pos,
+        key="bodega_pos_seleccionada"
+    )
+
+    st.markdown("---")
     # --- 4. CARGA PREVIA DEL INVENTARIO (CRÍTICO PARA EL ESCÁNER) ---
     df_nube = pd.DataFrame()
     try:
-        res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", rut_actual).eq("bodega", bodega_actual).limit(10000).execute()
+        res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", str(rut_actual)).eq("bodega", bodega_actual).limit(10000).execute()
         if res_pos.data:
             df_nube = pd.DataFrame(res_pos.data)
             st.session_state.df_nube_pos = df_nube
@@ -4012,7 +4033,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 if st.button("📥 Cargar Guía", use_container_width=True):
                     if folio_guia_a_facturar:
                         try:
-                            res_guia = supabase.table("ventas").select("*").eq("rut_empresa", rut_actual).eq("folio", folio_guia_a_facturar.strip()).execute()
+                            res_guia = supabase.table("ventas").select("*").eq("rut_empresa", str(rut_actual)).eq("folio", folio_guia_a_facturar.strip()).execute()
                             if res_guia.data:
                                 st.session_state.carrito_ventas = []
                                 st.session_state.folio_guia_origen = folio_guia_a_facturar.strip()
@@ -4021,13 +4042,13 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                     st.session_state.cliente_preseleccionado = cliente_de_guia
 
                                 for item in res_guia.data:
-                                    cant = float(item["cantidad"])
-                                    monto_total = float(item["monto"])
+                                    cant = float(item.get("cantidad", 1))
+                                    monto_total = float(item.get("monto", 0))
                                     precio_unitario = monto_total / cant if cant > 0 else 0
                                     
                                     st.session_state.carrito_ventas.append({
-                                        "Código": item["codigo_producto"],
-                                        "Descripción": item["detalle"],
+                                        "Código": item.get("codigo_producto", ""),
+                                        "Descripción": item.get("detalle", "Producto"),
                                         "Cantidad": cant,
                                         "Precio Unitario": precio_unitario,
                                         "Subtotal": monto_total,
@@ -4053,7 +4074,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
     # --- 8. SELECCIÓN DE CLIENTES (UNIFICADO PARA CUALQUIER TIPO DE DOCUMENTO Y FORMA DE PAGO) ---
     cliente_nombre, cliente_rut = "", ""
     try:
-        res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", rut_actual).execute()
+        res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", str(rut_actual)).execute()
         df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
     except Exception:
         df_clientes_pos = pd.DataFrame()
@@ -4168,14 +4189,14 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         fecha_hora_actual = datetime.now()
                         
                         try:
-                            res_f = supabase.table("folios_empresa").select("ultimo_folio_usado").eq("rut_empresa", rut_actual).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
+                            res_f = supabase.table("folios_empresa").select("ultimo_folio_usado").eq("rut_empresa", str(rut_actual)).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
                             if res_f.data and len(res_f.data) > 0:
                                 numero_folio_actual = int(res_f.data[0]["ultimo_folio_usado"]) + 1
-                                supabase.table("folios_empresa").update({"ultimo_folio_usado": numero_folio_actual}).eq("rut_empresa", rut_actual).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
+                                supabase.table("folios_empresa").update({"ultimo_folio_usado": numero_folio_actual}).eq("rut_empresa", str(rut_actual)).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
                             else:
                                 numero_folio_actual = 1
                                 supabase.table("folios_empresa").insert({
-                                    "rut_empresa": rut_actual,
+                                    "rut_empresa": str(rut_actual),
                                     "tipo_documento": tipo_documento,
                                     "modo": modo_str,
                                     "ultimo_folio_usado": numero_folio_actual
@@ -4189,8 +4210,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         folio_origen = st.session_state.get("folio_guia_origen")
                         if folio_origen and tipo_documento == "Factura Electrónica":
                             try:
-                                supabase.table("ventas").delete().eq("rut_empresa", rut_actual).eq("folio", folio_origen).execute()
-                                supabase.table("cuentas_por_cobrar").delete().eq("rut_empresa", rut_actual).eq("folio_venta", folio_origen).execute()
+                                supabase.table("ventas").delete().eq("rut_empresa", str(rut_actual)).eq("folio", folio_origen).execute()
+                                supabase.table("cuentas_por_cobrar").delete().eq("rut_empresa", str(rut_actual)).eq("folio_venta", folio_origen).execute()
                             except Exception:
                                 pass 
                         
@@ -4215,7 +4236,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                     codigo_vendido = str(item["Código"])
                                     cantidad_vendida = float(item["Cantidad"])
 
-                                    res_receta_pos = supabase.table("recetas").select("*").eq("rut_empresa", rut_actual).eq("codigo_producto_final", codigo_vendido).execute()
+                                    res_receta_pos = supabase.table("recetas").select("*").eq("rut_empresa", str(rut_actual)).eq("codigo_producto_final", codigo_vendido).execute()
                                     
                                     if res_receta_pos.data:
                                         for componente in res_receta_pos.data:
@@ -4261,7 +4282,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
                             registros_ventas_batch.append({
                                 "folio": transaccion_id_actual,
-                                "rut_empresa": rut_actual,
+                                "rut_empresa": str(rut_actual),
                                 "fecha": fecha_emision_venta.strftime("%Y-%m-%d") + fecha_hora_actual.strftime(" %H:%M:%S"),
                                 "caja": caja_actual, 
                                 "documento": tipo_documento,
@@ -4291,7 +4312,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         if forma_pago in ["Crédito", "Consignación"]:
                             fecha_vencimiento_str = (fecha_hora_actual + timedelta(days=dias_credito)).strftime("%Y-%m-%d")
                             registro_cxc = {
-                                "rut_empresa": rut_actual,
+                                "rut_empresa": str(rut_actual),
                                 "folio_venta": str(transaccion_id_actual),
                                 "cliente": cliente_nombre.strip() if cliente_nombre and cliente_nombre.strip() else "Cliente General",
                                 "rut_cliente": cliente_rut.strip() if cliente_rut and cliente_rut.strip() else "Sin RUT",
