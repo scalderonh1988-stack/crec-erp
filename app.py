@@ -303,7 +303,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     rut_actual = st.session_state.get("negocio_seleccionado")
 
     st.markdown("### 📊 Estado de Deudas Pendientes y Abonos")
-    st.info("💡 Este módulo está conectado en tiempo real a la caja registradora. Las ventas a crédito aparecen aquí automáticamente.")
+    st.info("💡 Este módulo está conectado en tiempo real a la caja registradora. Las ventas a crédito y consignación aparecen aquí automáticamente.")
 
     # 1. Leer desde Supabase
     df_cxp = pd.DataFrame()
@@ -329,7 +329,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             hoy = pd.to_datetime(date.today())
             fechas_venc = pd.to_datetime(df_cxp["fecha_vencimiento"], errors='coerce')
             dias_atraso = (hoy - fechas_venc).dt.days
-            df_cxp["DiasAtraso"] = dias_atraso.apply(lambda x: int(x) if x > 0 else 0)
+            df_cxp["DiasAtraso"] = dias_atraso.apply(lambda x: int(x) if pd.notnull(x) and x > 0 else 0)
         else:
             df_cxp["DiasAtraso"] = 0
         
@@ -366,21 +366,22 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         st.divider()
         st.markdown("### 💳 Registrar Abono o Pago")
         
-        # 6. Lógica de pagos
-        deudas_pendientes = df_cxp.copy()
+        # 6. Lógica de pagos (Sincronizada con las búsquedas y el listado de pendientes)
+        deudas_opciones = df_filtrado if not df_filtrado.empty else df_cxp
         
-        if not deudas_pendientes.empty:
-            deudas_pendientes["etiqueta"] = (
-                deudas_pendientes["folio_venta"].astype(str) + 
-                " | " + deudas_pendientes["cliente"].astype(str) + 
-                " | Saldo: $" + deudas_pendientes["saldo_pendiente"].astype(str)
+        if not deudas_opciones.empty:
+            deudas_opciones = deudas_opciones.copy()
+            deudas_opciones["etiqueta"] = (
+                deudas_opciones["folio_venta"].astype(str) + 
+                " | " + deudas_opciones["cliente"].astype(str) + 
+                " | Saldo: $" + deudas_opciones["saldo_pendiente"].astype(str)
             )
-            opciones_deuda = deudas_pendientes["etiqueta"].tolist()
+            opciones_deuda = deudas_opciones["etiqueta"].tolist()
             
             deuda_seleccionada = st.selectbox("📌 Selecciona la boleta/factura a abonar:", options=opciones_deuda)
             
             folio_seleccionado = deuda_seleccionada.split(" | ")[0]
-            fila_deuda = deudas_pendientes[deudas_pendientes["folio_venta"].astype(str) == str(folio_seleccionado)].iloc[0]
+            fila_deuda = deudas_opciones[deudas_opciones["folio_venta"].astype(str) == str(folio_seleccionado)].iloc[0]
             
             saldo_actual = float(fila_deuda["saldo_pendiente"])
             id_deuda = fila_deuda["id"]
@@ -396,7 +397,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                         supabase.table("cuentas_por_cobrar").update({
                             "saldo_pendiente": nuevo_saldo,
                             "estado": nuevo_estado
-                        }).eq("id", int(id_deuda)).execute()
+                        }).eq("id", id_deuda).execute()
                         
                         if nuevo_estado == "Pagada":
                             st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! La cuenta ha sido retirada de las pendientes.")
