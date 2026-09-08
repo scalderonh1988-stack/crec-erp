@@ -4202,7 +4202,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         for item in st.session_state.carrito_ventas:
                             lineas_productos += f"- {item['Descripción']} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
                             
-                            # Actualización de stock
+                            # Actualización de stock atómica en base de datos
                             try:
                                 if not item.get("es_guia_previa", False):
                                     codigo_vendido = str(item["Código"])
@@ -4216,17 +4216,27 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                             cant_por_pack = float(componente["cantidad_usada"])
                                             cantidad_total_a_descontar = cant_por_pack * cantidad_vendida
 
-                                            res_stock_comp = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", cod_componente).eq("bodega", bodega_actual).execute()
-                                            if res_stock_comp.data:
-                                                stock_actual_comp = float(res_stock_comp.data[0]["stock"] or 0.0)
-                                                nuevo_stock_comp = stock_actual_comp - cantidad_total_a_descontar
-                                                supabase.table("productos").update({"stock": nuevo_stock_comp}).eq("rut_empresa", rut_actual).eq("codigo", cod_componente).eq("bodega", bodega_actual).execute()
+                                            supabase.rpc(
+                                                'actualizar_stock_atomico',
+                                                {
+                                                    'p_rut_empresa': str(rut_actual),
+                                                    'p_codigo': cod_componente,
+                                                    'p_bodega': str(bodega_actual),
+                                                    'p_cantidad': cantidad_total_a_descontar,
+                                                    'p_operacion': 'VENTA'
+                                                }
+                                            ).execute()
                                     else:
-                                        res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", codigo_vendido).eq("bodega", bodega_actual).execute()
-                                        if res_stock.data:
-                                            stock_actual = float(res_stock.data[0]["stock"] or 0.0)
-                                            nuevo_stock = stock_actual - cantidad_vendida
-                                            supabase.table("productos").update({"stock": nuevo_stock}).eq("rut_empresa", rut_actual).eq("codigo", codigo_vendido).eq("bodega", bodega_actual).execute()
+                                        supabase.rpc(
+                                            'actualizar_stock_atomico',
+                                            {
+                                                'p_rut_empresa': str(rut_actual),
+                                                'p_codigo': codigo_vendido,
+                                                'p_bodega': str(bodega_actual),
+                                                'p_cantidad': cantidad_vendida,
+                                                'p_operacion': 'VENTA'
+                                            }
+                                        ).execute()
                             except Exception as e:
                                 print(f"Error descontando stock en POS: {e}")
 
@@ -4260,7 +4270,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "modo_emision": modo_str
                             })
 
-                        # Inserción en bloque a Supabase (Segura / Transaccional)
+                        # Inserción en bloque a Supabase
                         try:
                             res_venta = supabase.table("ventas").insert(registros_ventas_batch).execute()
                             if not res_venta.data:
