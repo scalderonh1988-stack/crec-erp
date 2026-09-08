@@ -21,39 +21,28 @@ def mostrar_modulo_compras(ruta_negocio):
     opciones_productos = []
 
     try:
-        # Carga flexible de proveedores (sin bloquear si la columna del tenant varía)
+        # Cargar todos los proveedores registrados en la base de datos sin filtrar por id_negocio
         res_prov = supabase.table("proveedores").select("*").execute()
 
         if res_prov.data:
             for p in res_prov.data:
-                # Comprobar id_negocio, rut_empresa o tenant_id
-                emp_p = str(
-                    p.get("id_negocio") or 
-                    p.get("rut_empresa") or 
-                    p.get("rut_negocio") or 
-                    p.get("tenant_id") or ""
-                ).strip().lower()
-
-                # Si pertenece al tenant o no tiene asignado empresa (proveedor global)
-                if not emp_p or emp_p == tenant_clean:
-                    # Capturar el nombre bajo cualquier variante de columna común
-                    nom_p = (
-                        p.get("nombre") or 
-                        p.get("razon_social") or 
-                        p.get("nombre_proveedor") or 
-                        p.get("Nombre_Proveedor") or 
-                        p.get("proveedor")
-                    )
-                    
-                    if nom_p and str(nom_p).strip():
-                        nom_clean = str(nom_p).strip()
-                        lista_proveedores.append(nom_clean)
-                        # Guardar objeto completo para rescatar RUT e ID del proveedor al guardar
-                        dict_proveedores[nom_clean] = p
+                # Capturar la razón social / nombre bajo cualquier varianza de columna en Supabase
+                nom_p = (
+                    p.get("nombre") or 
+                    p.get("razon_social") or 
+                    p.get("nombre_proveedor") or 
+                    p.get("Nombre_Proveedor") or 
+                    p.get("proveedor")
+                )
+                
+                if nom_p and str(nom_p).strip():
+                    nom_clean = str(nom_p).strip()
+                    lista_proveedores.append(nom_clean)
+                    dict_proveedores[nom_clean] = p
 
             lista_proveedores = list(dict.fromkeys(lista_proveedores))
 
-        # Carga de Bodegas
+        # Cargar Bodegas pertenecientes al tenant o generales
         res_bodegas = supabase.table("bodegas").select("*").execute()
         if res_bodegas.data:
             for b in res_bodegas.data:
@@ -64,7 +53,7 @@ def mostrar_modulo_compras(ruta_negocio):
                         bodegas_existentes.append(str(nom_b).strip())
             bodegas_existentes = list(dict.fromkeys(bodegas_existentes))
 
-        # Cargar Productos e Ingredientes
+        # Cargar Productos e Ingredientes para el selector unificado
         res_prod = supabase.table("productos").select("codigo, descripcion").execute()
         df_prod = pd.DataFrame(res_prod.data) if res_prod.data else pd.DataFrame()
 
@@ -138,7 +127,7 @@ def mostrar_modulo_compras(ruta_negocio):
             else:
                 st.warning("⚠️ Selecciona un ítem válido.")
 
-    # --- Mostrar detalle y guardado ---
+    # --- Mostrar detalle y guardar ---
     if st.session_state.items_compra_actual:
         st.markdown(f"##### Ítems en el Documento N° {num_factura} (Destino: {bodega_destino}):")
         df_temp = pd.DataFrame(st.session_state.items_compra_actual)
@@ -157,7 +146,7 @@ def mostrar_modulo_compras(ruta_negocio):
                 try:
                     fecha_registro = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-                    # Obtener metadatos del proveedor seleccionado para la asociación
+                    # Obtener metadatos del proveedor seleccionado para la asociación en DB
                     datos_prov = dict_proveedores.get(proveedor_factura, {})
                     rut_proveedor = datos_prov.get("rut") or datos_prov.get("rut_proveedor") or ""
                     id_proveedor = datos_prov.get("id") or datos_prov.get("id_proveedor") or ""
@@ -166,7 +155,7 @@ def mostrar_modulo_compras(ruta_negocio):
                         cant_n = float(item['cantidad'])
                         costo_n = float(item['neto_unitario'])
                         
-                        # Actualización de Inventario y CPP
+                        # Actualización de Inventario y Cálculo de CPP
                         tabla_inv = "productos" if item['tipo'] == "Producto" else "ingredientes"
                         res_inv = supabase.table(tabla_inv).select("*").eq("codigo", item['codigo']).eq("bodega", bodega_destino).execute()
 
@@ -190,7 +179,7 @@ def mostrar_modulo_compras(ruta_negocio):
                                 prod_nuevo['costo'] = costo_n
                                 supabase.table(tabla_inv).insert(prod_nuevo).execute()
 
-                        # Estructura con compatibilidad dual (id_negocio y rut_empresa) + datos del proveedor
+                        # Insertar registro de la compra
                         registro_compra = {
                             'fecha_hora': fecha_registro,
                             'tipo_recepcion': tipo_recepcion,
@@ -212,11 +201,9 @@ def mostrar_modulo_compras(ruta_negocio):
                             'bodega_destino': bodega_destino
                         }
                         
-                        # Inserción segura en compras
                         try:
                             supabase.table("compras").insert(registro_compra).execute()
                         except Exception:
-                            # Fallback si la tabla compras no tiene alguna de las columnas opcionales
                             registro_restringido = {
                                 'fecha_hora': fecha_registro,
                                 'proveedor': proveedor_factura,
@@ -231,7 +218,7 @@ def mostrar_modulo_compras(ruta_negocio):
                             }
                             supabase.table("compras").insert(registro_restringido).execute()
 
-                    # Registro en cuentas por pagar
+                    # Registro en cuentas por pagar si aplica crédito
                     if condicion_pago in ["Crédito", "Cheque"]:
                         nueva_cuenta = {
                             'rut_empresa': str(tenant_id),
