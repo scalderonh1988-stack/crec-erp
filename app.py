@@ -2638,16 +2638,33 @@ elif menu == "🛒 Registrar Compra (CPP)":
             st.markdown("### 📋 Cabecera de la Recepción de Compra (GRC)")
 
             # --- CARGA DE PROVEEDORES DIRECTO DESDE LA NUBE (SUPABASE) ---
-            lista_proveedores = []
+            lista_proveedores = ["Proveedor General"]
             try:
-                res_prov_nube = supabase.table("proveedores").select("nombre").eq("rut_empresa", rut_actual).execute()
+                # 1. Cargar todos los proveedores sin filtro rígido de columna
+                res_prov_nube = supabase.table("proveedores").select("*").execute()
+                
                 if res_prov_nube.data:
-                    lista_proveedores = [p["nombre"] for p in res_prov_nube.data if p.get("nombre")]
+                    tenant_clean = str(rut_actual).strip().lower() if 'rut_actual' in locals() and rut_actual else ""
+                    
+                    for p in res_prov_nube.data:
+                        # Obtener negocio asociado
+                        emp_p = str(p.get("id_negocio") or p.get("rut_empresa") or p.get("rut") or "").strip().lower()
+                        
+                        # Incluir si coincide con la empresa actual o si el proveedor no tiene empresa fija
+                        if not emp_p or not tenant_clean or emp_p == tenant_clean:
+                            nom_p = (
+                                p.get("nombre") or 
+                                p.get("razon_social") or 
+                                p.get("nombre_proveedor") or 
+                                p.get("Nombre_Proveedor") or 
+                                p.get("proveedor")
+                            )
+                            if nom_p and str(nom_p).strip():
+                                lista_proveedores.append(str(nom_p).strip())
+                                
+                    lista_proveedores = list(dict.fromkeys(lista_proveedores))
             except Exception as e:
                 print(f"Error cargando proveedores desde Supabase en GRC: {e}")
-
-            if not lista_proveedores:
-                lista_proveedores = ["Proveedor General"]
 
             # 🚨 CARGAR BODEGAS DESDE SUPABASE PARA LA GRC
             bodegas_grc_opc = ["Bodega Principal"]
