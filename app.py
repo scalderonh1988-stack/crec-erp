@@ -4141,9 +4141,9 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     st.success(f"🟢 **Vuelto: ${cambio:,.2f}**")
                 else:
                     st.error("🔴 Monto insuficiente.")
-            elif forma_pago == "Crédito":
-                st.warning("⚖️ Esta venta se enviará automáticamente al módulo de Cuentas por Cobrar.")
-                dias_credito = st.number_input("⏳ Días de Crédito (Plazo para pagar):", min_value=1, value=30, step=1)
+            elif forma_pago in ["Crédito", "Consignación"]:
+                st.warning(f"⚖️ Esta venta en {forma_pago} se enviará automáticamente al módulo de Cuentas por Cobrar.")
+                dias_credito = st.number_input(f"⏳ Días de Plazo para pagar ({forma_pago}):", min_value=1, value=30, step=1)
                 fecha_estimada = datetime.now() + timedelta(days=dias_credito)
                 st.info(f"📅 Fecha de vencimiento calculada: **{fecha_estimada.strftime('%d/%m/%Y')}**")
 
@@ -4280,7 +4280,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             st.error(f"❌ Error al registrar las líneas de venta: {e}")
                             st.stop()
 
-                        if forma_pago == "Crédito":
+                        # Inserción en Cuentas por Cobrar para Crédito y Consignación
+                        if forma_pago in ["Crédito", "Consignación"]:
                             fecha_vencimiento_str = (fecha_hora_actual + timedelta(days=dias_credito)).strftime("%Y-%m-%d")
                             registro_cxc = {
                                 "rut_empresa": rut_actual,
@@ -4295,8 +4296,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             }
                             try:
                                 supabase.table("cuentas_por_cobrar").insert(registro_cxc).execute()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                print(f"Error al registrar en Cuentas por Cobrar: {e}")
 
                         st.session_state.items_recibo_actual = st.session_state.carrito_ventas.copy()
                         linea_ila = f"IMP. ESPECÍFICO: ${total_ila_ticket:,.2f}\n" if total_ila_ticket > 0 else ""
@@ -4304,8 +4305,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         info_pago = ""
                         if forma_pago == 'Efectivo':
                             info_pago = f"RECIBIDO: ${efectivo_recibido:,.2f}\nVUELTO: ${cambio:,.2f}"
-                        elif forma_pago == 'Crédito':
-                            info_pago = f"CONDICIÓN: A {dias_credito} DÍAS\nVENCE: {(fecha_hora_actual + timedelta(days=dias_credito)).strftime('%d/%m/%Y')}"
+                        elif forma_pago in ['Crédito', 'Consignación']:
+                            info_pago = f"CONDICIÓN: {forma_pago.upper()} (A {dias_credito} DÍAS)\nVENCE: {(fecha_hora_actual + timedelta(days=dias_credito)).strftime('%d/%m/%Y')}"
                         
                         texto_recibo = f"""
 ========================================
