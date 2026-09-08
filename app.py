@@ -3889,11 +3889,26 @@ elif menu == "⚙️ Configuración General":
 
 # ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO) -----------------
 elif menu == "💰 Módulo de Ventas (POS)":
-    caja_actual = param_caja if 'param_caja' in locals() and param_caja else "Caja Principal"
+
+    # --- 🛡️ 1. GUARDIA DE SESIÓN Y ATRIBUTOS BÁSICOS ---
     rut_actual = st.session_state.get("negocio_seleccionado")
+    if not rut_actual:
+        st.error("⚠️ No se ha detectado ningún negocio seleccionado en la sesión. Selecciona una empresa en el menú principal.")
+        st.stop()
+
+    caja_actual = param_caja if ('param_caja' in locals() and param_caja) else "Caja Principal"
     mostrar_encabezado_con_home(f"Terminal de Ventas - {caja_actual}")
 
-    # --- 0. SELECTOR MULTI-BODEGA PARA EL POS ---
+    # --- 🛡️ 2. INICIALIZACIÓN DEFENSIVA DE ESTADOS DE SESIÓN ---
+    if "carrito_ventas" not in st.session_state: st.session_state.carrito_ventas = []
+    if "ultimo_recibo" not in st.session_state: st.session_state.ultimo_recibo = None
+    if "estado_pago" not in st.session_state: st.session_state.estado_pago = False
+    if "input_scanner" not in st.session_state: st.session_state.input_scanner = ""
+    if "df_nube_pos" not in st.session_state: st.session_state.df_nube_pos = pd.DataFrame()
+    if "ultimo_prod_sel" not in st.session_state: st.session_state.ultimo_prod_sel = ""
+    if "precio_actual_input" not in st.session_state: st.session_state.precio_actual_input = 0.0
+
+    # --- 3. SELECTOR MULTI-BODEGA PARA EL POS ---
     bodegas_pos = ["Bodega Principal"]
     try:
         res_bod = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_actual).execute()
@@ -3908,19 +3923,25 @@ elif menu == "💰 Módulo de Ventas (POS)":
     bodega_actual = st.selectbox("🏢 Selecciona la Bodega / Sucursal de origen:", bodegas_pos)
     st.markdown("---")
 
-    # --- 🔍 MÓDULO OPTIMIZADO PARA LECTOR DE CÓDIGO DE BARRAS ---
-    if "input_scanner" not in st.session_state:
-        st.session_state.input_scanner = ""
+    # --- 4. CARGA PREVIA DEL INVENTARIO (CRÍTICO PARA EL ESCÁNER) ---
+    df_nube = pd.DataFrame()
+    try:
+        res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", rut_actual).eq("bodega", bodega_actual).limit(10000).execute()
+        if res_pos.data:
+            df_nube = pd.DataFrame(res_pos.data)
+            st.session_state.df_nube_pos = df_nube
+    except Exception as e:
+        st.error(f"⚠️ Error conectando al inventario en la nube: {e}")
 
+    # --- 5. MÓDULO OPTIMIZADO PARA LECTOR DE CÓDIGO DE BARRAS ---
     def procesar_escaneo_pos():
         codigo_leido = st.session_state.get("input_scanner", "").strip()
         if codigo_leido:
-            global df_base
-            df_a_buscar = df_base if ('df_base' in globals() and df_base is not None and not df_base.empty) else st.session_state.get("df_nube_pos")
+            df_a_buscar = df_nube if not df_nube.empty else st.session_state.get("df_nube_pos", pd.DataFrame())
             if df_a_buscar is not None and not df_a_buscar.empty:
-                col_c = 'Código' if 'Código' in df_a_buscar.columns else 'codigo'
-                col_d = 'Descripción' if 'Descripción' in df_a_buscar.columns else ('descripcion' if 'descripcion' in df_a_buscar.columns else 'Nombre')
-                col_p = 'Precio Venta' if 'Precio Venta' in df_a_buscar.columns else ('precio_venta' if 'precio_venta' in df_a_buscar.columns else 'Precio')
+                col_c = 'codigo' if 'codigo' in df_a_buscar.columns else 'Código'
+                col_d = 'descripcion' if 'descripcion' in df_a_buscar.columns else ('Descripción' if 'Descripción' in df_a_buscar.columns else 'Nombre')
+                col_p = 'precio_venta' if 'precio_venta' in df_a_buscar.columns else ('Precio Venta' if 'Precio Venta' in df_a_buscar.columns else 'Precio')
                 
                 df_match = df_a_buscar[df_a_buscar[col_c].astype(str).str.strip() == codigo_leido]
                 if not df_match.empty:
@@ -3943,7 +3964,10 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             "Descripción": nombre_prod,
                             "Cantidad": 1.0,
                             "Precio Unitario": precio_prod,
-                            "Subtotal": precio_prod
+                            "Subtotal": precio_prod,
+                            "Es Exento": str(prod.get("es_exento", False)).lower() in ["true", "si", "sí", "1"],
+                            "Tasa ILA": 0.0,
+                            "es_guia_previa": False
                         })
                     st.success(f"✔️ Agregado: {nombre_prod}")
                 else:
@@ -3952,7 +3976,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.error("⚠️ La base de datos de productos no está cargada.")
         st.session_state.input_scanner = ""
 
-    # --- 1. CABECERA ---
+    # --- 6. CABECERA Y SELECCIÓN DE DOCUMENTO ---
     col_doc1, col_doc2, col_doc3 = st.columns(3)
     with col_doc1:
         tipo_documento = st.selectbox("📄 Selecciona el documento:", ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"])
@@ -3968,7 +3992,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
     
     modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
 
-    # --- 2. LÓGICA: FACTURAR DESDE UNA GUÍA PREVIA ---
+    # --- 7. LÓGICA: FACTURAR DESDE UNA GUÍA PREVIA ---
     if tipo_documento == "Factura Electrónica":
         viene_de_guia = st.checkbox("🔗 Facturar desde una Guía de Despacho previa")
         if viene_de_guia:
@@ -4018,13 +4042,13 @@ elif menu == "💰 Módulo de Ventas (POS)":
     )
     controlar_stock = "Estricto" in modo_inventario
 
-    # --- 3. SELECCIÓN DE CLIENTES ---
+    # --- 8. SELECCIÓN DE CLIENTES ---
     cliente_nombre, cliente_rut = "", ""
     if tipo_documento in ["Factura Electrónica", "Guía de Despacho"]:
         try:
             res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", rut_actual).execute()
             df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
-        except Exception as e:
+        except Exception:
             df_clientes_pos = pd.DataFrame()
 
         c_nombre_def = st.session_state.get("cliente_preseleccionado", "")
@@ -4058,8 +4082,10 @@ elif menu == "💰 Módulo de Ventas (POS)":
             col_f1, col_f2 = st.columns(2)
             with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def)
             with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def)
-            
-    # --- PANTALLA DE ÉXITO ---
+
+    # =========================================================================
+    # --- VISTA 1: PANTALLA DE ÉXITO ---
+    # =========================================================================
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y archivada con éxito!")
         st.markdown(f'<div class="ticket-box">{st.session_state.ultimo_recibo}</div>', unsafe_allow_html=True)
@@ -4089,7 +4115,9 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.pop("folio_guia_origen", None) 
                 st.rerun()
 
-    # --- PANTALLA DE PAGO ---
+    # =========================================================================
+    # --- VISTA 2: PANTALLA DE PAGO ---
+    # =========================================================================
     elif st.session_state.estado_pago:
         st.markdown("### 💳 2. Formas de Pago")
         if len(st.session_state.carrito_ventas) > 0:
@@ -4150,7 +4178,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
                         transaccion_id_actual = str(numero_folio_actual)
                         lineas_productos = ""
-                        venta_exitosa = True
                         
                         folio_origen = st.session_state.get("folio_guia_origen")
                         if folio_origen and tipo_documento == "Factura Electrónica":
@@ -4170,9 +4197,12 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         total_iva_ticket = 0.0
                         total_ila_ticket = 0.0
                         
+                        registros_ventas_batch = []
+
                         for item in st.session_state.carrito_ventas:
                             lineas_productos += f"- {item['Descripción']} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
                             
+                            # Actualización de stock
                             try:
                                 if not item.get("es_guia_previa", False):
                                     codigo_vendido = str(item["Código"])
@@ -4187,7 +4217,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                             cantidad_total_a_descontar = cant_por_pack * cantidad_vendida
 
                                             res_stock_comp = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", cod_componente).eq("bodega", bodega_actual).execute()
-                                            
                                             if res_stock_comp.data:
                                                 stock_actual_comp = float(res_stock_comp.data[0]["stock"] or 0.0)
                                                 nuevo_stock_comp = stock_actual_comp - cantidad_total_a_descontar
@@ -4213,7 +4242,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             total_iva_ticket += iva_calculado
                             total_ila_ticket += ila_calculado
 
-                            registro_linea = {
+                            registros_ventas_batch.append({
                                 "folio": transaccion_id_actual,
                                 "rut_empresa": rut_actual,
                                 "fecha": fecha_emision_venta.strftime("%Y-%m-%d") + fecha_hora_actual.strftime(" %H:%M:%S"),
@@ -4229,17 +4258,16 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "iva": round(iva_calculado, 2),
                                 "impuesto_especifico": round(ila_calculado, 2),
                                 "modo_emision": modo_str
-                            }
-                            
-                            try:
-                                res_venta = supabase.table("ventas").insert(registro_linea).execute()
-                                if not res_venta.data:
-                                    venta_exitosa = False
-                            except Exception as e:
-                                venta_exitosa = False
+                            })
 
-                        if not venta_exitosa:
-                            st.error("❌ Ocurrió un error guardando la venta en Supabase.")
+                        # Inserción en bloque a Supabase (Segura / Transaccional)
+                        try:
+                            res_venta = supabase.table("ventas").insert(registros_ventas_batch).execute()
+                            if not res_venta.data:
+                                st.error("❌ Ocurrió un error guardando la venta en Supabase.")
+                                st.stop()
+                        except Exception as e:
+                            st.error(f"❌ Error al registrar las líneas de venta: {e}")
                             st.stop()
 
                         if forma_pago == "Crédito":
@@ -4257,7 +4285,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             }
                             try:
                                 supabase.table("cuentas_por_cobrar").insert(registro_cxc).execute()
-                            except Exception as e:
+                            except Exception:
                                 pass
 
                         st.session_state.items_recibo_actual = st.session_state.carrito_ventas.copy()
@@ -4296,17 +4324,10 @@ PAGO: {forma_pago.upper()}
                         st.session_state.estado_pago = False
                         st.rerun()
 
-    # --- PANTALLA PRINCIPAL: BUSCADOR Y CARRITO ---
+    # =========================================================================
+    # --- VISTA 3: PANTALLA PRINCIPAL (BUSCADOR Y CARRITO) ---
+    # =========================================================================
     else:
-        df_nube = pd.DataFrame()
-        try:
-            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", rut_actual).eq("bodega", bodega_actual).limit(10000).execute()
-            if res_pos.data:
-                df_nube = pd.DataFrame(res_pos.data)
-                st.session_state.df_nube_pos = df_nube
-        except Exception as e:
-            st.error(f"⚠️ Error conectando al inventario en la nube: {e}")
-
         if not df_nube.empty:
             col_cod = 'codigo'
             col_desc = 'descripcion'
@@ -4319,7 +4340,6 @@ PAGO: {forma_pago.upper()}
                 st.markdown("Apunta la cámara al código de barras y captura la foto:")
                 foto_capturada = st.camera_input("Capturar código de barras", key="cam_pos")
             else:
-                # 📌 AQUÍ SE UBICA AHORA EL LECTOR DE CÓDIGO DE BARRAS PRINCIPAL
                 st.text_input(
                     "🔍 Escanea el código de barras (El cursor debe estar aquí):", 
                     key="input_scanner", 
@@ -4329,9 +4349,6 @@ PAGO: {forma_pago.upper()}
 
             opciones_productos = ["-- Selecciona o busca un producto --"] + [f"{row[col_cod]} - {row[col_desc]}" for idx, row in df_nube.iterrows()]
             prod_sugerido_pos_idx = 0
-
-            if "ultimo_prod_sel" not in st.session_state: st.session_state.ultimo_prod_sel = ""
-            if "precio_actual_input" not in st.session_state: st.session_state.precio_actual_input = 0.0
 
             producto_seleccionado = st.selectbox(
                 "O selecciona manualmente el producto:",
