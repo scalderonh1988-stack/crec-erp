@@ -1,16 +1,43 @@
-__pycache__/
+# Streamlit y Secretos
+.streamlit/secrets.toml
+.env
+
+# Base de datos local, JSON y archivos de clientes
+clientes/
+permisos.json
 *.xlsx
+~$*.xlsx
+*.csv
+*.db
+*.sqlite
+
+# Certificados digitales, firmas SII y llaves de seguridad
+*.key
+*.pfx
+*.p12
+*.pem
+*.crt
+
+# Scripts de desarrollo/migración local
 app_local.py
 migrar_*.py
 
-# Secretos y credenciales
-.streamlit/secrets.toml
-
-# Datos de clientes
-clientes/
-
-# Compilación y entornos virtuales
+# Python, Entornos Virtuales y Caché
+__pycache__/
+*.py[cod]
+*$py.class
 .venv/
 venv/
+ENV/
 build/
 dist/
+*.egg-info/
+
+# Logs y archivos del sistema operativo
+*.log
+.DS_Store
+Thumbs.db
+
+# Configuración local de editores (VS Code, PyCharm)
+.vscode/
+.idea/

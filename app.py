@@ -961,7 +961,6 @@ def normalizar_lista_modulos(raw_modulos):
 
     return resultado
 
-
 # ==============================================================================
 # --- 4. SISTEMA DE AUTENTICACIÓN Y BLINDAJE DE SEGURIDAD ---
 # ==============================================================================
@@ -981,6 +980,25 @@ if "tipo_usuario" not in st.session_state:
     st.session_state.tipo_usuario = "Propietario"
 if "nombre_empresa" not in st.session_state:
     st.session_state.nombre_empresa = ""
+
+# Lectura segura de credenciales maestras desde secretos / variables de entorno
+def _obtener_secret_admin():
+    user = ""
+    pwd = ""
+    try:
+        if "ADMIN_USER" in st.secrets:
+            user = str(st.secrets["ADMIN_USER"]).strip().lower()
+        if "ADMIN_PASS" in st.secrets:
+            pwd = str(st.secrets["ADMIN_PASS"]).strip()
+    except Exception:
+        pass
+    if not user:
+        user = os.getenv("ADMIN_USER", "").strip().lower()
+    if not pwd:
+        pwd = os.getenv("ADMIN_PASS", "").strip()
+    return user, pwd
+
+ADMIN_MASTER_USER, ADMIN_MASTER_PASS = _obtener_secret_admin()
 
 # 🔴 VISTA DE LOGIN: Si no está autenticado, dibuja el formulario y DETIENE la ejecución
 if not st.session_state.autenticado:
@@ -1007,8 +1025,13 @@ if not st.session_state.autenticado:
             else:
                 supabase_client = globals().get('supabase', None) or st.session_state.get("supabase", None)
 
-                # 1. Validación Admin Master
-                if usuario_limpio.lower() in ["admin", "desarrollador", "simon"] and password_limpio == "SIMON1908":
+                # 1. Validación Admin Master desde secretos (sin valores quemados en código)
+                if (
+                    ADMIN_MASTER_USER 
+                    and ADMIN_MASTER_PASS 
+                    and usuario_limpio.lower() == ADMIN_MASTER_USER 
+                    and password_limpio == ADMIN_MASTER_PASS
+                ):
                     st.session_state.autenticado = True
                     st.session_state.es_admin_dev = True
                     st.session_state.usuario_logueado = "Administrador Master"
@@ -1311,6 +1334,7 @@ if st.session_state.get("es_admin_dev", False):
                                 supabase_cli.table("empresas").insert({
                                     "rut_empresa": id_negocio,
                                     "empresa_nombre": nombre_comercial,
+                                    "password": password_cliente,
                                     "fecha_expiracion": str(fecha_exp),
                                     "licencia_activa": True
                                 }).execute()

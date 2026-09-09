@@ -5,10 +5,26 @@ import pandas as pd
 import streamlit as st
 from supabase import Client, create_client
 
-# --- CONFIGURACIÓN DE LA NUBE (SUPABASE) ---
-SUPABASE_URL = "https://dmkjlcjrobszhwasrofc.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRta2psY2pyb2Jzemh3YXNyb2ZjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjA1NjY3OCwiZXhwIjoyMTAxNjMyNjc4fQ.PSk-oNFl16Inaidztx3ixOz0ahzQuV1SvF4CBhl44gg"
+# --- CONFIGURACIÓN SEGURA DE LA NUBE (DESDE ST.SECRETS) ---
+def _obtener_credencial(clave_directa: str, clave_seccion: str) -> str:
+    """Lee las credenciales soportando formato plano o formato [supabase] en secrets.toml"""
+    try:
+        if "supabase" in st.secrets and clave_seccion in st.secrets["supabase"]:
+            return str(st.secrets["supabase"][clave_seccion]).strip()
+        if clave_directa in st.secrets:
+            return str(st.secrets[clave_directa]).strip()
+    except Exception:
+        pass
+    return os.getenv(clave_directa, "").strip()
 
+SUPABASE_URL = _obtener_credencial("SUPABASE_URL", "url")
+SUPABASE_KEY = _obtener_credencial("SUPABASE_KEY", "key")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("🚨 Error grave: No se encontraron las credenciales de Supabase en .streamlit/secrets.toml ni en variables de entorno.")
+    st.stop()
+
+# Cliente Supabase seguro
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 BASE_TENANTS_DIR = "clientes"
