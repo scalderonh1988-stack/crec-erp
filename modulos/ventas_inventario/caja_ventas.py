@@ -35,7 +35,6 @@ def obtener_datos_empresa_completo(tenant_id):
         "logo": None
     }
 
-    # 1. Intento por función nativa data_manager
     try:
         emp_data = obtener_datos_empresa(tenant_id)
         if emp_data and isinstance(emp_data, dict):
@@ -51,7 +50,6 @@ def obtener_datos_empresa_completo(tenant_id):
     except Exception as e:
         print(f"Error consultando data_manager para empresa: {e}")
 
-    # 2. Intento por tabla 'negocios' o 'empresas' en Supabase
     for tabla in ["negocios", "empresas"]:
         try:
             res = supabase.table(tabla).select("*").execute()
@@ -74,16 +72,74 @@ def obtener_datos_empresa_completo(tenant_id):
     return datos
 
 
+def obtener_tasa_especifica(valor_impuesto) -> float:
+    """
+    Identifica la tasa decimal del Impuesto Específico (IABA / ILA) según el string o número recibido.
+    Soporta: IABA 10%, IABA 18%, ILA 20.5%, ILA 31.5% o montos numéricos.
+    """
+    if not valor_impuesto:
+        return 0.0
+    if isinstance(valor_impuesto, (int, float)):
+        return valor_impuesto / 100.0 if valor_impuesto > 1.0 else float(valor_impuesto)
+
+    val_str = str(valor_impuesto).upper().strip()
+    if "31.5" in val_str or "31,5" in val_str:
+        return 0.315
+    elif "20.5" in val_str or "20,5" in val_str:
+        return 0.205
+    elif "18" in val_str:
+        return 0.18
+    elif "10" in val_str:
+        return 0.10
+
+    nums = re.findall(r"[-+]?\d*\.\d+|\d+", val_str.replace(",", "."))
+    if nums:
+        val_num = float(nums[0])
+        return val_num / 100.0 if val_num > 1.0 else val_num
+
+    return 0.0
+
+
+def calcular_desglose_impuestos(precio_bruto: float, impuesto_especifico_val=0.0) -> dict:
+    """
+    Calcula el desglose tributario (Neto, Impuesto Específico, IVA) desde el precio BRUTO
+    según el encadenamiento oficial del SII de Chile (DL 825, Art. 42).
+    """
+    tasa_iva = 0.19
+    tasa_esp = obtener_tasa_especifica(impuesto_especifico_val)
+
+    if tasa_esp > 0:
+        factor_total = (1 + tasa_esp) * (1 + tasa_iva)
+        neto = round(precio_bruto / factor_total)
+        imp_esp = round(neto * tasa_esp)
+        iva = round((neto + imp_esp) * tasa_iva)
+    else:
+        neto = round(precio_bruto / (1 + tasa_iva))
+        imp_esp = 0
+        iva = round(precio_bruto - neto)
+
+    diferencia = round(precio_bruto) - (neto + imp_esp + iva)
+    if diferencia != 0:
+        neto += diferencia
+
+    return {
+        "neto": neto,
+        "imp_especifico": imp_esp,
+        "iva": iva,
+        "bruto": precio_bruto,
+        "tasa_esp": tasa_esp
+    }
+
+
 def obtener_siguiente_folio_pos(tenant_id):
     """Genera el correlativo numerico consecutivo de venta interna para el negocio."""
     tenant_str = str(tenant_id)
-    
-    # Intento 1: Buscar máximo folio numérico registrado en la tabla ventas
+
     try:
         res = supabase.table("ventas").select("folio").eq("rut_empresa", tenant_str).order("folio", desc=True).limit(1).execute()
         if not res.data:
             res = supabase.table("ventas").select("folio").eq("id_negocio", tenant_str).order("folio", desc=True).limit(1).execute()
-            
+
         if res.data and res.data[0].get("folio"):
             f_str = str(res.data[0]["folio"]).replace("TX_", "")
             if f_str.isdigit():
@@ -91,7 +147,6 @@ def obtener_siguiente_folio_pos(tenant_id):
     except Exception:
         pass
 
-    # Intento 2: Conteo total de transacciones registradas + 1
     try:
         res_count = supabase.table("ventas").select("id", count="exact").eq("rut_empresa", tenant_str).execute()
         count_val = res_count.count if res_count.count is not None else len(res_count.data or [])
@@ -110,10 +165,10 @@ def generar_nombre_archivo_doc(tipo_doc, folio, nombre_cliente, fecha_dt):
     nombre_clean = re.sub(r'[^A-Za-z0-9]', '', str(nombre_cliente or "CLIENTE")).upper()
     if not nombre_clean:
         nombre_clean = "CLIENTEGENERAL"
-        
+
     fecha_str = fecha_dt.strftime("%d%m%Y")
     folio_clean = str(folio).replace("TX_", "")
-    
+
     return f"{prefijo}#{folio_clean}{nombre_clean}{fecha_str}"
 
 
@@ -143,7 +198,6 @@ def mostrar_modulo_ventas(ruta_negocio):
     if 'nombre_archivo_descarga' not in st.session_state:
         st.session_state.nombre_archivo_descarga = "Comprobante"
 
-    # Datos persistentes del cliente
     if 'cliente_nombre' not in st.session_state:
         st.session_state.cliente_nombre = "Cliente General"
     if 'cliente_rut' not in st.session_state:
@@ -180,7 +234,7 @@ def mostrar_modulo_ventas(ruta_negocio):
         df_clientes_pos["etiqueta"] = df_clientes_pos["nombre"].astype(str) + " (" + df_clientes_pos["rut"].astype(str) + ")"
         lista_clientes = ["-- Cliente General --"] + df_clientes_pos["etiqueta"].tolist() + ["+ Ingresar Cliente Manualmente"]
         cliente_elegido = st.selectbox("Selecciona o busca un cliente registrado:", lista_clientes)
-      
+
         if cliente_elegido == "+ Ingresar Cliente Manualmente":
             col_f1, col_f2 = st.columns(2)
             with col_f1: st.session_state.cliente_nombre = st.text_input("Razón Social / Nombre", key="input_cli_nom")
@@ -218,7 +272,7 @@ def mostrar_modulo_ventas(ruta_negocio):
     # --- PANTALLA DE ÉXITO Y RECIBO ---
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y archivada con éxito en la Nube!")
-        
+
         if st.session_state.pdf_dte_actual:
             st.link_button("📄 Ver / Imprimir DTE Oficial (OpenFactura PDF)", st.session_state.pdf_dte_actual, use_container_width=True, type="primary")
             st.divider()
@@ -229,18 +283,18 @@ def mostrar_modulo_ventas(ruta_negocio):
         col_r1, col_r2, col_r3 = st.columns(3)
         with col_r1:
             st.download_button(
-                "📥 Descargar Documento (.html)", 
-                data=st.session_state.ultimo_html, 
-                file_name=f"{st.session_state.nombre_archivo_descarga}.html", 
-                mime="text/html", 
+                "📥 Descargar Documento (.html)",
+                data=st.session_state.ultimo_html,
+                file_name=f"{st.session_state.nombre_archivo_descarga}.html",
+                mime="text/html",
                 use_container_width=True
             )
         with col_r2:
             st.download_button(
-                "📥 Descargar Texto (.txt)", 
-                data=st.session_state.ultimo_recibo, 
-                file_name=f"{st.session_state.nombre_archivo_descarga}.txt", 
-                mime="text/plain", 
+                "📥 Descargar Texto (.txt)",
+                data=st.session_state.ultimo_recibo,
+                file_name=f"{st.session_state.nombre_archivo_descarga}.txt",
+                mime="text/plain",
                 use_container_width=True
             )
         with col_r3:
@@ -258,10 +312,10 @@ def mostrar_modulo_ventas(ruta_negocio):
         if len(st.session_state.carrito_ventas) > 0:
             total_venta = sum(item["Subtotal"] for item in st.session_state.carrito_ventas)
             st.info(f"💰 **Total a Pagar: ${total_venta:,.2f}**")
-            
+
             opciones_pago = ["Efectivo", "Tarjeta / Transbank", "Transferencia", "Consignación", "Fiado", "Crédito"]
             forma_pago = st.selectbox("Selecciona la Forma / Condición de Pago:", options=opciones_pago)
-       
+
             efectivo_recibido, cambio = total_venta, 0.0
             if forma_pago == "Efectivo":
                 efectivo_recibido = st.number_input("💵 Dinero Recibido ($):", min_value=0.0, value=float(total_venta), step=100.0)
@@ -288,7 +342,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                         cli_giro = st.session_state.get("cliente_giro") or "Sin Giro"
                         cli_comuna = st.session_state.get("cliente_comuna") or "Santiago"
 
-                        # VALIDACIÓN CRÍTICA SII: Facturas y Guías requieren RUT real
                         if tipo_documento in ["Factura Electrónica", "Guía de Despacho"] and cli_rut in ["66666666-6", "666666666"]:
                             st.error(f"🚨 **No se puede emitir {tipo_documento} a Cliente General (RUT 66666666-6).** Por favor selecciona o ingresa un cliente con RUT válido, Giro y Dirección.")
                             st.stop()
@@ -296,7 +349,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                         fecha_hora_actual = datetime.now()
                         transaccion_id_actual = f"TX_{fecha_hora_actual.strftime('%Y%m%d%H%M%S')}"
 
-                        # 1. RECUPERAR DATOS COMPLETOS DE LA EMPRESA
                         datos_empresa = obtener_datos_empresa_completo(rut_actual)
 
                         items_para_dte = [
@@ -308,7 +360,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                             for item in st.session_state.carrito_ventas
                         ]
 
-                        # 2. EMISIÓN DTE EN OPENFACTURA
                         res_dte = {"exito": False}
                         with st.spinner("📄 Emitiendo documento tributario en OpenFactura..."):
                             try:
@@ -326,9 +377,8 @@ def mostrar_modulo_ventas(ruta_negocio):
                             except Exception as e_dte:
                                 res_dte = {"exito": False, "error": str(e_dte)}
 
-                        # Fallback a correlativo interno si no se obtiene folio de OpenFactura
                         folio_siguiente_num = obtener_siguiente_folio_pos(rut_actual)
-                        
+
                         if res_dte.get("exito") and res_dte.get("folio"):
                             folio_raw = res_dte.get("folio")
                             folio_oficial = str(folio_raw).zfill(6) if str(folio_raw).isdigit() else str(folio_raw)
@@ -339,7 +389,6 @@ def mostrar_modulo_ventas(ruta_negocio):
 
                         st.session_state.pdf_dte_actual = pdf_oficial_url
 
-                        # Nombre estandarizado de archivo
                         nombre_archivo_doc = generar_nombre_archivo_doc(
                             tipo_doc=tipo_documento,
                             folio=folio_oficial,
@@ -348,20 +397,29 @@ def mostrar_modulo_ventas(ruta_negocio):
                         )
                         st.session_state.nombre_archivo_descarga = nombre_archivo_doc
 
-                        # CÁLCULOS TRIBUTARIOS
-                        monto_neto = round(total_venta / 1.19)
-                        monto_iva = round(total_venta - monto_neto)
+                        # --- CÁLCULOS TRIBUTARIOS DESGLOSADOS POR ÍTEM (SII ENCADENADO) ---
+                        monto_neto = 0
+                        monto_especifico = 0
+                        monto_iva = 0
 
-                        # Guardar en Supabase
+                        for item in st.session_state.carrito_ventas:
+                            subtotal_item = float(item["Subtotal"])
+                            imp_especifico_item = item.get("impuesto_especifico") or item.get("tasa_iaba") or item.get("ila") or 0.0
+
+                            desglose = calcular_desglose_impuestos(subtotal_item, imp_especifico_item)
+                            monto_neto += desglose["neto"]
+                            monto_especifico += desglose["imp_especifico"]
+                            monto_iva += desglose["iva"]
+
                         registros_para_nube = []
                         lineas_productos = ""
                         filas_tabla_html = ""
-                        
+
                         for item in st.session_state.carrito_ventas:
                             cant_val = float(item['Cantidad'])
                             cant_str = f"{int(cant_val)}" if cant_val.is_integer() else f"{cant_val:.3f}"
                             lineas_productos += f"- {item['Descripción']} (x{cant_str}) ... ${item['Subtotal']:,.2f}\n"
-                            
+
                             filas_tabla_html += f"""
                             <tr>
                                 <td style="border: 1px solid #000; padding: 6px; text-align: left;">{item['Descripción']}</td>
@@ -379,14 +437,14 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 "folio_sii": folio_oficial,
                                 "pdf_url": pdf_oficial_url,
                                 "fecha_hora": fecha_hora_actual.isoformat(),
-                                "caja": caja_actual, 
+                                "caja": caja_actual,
                                 "documento": tipo_documento,
                                 "cliente": cli_nombre,
-                                "codigo_producto": str(item["Código"]), 
+                                "codigo_producto": str(item["Código"]),
                                 "descripcion": str(item["Descripción"]),
-                                "cantidad": float(item["Cantidad"]), 
+                                "cantidad": float(item["Cantidad"]),
                                 "precio_unitario": float(item["Precio Unitario"]),
-                                "subtotal": float(item["Subtotal"]), 
+                                "subtotal": float(item["Subtotal"]),
                                 "forma_pago": forma_pago,
                                 "total_boleta": float(total_venta)
                             })
@@ -395,7 +453,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                             respuesta_venta = supabase.table("ventas").insert(registros_para_nube).execute()
 
                             if respuesta_venta.data or True:
-                                # Descontar Stock
                                 for item in st.session_state.carrito_ventas:
                                     try:
                                         res_stock = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).execute()
@@ -406,7 +463,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                                     except Exception:
                                         pass
 
-                                # Extraer datos normalizados de la empresa para encabezado
                                 nombre_emp = datos_empresa.get("razon_social") or "MI EMPRESA"
                                 rut_emp = datos_empresa.get("rut") or rut_actual
                                 dir_emp = datos_empresa.get("direccion") or "Dirección Comercial"
@@ -420,7 +476,18 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 if logo_emp:
                                     logo_html = f'<div style="text-align: center; margin-bottom: 10px;"><img src="{logo_emp}" style="max-height: 70px; max-width: 200px; object-fit: contain;" /></div>'
 
-                                # FORMATO HTML COMPROBANTE CON ENCABEZADO Y FOLIO VISIBLE
+                                fila_imp_esp_html = ""
+                                if monto_especifico > 0:
+                                    fila_imp_esp_html = f"""
+                                    <tr>
+                                        <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;"><b>Imp. Específico (IABA/ILA):</b></td>
+                                        <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;">${monto_especifico:,.2f}</td>
+                                    </tr>
+                                    """
+
+                                line_imp_esp_txt = f"IMP. ESPECÍFICO:   ${monto_especifico:,.2f}\n" if monto_especifico > 0 else ""
+
+                                # FORMATO HTML COMPROBANTE
                                 html_recibo = f"""
                                 <div style="font-family: Arial, sans-serif; max-width: 650px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fff; color: #000;">
                                     {logo_html}
@@ -472,6 +539,7 @@ def mostrar_modulo_ventas(ruta_negocio):
                                                 <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;"><b>Monto Neto:</b></td>
                                                 <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;">${monto_neto:,.2f}</td>
                                             </tr>
+                                            {fila_imp_esp_html}
                                             <tr>
                                                 <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;"><b>IVA (19%):</b></td>
                                                 <td style="padding: 4px 8px; border: 1px solid #000; text-align: right;">${monto_iva:,.2f}</td>
@@ -512,7 +580,7 @@ DETALLE:
 {lineas_productos}----------------------------------------
 DESGLOSE DE VALORES:
 MONTO NETO:        ${monto_neto:,.2f}
-IVA (19%):         ${monto_iva:,.2f}
+{line_imp_esp_txt}IVA (19%):         ${monto_iva:,.2f}
 TOTAL GENERAL:     ${total_venta:,.2f}
 ----------------------------------------
 PAGO: {forma_pago.upper()}
@@ -538,7 +606,7 @@ PAGO: {forma_pago.upper()}
     else:
         df_nube = pd.DataFrame()
         try:
-            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, unidad").eq("rut_empresa", rut_actual).limit(10000).execute()
+            res_pos = supabase.table("productos").select("*").eq("rut_empresa", rut_actual).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
         except Exception as e:
@@ -546,7 +614,7 @@ PAGO: {forma_pago.upper()}
 
         if not df_nube.empty:
             metodo_lectura = st.radio("Método de entrada de código:", ["⌨️ Digitar / Lector Físico", "📷 Usar Cámara del Celular"], horizontal=True, key="radio_metodo_pos")
-            
+
             if "prod_seleccionado_key" not in st.session_state:
                 st.session_state.prod_seleccionado_key = "-- Selecciona o busca un producto --"
             if "precio_actual_input" not in st.session_state:
@@ -570,12 +638,12 @@ PAGO: {forma_pago.upper()}
                             st.success(f"✔️ Producto detectado: {encontrado_str}")
                         else:
                             st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_ingresado}")
-                    
+
                     st.session_state["input_escan_pos"] = ""
 
                 st.text_input(
-                    "🔍 Escanea el código de barras (El cursor debe estar aquí):", 
-                    key="input_escan_pos", 
+                    "🔍 Escanea el código de barras (El cursor debe estar aquí):",
+                    key="input_escan_pos",
                     on_change=procesar_codigo_escaneado,
                     help="El lector escribirá aquí y seleccionará el producto automáticamente al presionar Enter."
                 )
@@ -597,9 +665,9 @@ PAGO: {forma_pago.upper()}
                     st.session_state.precio_actual_input = 0.0
 
             st.selectbox(
-                "O selecciona manualmente el producto:", 
-                options=opciones_productos, 
-                index=idx_actual, 
+                "O selecciona manualmente el producto:",
+                options=opciones_productos,
+                index=idx_actual,
                 key="selectbox_producto_venta",
                 on_change=actualizar_desde_selectbox
             )
@@ -620,19 +688,19 @@ PAGO: {forma_pago.upper()}
                 with col_cant:
                     if es_decimal:
                         cantidad_vendida = st.number_input(
-                            "Cantidad (Decimales / GR)", 
-                            min_value=0.001, 
-                            step=0.010, 
-                            value=1.000, 
+                            "Cantidad (Decimales / GR)",
+                            min_value=0.001,
+                            step=0.010,
+                            value=1.000,
                             format="%.3f",
                             key=f"cant_dec_{st.session_state.prod_seleccionado_key}"
                         )
                     else:
                         cantidad_vendida = st.number_input(
-                            "Cantidad (Enteros / UN)", 
-                            min_value=1, 
-                            step=1, 
-                            value=1, 
+                            "Cantidad (Enteros / UN)",
+                            min_value=1,
+                            step=1,
+                            value=1,
                             format="%d",
                             key=f"cant_int_{st.session_state.prod_seleccionado_key}"
                         )
@@ -656,13 +724,17 @@ PAGO: {forma_pago.upper()}
                         if controlar_stock and total_intentado > stock_disponible:
                             st.error(f"🚨 **¡Inventario Insuficiente!** Stock disponible: {stock_disponible:,.2f} | Intentas vender: {total_intentado:,.2f}")
                         else:
+                            row_dict = match_row.iloc[0].to_dict() if not match_row.empty else {}
+                            imp_esp_val = row_dict.get("impuesto_especifico") or row_dict.get("tasa_iaba") or row_dict.get("ila") or 0.0
+
                             st.session_state.carrito_ventas.append({
                                 "Código": c_buscado,
                                 "Descripción": st.session_state.prod_seleccionado_key.split(" - ")[1],
                                 "Cantidad": float(cantidad_vendida),
                                 "Precio Unitario": float(precio_venta),
                                 "Subtotal": float(cantidad_vendida) * float(precio_venta),
-                                "Unidad": unidad_actual
+                                "Unidad": unidad_actual,
+                                "impuesto_especifico": imp_esp_val
                             })
                             st.session_state.prod_seleccionado_key = "-- Selecciona o busca un producto --"
                             st.success("✅ Producto agregado con éxito.")
@@ -688,7 +760,7 @@ PAGO: {forma_pago.upper()}
                         nc = st.number_input("Cant", min_value=0.001, step=0.01, value=float(item["Cantidad"]), format="%.3f", key=f"cant_{i}", label_visibility="collapsed")
                     else:
                         nc = st.number_input("Cant", min_value=1, step=1, value=int(item["Cantidad"]), format="%d", key=f"cant_{i}", label_visibility="collapsed")
-                    
+
                     st.session_state.carrito_ventas[i]["Cantidad"] = float(nc)
                     st.session_state.carrito_ventas[i]["Subtotal"] = float(nc) * st.session_state.carrito_ventas[i]["Precio Unitario"]
                 with col_c4:
