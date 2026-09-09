@@ -378,7 +378,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         st.divider()
         st.markdown("### 💳 Registrar Abono o Pago")
         
-        # 6. Lógica de abonos
+        # 6. Lógica de abonos y reingresos
         deudas_opciones = df_filtrado.copy() if not df_filtrado.empty else df_cxp.copy()
         
         if not deudas_opciones.empty:
@@ -397,7 +397,27 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             saldo_actual = float(fila_deuda["saldo_pendiente"])
             id_deuda = fila_deuda["id"]
             
-            monto_abono = st.number_input(f"💵 Monto a abonar (Máximo ${saldo_actual:,.2f}):", min_value=0.0, max_value=saldo_actual, step=100.0)
+            # --- CONSULTAR DETALLE DE VENTA PARA DETECTAR CONSIGNACIONES ---
+            items_venta = []
+            es_consignacion = False
+            try:
+                res_ventas = (
+                    supabase.table("ventas")
+                    .select("*")
+                    .eq("rut_empresa", rut_actual)
+                    .eq("folio", str(folio_seleccionado))
+                    .execute()
+                )
+                items_venta = res_ventas.data or []
+                es_consignacion = any(
+                    "consigna" in str(item.get("metodo_pago", "")).lower() 
+                    for item in items_venta
+                )
+            except Exception as e:
+                st.warning(f"⚠️ No se pudo obtener el detalle de la venta: {e}")
+
+            # --- REGISTRO DE ABONO EN DINERO ---
+            monto_abono = st.number_input(f"💵 Monto a abonar en dinero (Máximo ${saldo_actual:,.2f}):", min_value=0.0, max_value=saldo_actual, step=100.0)
             
             if st.button("✅ Registrar Abono en la Nube", use_container_width=True, type="primary"):
                 if monto_abono > 0:
@@ -419,6 +439,85 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                         st.error(f"❌ Error al registrar el abono en la nube: {e}")
                 else:
                     st.warning("⚠️ Ingresa un monto mayor a cero.")
+
+            # --- REGISTRO DE REINGRESO / DEVOLUCIÓN (SÓLO SI ES CONSIGNACIÓN) ---
+            if es_consignacion and items_venta:
+                st.divider()
+                st.markdown("### 🔄 Reingreso / Devolución de Mercadería (Consignación)")
+                st.info("💡 Este documento corresponde a una **Consignación**. Ingresa las unidades devueltas por cada producto para reingresar el stock a la bodega y rebajar la deuda.")
+
+                with st.form(key=f"form_dev_consignacion_{folio_seleccionado}"):
+                    devoluciones = {}
+                    total_rebaja_calculada = 0.0
+
+                    for idx, item in enumerate(items_venta):
+                        cod_prod = item.get("codigo_producto", "")
+                        detalle_prod = item.get("detalle", "Producto")
+                        cant_original = float(item.get("cantidad", 1))
+                        monto_linea = float(item.get("monto", 0))
+                        precio_unitario = monto_linea / cant_original if cant_original > 0 else 0.0
+
+                        st.write(f"📦 **{detalle_prod}** (`{cod_prod}`) — Enviados: **{cant_original:g}** uds | P.U: **${precio_unitario:,.2f}**")
+                        
+                        cant_devuelta = st.number_input(
+                            f"Devolver unidades:",
+                            min_value=0.0,
+                            max_value=cant_original,
+                            value=0.0,
+                            step=1.0,
+                            key=f"dev_{folio_seleccionado}_{idx}"
+                        )
+                        
+                        monto_rebaja_linea = cant_devuelta * precio_unitario
+                        total_rebaja_calculada += monto_rebaja_linea
+                        
+                        devoluciones[cod_prod] = {
+                            "cant_devuelta": cant_devuelta,
+                            "detalle": detalle_prod
+                        }
+
+                    st.write(f"#### 📉 Total a rebajar del saldo: **${total_rebaja_calculada:,.2f}**")
+                    btn_confirmar_dev = st.form_submit_button("📦 Confirmar Reingreso e Inventario", type="secondary", use_container_width=True)
+
+                    if btn_confirmar_dev:
+                        if total_rebaja_calculada <= 0:
+                            st.warning("⚠️ Ingresa al menos 1 unidad para devolver.")
+                        else:
+                            try:
+                                bodega_actual = st.session_state.get("bodega_pos_seleccionada", "Bodega Principal")
+                                
+                                # 1. Devuelve las unidades al inventario mediante RPC
+                                for cod_prod, datos in devoluciones.items():
+                                    cant = datos["cant_devuelta"]
+                                    if cant > 0:
+                                        supabase.rpc(
+                                            'actualizar_stock_atomico',
+                                            {
+                                                'p_rut_empresa': str(rut_actual),
+                                                'p_codigo': str(cod_prod),
+                                                'p_bodega': str(bodega_actual),
+                                                'p_cantidad': cant,
+                                                'p_operacion': 'ENTRADA'
+                                            }
+                                        ).execute()
+
+                                # 2. Rebaja el saldo pendiente en Cuentas por Cobrar
+                                nuevo_saldo = saldo_actual - total_rebaja_calculada
+
+                                if nuevo_saldo <= 0:
+                                    supabase.table("cuentas_por_cobrar").delete().eq("id", id_deuda).execute()
+                                    st.success(f"🎉 ¡Mercadería devuelta y deuda saldada por completo para el folio {folio_seleccionado}!")
+                                else:
+                                    supabase.table("cuentas_por_cobrar").update({
+                                        "saldo_pendiente": nuevo_saldo,
+                                        "estado": "Pendiente"
+                                    }).eq("id", id_deuda).execute()
+                                    st.success(f"✅ Reingreso exitoso. Stock devuelto a bodega y saldo rebajado en ${total_rebaja_calculada:,.2f}. Nuevo saldo: ${nuevo_saldo:,.2f}")
+
+                                st.rerun()
+
+                            except Exception as e:
+                                st.error(f"❌ Error al procesar el reingreso de consignación: {e}")
 
 def mostrar_modulo_registro_gastos(supabase):
     st.markdown("### 📋 Registro y Control de Gastos")
