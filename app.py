@@ -3903,17 +3903,18 @@ elif menu == "💰 Módulo de Ventas (POS)":
     # --- 🛡️ 1. GUARDIA DE SESIÓN Y ATRIBUTOS BÁSICOS ---
     rut_actual = get_current_tenant()
 
-if not rut_actual:
-    # Intentar recuperar el primer negocio asociado al usuario si existe en permisos
-    permisos = st.session_state.get("permisos_usuario", {})
-    negocios = permisos.get("negocios", []) if isinstance(permisos, dict) else []
-    
-    if negocios:
-        rut_actual = str(negocios[0]).replace(".", "").strip()
-        st.session_state["negocio_seleccionado"] = rut_actual
-    else:
-        st.error("⚠️ No se ha detectado ningún negocio seleccionado en la sesión. Selecciona una empresa en el menú principal.")
-        st.stop()
+    if not rut_actual:
+        # Intentar recuperar el primer negocio asociado al usuario si existe en permisos
+        permisos = st.session_state.get("permisos_usuario", {})
+        negocios = permisos.get("negocios", []) if isinstance(permisos, dict) else []
+        
+        if negocios:
+            rut_actual = str(negocios[0]).replace(".", "").strip()
+            st.session_state["negocio_seleccionado"] = rut_actual
+        else:
+            st.error("⚠️ No se ha detectado ningún negocio seleccionado en la sesión. Selecciona una empresa en el menú principal.")
+            st.stop()
+
     caja_actual = param_caja if ('param_caja' in locals() and param_caja) else "Caja Principal"
     mostrar_encabezado_con_home(f"Terminal de Ventas - {caja_actual}")
 
@@ -3927,7 +3928,7 @@ if not rut_actual:
     if "precio_actual_input" not in st.session_state: st.session_state.precio_actual_input = 0.0
 
     # --- 3. SELECTOR MULTI-BODEGA PARA EL POS ---
-    rut_limpio = str(rut_actual if 'rut_actual' in locals() else get_current_tenant()).replace(".", "").strip()
+    rut_limpio = str(rut_actual).replace(".", "").strip()
 
     bodegas_pos = []
 
@@ -3952,6 +3953,7 @@ if not rut_actual:
     )
 
     st.markdown("---")
+
     # --- 4. CARGA PREVIA DEL INVENTARIO (CRÍTICO PARA EL ESCÁNER) ---
     df_nube = pd.DataFrame()
     try:
@@ -4071,7 +4073,7 @@ if not rut_actual:
     )
     controlar_stock = "Estricto" in modo_inventario
 
-    # --- 8. SELECCIÓN DE CLIENTES (UNIFICADO PARA CUALQUIER TIPO DE DOCUMENTO Y FORMA DE PAGO) ---
+    # --- 8. SELECCIÓN DE CLIENTES ---
     cliente_nombre, cliente_rut = "", ""
     try:
         res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", str(rut_actual)).execute()
@@ -4230,7 +4232,6 @@ if not rut_actual:
                         for item in st.session_state.carrito_ventas:
                             lineas_productos += f"- {item['Descripción']} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
                             
-                            # Actualización de stock atómica en base de datos
                             try:
                                 if not item.get("es_guia_previa", False):
                                     codigo_vendido = str(item["Código"])
@@ -4298,7 +4299,6 @@ if not rut_actual:
                                 "modo_emision": modo_str
                             })
 
-                        # Inserción en bloque a Supabase
                         try:
                             res_venta = supabase.table("ventas").insert(registros_ventas_batch).execute()
                             if not res_venta.data:
@@ -4308,7 +4308,6 @@ if not rut_actual:
                             st.error(f"❌ Error al registrar las líneas de venta: {e}")
                             st.stop()
 
-                        # Inserción universal en Cuentas por Cobrar para Crédito y Consignación (Indistinto del Tipo de Documento)
                         if forma_pago in ["Crédito", "Consignación"]:
                             fecha_vencimiento_str = (fecha_hora_actual + timedelta(days=dias_credito)).strftime("%Y-%m-%d")
                             registro_cxc = {
