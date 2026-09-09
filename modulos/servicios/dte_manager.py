@@ -1,10 +1,22 @@
-import requests
+import os
 import json
+import requests
+import streamlit as st
 from datetime import datetime
 
 # URL Sandbox de OpenFactura (Haulmer)
 OPENFACTURA_SANDBOX_URL = "https://dev-api.haulmer.com/v2/dte/issue"
-SANDBOX_API_KEY = "9245922d05404d71b84f0f03227d8e87"
+
+def _obtener_api_key_openfactura() -> str:
+    """Obtiene la clave API de OpenFactura desde .streamlit/secrets.toml o variables de entorno."""
+    try:
+        if "OPENFACTURA_API_KEY" in st.secrets:
+            return str(st.secrets["OPENFACTURA_API_KEY"]).strip()
+        if "openfactura" in st.secrets and "api_key" in st.secrets["openfactura"]:
+            return str(st.secrets["openfactura"]["api_key"]).strip()
+    except Exception:
+        pass
+    return os.getenv("OPENFACTURA_API_KEY", "").strip()
 
 
 def emitir_dte_openfactura(
@@ -25,13 +37,19 @@ def emitir_dte_openfactura(
 
     datos_empresa = datos_empresa or {}
 
-    # 1. API Key (Empresa u OpenFactura Sandbox)
+    # 1. API Key Segura (Prioridad: parámetro directo > dict empresa > secrets.toml / Env)
     key_final = (
         api_key 
         or datos_empresa.get("api_key") 
         or datos_empresa.get("openfactura_api_key") 
-        or SANDBOX_API_KEY
+        or _obtener_api_key_openfactura()
     )
+
+    if not key_final:
+        return {
+            "exito": False,
+            "error": "No se encontró la clave API de OpenFactura/Haulmer. Configura 'OPENFACTURA_API_KEY' en .streamlit/secrets.toml"
+        }
 
     # 2. Mapeo de código SII
     mapa_sii = {
