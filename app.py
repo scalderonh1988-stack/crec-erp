@@ -298,6 +298,7 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
    
     return pdf.output(dest='S').encode('latin1')
 
+
 # ----------------- SECCIÓN CUENTAS POR COBRAR (NUBE) -----------------
 def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     mostrar_encabezado_con_home("📑 Gestión de Cuentas por Cobrar")
@@ -310,28 +311,47 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     st.markdown("### 📊 Estado de Deudas Pendientes y Abonos")
     st.info("💡 Este módulo está conectado en tiempo real a la caja registradora. Las ventas a crédito y consignaciones de cualquier documento aparecen aquí automáticamente.")
 
-    # 1. Leer desde Supabase estandarizando el RUT
+    # 1. Leer ventas activas y cuentas por cobrar desde Supabase
     df_cxp = pd.DataFrame()
+    folios_existentes = set()
+
     try:
+        # Traer folios reales que existen actualmente en la tabla 'ventas' (evita registros huérfanos)
+        res_ventas = supabase.table("ventas").select("folio").eq("rut_empresa", rut_actual).execute()
+        if not res_ventas.data:
+            res_ventas = supabase.table("ventas").select("folio").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+            
+        if res_ventas.data:
+            folios_existentes = {str(v["folio"]).strip() for v in res_ventas.data if v.get("folio")}
+
+        # Consultar la tabla de cuentas por cobrar
         res_cxc = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual).execute()
         if res_cxc.data:
             df_cxp = pd.DataFrame(res_cxc.data)
         else:
-            # Reintento de respaldo sin espacios por inconsistencias de formato de RUT
+            # Reintento de respaldo sin puntos por inconsistencias de formato de RUT
             res_cxc_alt = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
             if res_cxc_alt.data:
                 df_cxp = pd.DataFrame(res_cxc_alt.data)
     except Exception as e:
         st.error(f"⚠️ Error cargando Cuentas por Cobrar desde la nube: {e}")
 
-    # 2. Filtrar exclusivamente deudas pendientes con saldo positivo
+    # 2. Filtrar exclusiones: estado pagado/anulado, saldo <= 0 y folios borrados de 'ventas'
     if not df_cxp.empty:
         df_cxp["saldo_pendiente"] = pd.to_numeric(df_cxp["saldo_pendiente"], errors="coerce").fillna(0)
         df_cxp["monto_total"] = pd.to_numeric(df_cxp["monto_total"], errors="coerce").fillna(0)
         
-        condicion_estado = df_cxp["estado"].astype(str).str.strip().str.capitalize() != "Pagada"
+        # Filtro insensibles a mayúsculas y género ("pagado", "pagada", "anulado", "anulada")
+        estados_invalidos = ["pagada", "pagado", "anulada", "anulado"]
+        condicion_estado = ~df_cxp["estado"].astype(str).str.strip().str.lower().isin(estados_invalidos)
         condicion_saldo = df_cxp["saldo_pendiente"] > 0
-        df_cxp = df_cxp[condicion_estado & condicion_saldo].copy()
+        
+        # Filtro estricto: el folio de la venta DEBE existir en la tabla 'ventas'
+        if folios_existentes:
+            condicion_folio_real = df_cxp["folio_venta"].astype(str).str.strip().isin(folios_existentes)
+            df_cxp = df_cxp[condicion_estado & condicion_saldo & condicion_folio_real].copy()
+        else:
+            df_cxp = df_cxp[condicion_estado & condicion_saldo].copy()
 
     if df_cxp.empty:
         st.info("ℹ️ ¡Excelente! No hay registros de cuentas por cobrar pendientes para este negocio.")
@@ -410,7 +430,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                 )
                 items_venta = res_ventas.data or []
                 es_consignacion = any(
-                    "consigna" in str(item.get("metodo_pago", "")).lower() 
+                    "consigna" in str(item.get("forma_pago", item.get("metodo_pago", ""))).lower() 
                     for item in items_venta
                 )
             except Exception as e:
@@ -426,6 +446,8 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                     try:
                         if nuevo_saldo <= 0:
                             supabase.table("cuentas_por_cobrar").delete().eq("id", id_deuda).execute()
+                            # También actualizar el estado en la tabla ventas si corresponde
+                            supabase.table("ventas").update({"estado": "Pagado"}).eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).execute()
                             st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! Registro eliminado.")
                         else:
                             supabase.table("cuentas_por_cobrar").update({
@@ -452,9 +474,9 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
 
                     for idx, item in enumerate(items_venta):
                         cod_prod = item.get("codigo_producto", "")
-                        detalle_prod = item.get("detalle", "Producto")
+                        detalle_prod = item.get("descripcion", item.get("detalle", "Producto"))
                         cant_original = float(item.get("cantidad", 1))
-                        monto_linea = float(item.get("monto", 0))
+                        monto_linea = float(item.get("subtotal", item.get("monto", 0)))
                         precio_unitario = monto_linea / cant_original if cant_original > 0 else 0.0
 
                         st.write(f"📦 **{detalle_prod}** (`{cod_prod}`) — Enviados: **{cant_original:g}** uds | P.U: **${precio_unitario:,.2f}**")
@@ -506,6 +528,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
 
                                 if nuevo_saldo <= 0:
                                     supabase.table("cuentas_por_cobrar").delete().eq("id", id_deuda).execute()
+                                    supabase.table("ventas").update({"estado": "Pagado"}).eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).execute()
                                     st.success(f"🎉 ¡Mercadería devuelta y deuda saldada por completo para el folio {folio_seleccionado}!")
                                 else:
                                     supabase.table("cuentas_por_cobrar").update({
