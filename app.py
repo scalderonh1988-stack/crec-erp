@@ -453,8 +453,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             except Exception as e:
                 st.warning(f"⚠️ No se pudo obtener el detalle de la venta: {e}")
 
-            # --- REGISTRO DE ABONO EN DINERO (ACTIVACIÓN MULTIMONEDA DETECCIÓN FLEXIBLE) ---
-            # Revisa todos los datos e índices en session_state y ruta para detectar Envirotech / Uruguay
+            # --- REGISTRO DE ABONO EN DINERO (BASE USD / ALTERNATIVA CLP) ---
             texto_sesion_completo = " ".join([f"{k} {v}" for k, v in st.session_state.items()]).upper()
             texto_ruta = str(ruta_negocio).upper()
             
@@ -466,28 +465,31 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
 
             if es_multimoneda:
                 dolar_hoy = obtener_dolar_hoy()
-                st.info(f"🇨🇱 **Valor Dólar Observado (Chile):** ${dolar_hoy:,.2f} CLP")
                 
+                # Por defecto selecciona USD ($)
                 moneda_pago = st.radio(
                     "Seleccione la moneda del pago:",
-                    ["Moneda Local ($)", "Dólares (USD $)"],
+                    ["Dólares (USD $)", "Pesos Chilenos (CLP $)"],
                     horizontal=True,
                     key=f"radio_moneda_{folio_seleccionado}"
                 )
 
-                if moneda_pago == "Dólares (USD $)":
-                    col_usd, col_tc = st.columns(2)
-                    with col_usd:
-                        monto_usd = st.number_input(
-                            "Monto recibido en USD ($):",
+                if moneda_pago == "Pesos Chilenos (CLP $)":
+                    st.info(f"🇨🇱 **Valor Dólar Observado (Chile):** ${dolar_hoy:,.2f} CLP")
+                    
+                    col_clp, col_tc = st.columns(2)
+                    with col_clp:
+                        monto_clp = st.number_input(
+                            "Monto recibido en CLP ($):",
                             min_value=0.0,
-                            step=10.0,
+                            max_value=float(saldo_actual * dolar_hoy),
+                            step=1000.0,
                             format="%.2f",
-                            key=f"usd_{folio_seleccionado}"
+                            key=f"clp_{folio_seleccionado}"
                         )
                     with col_tc:
                         tipo_cambio = st.number_input(
-                            "Tipo de Cambio (T/C):",
+                            "Tipo de Cambio (T/C CLP/USD):",
                             min_value=1.0,
                             value=float(dolar_hoy),
                             step=1.0,
@@ -495,15 +497,19 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                             key=f"tc_{folio_seleccionado}"
                         )
 
-                    monto_abono = monto_usd * tipo_cambio
-                    st.success(f"💰 Equivalente a abonar en cuenta: **${monto_abono:,.2f}**")
+                    # Convierte CLP a USD dividiendo por el tipo de cambio
+                    monto_abono = monto_clp / tipo_cambio if tipo_cambio > 0 else 0.0
+                    st.success(f"💰 Equivalente a abonar a la deuda: **${monto_abono:,.2f} USD**")
+
                 else:
+                    # Pago directo en USD (Default)
                     monto_abono = st.number_input(
-                        f"💵 Monto a abonar en dinero (Máximo ${saldo_actual:,.2f}):",
+                        f"💵 Monto a abonar en USD (Máximo ${saldo_actual:,.2f} USD):",
                         min_value=0.0,
                         max_value=saldo_actual,
-                        step=100.0,
-                        key=f"clp_{folio_seleccionado}"
+                        step=10.0,
+                        format="%.2f",
+                        key=f"usd_{folio_seleccionado}"
                     )
             else:
                 monto_abono = st.number_input(
@@ -513,31 +519,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                     step=100.0,
                     key=f"clp_{folio_seleccionado}"
                 )
-
-            if st.button("✅ Registrar Abono en la Nube", use_container_width=True, type="primary"):
-                if monto_abono > saldo_actual:
-                    st.warning(f"⚠️ El monto a abonar (${monto_abono:,.2f}) no puede superar el saldo pendiente (${saldo_actual:,.2f}).")
-                elif monto_abono > 0:
-                    nuevo_saldo = saldo_actual - monto_abono
-                    
-                    try:
-                        if nuevo_saldo <= 0:
-                            supabase.table("cuentas_por_cobrar").delete().eq("id", id_deuda).execute()
-                            # También actualizar el estado en la tabla ventas si corresponde
-                            supabase.table("ventas").update({"estado": "Pagado"}).eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).execute()
-                            st.success(f"🎉 ¡Deuda saldada por completo para el folio {folio_seleccionado}! Registro eliminado.")
-                        else:
-                            supabase.table("cuentas_por_cobrar").update({
-                                "saldo_pendiente": nuevo_saldo,
-                                "estado": "Pendiente"
-                            }).eq("id", id_deuda).execute()
-                            st.success(f"🟢 Abono registrado con éxito. Nuevo saldo pendiente: ${nuevo_saldo:,.2f}")
-                        
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error al registrar el abono en la nube: {e}")
-                else:
-                    st.warning("⚠️ Ingresa un monto mayor a cero.")
 
             # --- REGISTRO DE REINGRESO / DEVOLUCIÓN (SÓLO SI ES CONSIGNACIÓN) ---
             if es_consignacion and items_venta:
