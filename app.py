@@ -765,8 +765,7 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
     
     st.markdown("""
         <div style='background-color: #EFF6FF; padding: 15px; border-radius: 8px; border-left: 4px solid #3B82F6; margin-bottom: 20px;'>
-            <strong>☁️ Control Financiero en la Nube:</strong> Este módulo está respaldado en tiempo real en <strong>Supabase</strong>. 
-            Te permite gestionar retiros seguros y conciliar cartolas bancarias diferenciando entre tus cuentas en <strong>USD</strong> y <strong>CLP</strong>.
+            <strong>☁️ Control Financiero en la Nube:</strong> Este módulo te permite gestionar tus <strong>cuentas bancarias</strong>, retiros seguros y conciliar cartolas en <strong>USD</strong> y <strong>CLP</strong> respaldado en <strong>Supabase</strong>.
         </div>
     """, unsafe_allow_html=True)
 
@@ -775,10 +774,24 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
         st.error("⚠️ No hay un negocio seleccionado en la sesión.")
         st.stop()
 
-    tab_cr1, tab_cr2, tab_cr3 = st.tabs([
+    # --- CARGAR CUENTAS BANCARIAS DE LA EMPRESA DESDE SUPABASE ---
+    lista_cuentas = []
+    try:
+        res_cuentas = supabase.table("cuentas_bancarias").select("*").eq("rut_empresa", rut_actual).execute()
+        if res_cuentas.data:
+            lista_cuentas = res_cuentas.data
+        else:
+            res_cuentas_alt = supabase.table("cuentas_bancarias").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+            if res_cuentas_alt.data:
+                lista_cuentas = res_cuentas_alt.data
+    except Exception:
+        pass
+
+    tab_cr1, tab_cr2, tab_cr3, tab_cr4 = st.tabs([
         "💰 Cálculo de Retiro Seguro (Markup)", 
         "🏦 Conciliación de Cartolas (USD / CLP)", 
-        "📂 Historial de Retiros"
+        "📂 Historial de Retiros",
+        "⚙️ Cuentas Bancarias"
     ])
 
     # ---------------- TAB 1: CÁLCULO DE RETIRO SEGURO ----------------
@@ -882,19 +895,38 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
         with st.form("form_nueva_conciliacion_nube"):
             st.markdown("#### ➕ Registrar Nueva Validación de Cartola")
             
+            # Formatear lista de cuentas disponibles
+            opciones_cuentas = []
+            dict_cuentas = {}
+
+            if lista_cuentas:
+                for c in lista_cuentas:
+                    banco_str = f" ({c.get('banco')})" if c.get('banco') else ""
+                    num_str = f" N°{c.get('numero_cuenta')}" if c.get('numero_cuenta') else ""
+                    etiqueta = f"{c.get('nombre_cuenta')}{banco_str}{num_str} [{c.get('moneda', 'USD')}]"
+                    opciones_cuentas.append(etiqueta)
+                    dict_cuentas[etiqueta] = c
+            else:
+                # Opciones de respaldo predeterminadas si no hay cuentas creadas
+                opciones_cuentas = [
+                    "Cuenta Corriente USD (Itaú / Santander USD)", 
+                    "Cuenta Corriente CLP (Banco Chile / Itaú CLP)",
+                    "Caja Chica / Efectivo"
+                ]
+
             col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
                 f_conci = st.date_input("Fecha de Cartola", value=date.today(), key="f_con_nube")
-                cuenta_destino = st.selectbox(
-                    "🏦 Cuenta Corriente Destino", 
-                    [
-                        "Cuenta Corriente USD (Itaú / Santander USD)", 
-                        "Cuenta Corriente CLP (Banco Chile / Itaú CLP)",
-                        "Caja Chica / Efectivo"
-                    ]
-                )
+                cuenta_destino_sel = st.selectbox("🏦 Cuenta Corriente Destino", opciones_cuentas)
+
+            # Detectar moneda de la cuenta elegida
+            moneda_sugerida = "USD"
+            if cuenta_destino_sel in dict_cuentas:
+                moneda_sugerida = dict_cuentas[cuenta_destino_sel].get("moneda", "USD")
+            elif "CLP" in cuenta_destino_sel:
+                moneda_sugerida = "CLP"
+
             with col_b2:
-                moneda_sugerida = "USD" if "USD" in cuenta_destino else "CLP"
                 moneda_conci = st.selectbox("Moneda de Cartola", ["USD", "CLP"], index=0 if moneda_sugerida == "USD" else 1)
                 origen_pago = st.selectbox("Origen del Abono / Transacción", [
                     "Transferencia Bancaria Directa", 
@@ -923,7 +955,7 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
                     data_conci = {
                         "rut_empresa": rut_actual,
                         "fecha": str(f_conci),
-                        "cuenta_destino": cuenta_destino,
+                        "cuenta_destino": cuenta_destino_sel,
                         "moneda": moneda_conci,
                         "origen_pago": origen_pago,
                         "monto_pos": float(monto_pos),
@@ -980,6 +1012,63 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
                 st.metric(label="🇨🇱 Total Utilidad Retirada (CLP)", value=f"CLP ${tot_clp:,.2f}")
         else:
             st.info("ℹ️ No hay registros de retiros guardados en la nube todavía.")
+
+    # ---------------- TAB 4: GESTIÓN DE CUENTAS BANCARIAS ----------------
+    with tab_cr4:
+        st.markdown("### ⚙️ Configuración y Creación de Cuentas Bancarias")
+        st.info("💡 Crea aquí las cuentas bancarias o cajas de tu empresa. Aparecerán automáticamente en la pestaña de Conciliación de Cartolas.")
+
+        with st.form("form_crear_cuenta_bancaria"):
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                nombre_cuenta = st.text_input("Nombre / Alias de la Cuenta *", placeholder="Ej: Itaú Corriente USD")
+                banco = st.text_input("Banco / Institución Financial", placeholder="Ej: Banco Itaú / Banco Chile")
+                tipo_cuenta = st.selectbox("Tipo de Cuenta", ["Cuenta Corriente", "Cuenta Vista / RUT", "Caja Chica / Efectivo", "Otra"])
+            with col_c2:
+                numero_cuenta = st.text_input("N° de Cuenta (Opcional)", placeholder="Ej: 021-98765-4")
+                moneda_cuenta = st.selectbox("Moneda Principal de la Cuenta", ["USD", "CLP"])
+
+            btn_crear = st.form_submit_button("➕ Registrar Cuenta Bancaria en la Nube", type="primary", use_container_width=True)
+
+            if btn_crear:
+                if not nombre_cuenta.strip():
+                    st.warning("⚠️ Debes ingresar un nombre o alias para la cuenta.")
+                else:
+                    try:
+                        nueva_cuenta = {
+                            "rut_empresa": rut_actual,
+                            "nombre_cuenta": nombre_cuenta.strip(),
+                            "banco": banco.strip(),
+                            "numero_cuenta": numero_cuenta.strip(),
+                            "moneda": moneda_cuenta,
+                            "tipo_cuenta": tipo_cuenta,
+                            "activa": True
+                        }
+                        supabase.table("cuentas_bancarias").insert(nueva_cuenta).execute()
+                        st.success(f"🎉 ¡Cuenta '{nombre_cuenta}' creada exitosamente!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al crear la cuenta en Supabase: {e}")
+
+        st.divider()
+        st.markdown("#### 📜 Cuentas Registradas para esta Empresa")
+        if lista_cuentas:
+            df_cuentas = pd.DataFrame(lista_cuentas)
+            cols_c = ["nombre_cuenta", "banco", "numero_cuenta", "moneda", "tipo_cuenta"]
+            cols_exist = [col for col in cols_c if col in df_cuentas.columns]
+            
+            st.dataframe(
+                df_cuentas[cols_exist].rename(columns={
+                    "nombre_cuenta": "Nombre Cuenta",
+                    "banco": "Banco",
+                    "numero_cuenta": "N° Cuenta",
+                    "moneda": "Moneda",
+                    "tipo_cuenta": "Tipo"
+                }),
+                use_container_width=True
+            )
+        else:
+            st.info("ℹ️ No hay cuentas bancarias personalizadas creadas aún.")
 
 # --- CONEXIÓN DE REPORTES A SUPABASE ---
 def mostrar_modulo_reportes_avanzados(ruta_negocio):
