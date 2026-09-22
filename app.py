@@ -298,6 +298,18 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
    
     return pdf.output(dest='S').encode('latin1')
 
+# --- FUNCIÓN AUXILIAR: CONSULTA AUTOMÁTICA DEL DÓLAR ---
+@st.cache_data(ttl=14400) # Se actualiza cada 4 horas automáticamente
+def obtener_dolar_hoy():
+    try:
+        url = "https://mindicador.cl/api/dolar"
+        respuesta = requests.get(url, timeout=4)
+        if respuesta.status_code == 200:
+            return float(respuesta.json()["serie"][0]["valor"])
+    except Exception:
+        pass
+    return 950.0  # Valor por defecto si la API externa no responde
+
 
 # ----------------- SECCIÓN CUENTAS POR COBRAR (NUBE) -----------------
 def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
@@ -436,11 +448,65 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             except Exception as e:
                 st.warning(f"⚠️ No se pudo obtener el detalle de la venta: {e}")
 
-            # --- REGISTRO DE ABONO EN DINERO ---
-            monto_abono = st.number_input(f"💵 Monto a abonar en dinero (Máximo ${saldo_actual:,.2f}):", min_value=0.0, max_value=saldo_actual, step=100.0)
-            
+            # --- REGISTRO DE ABONO EN DINERO (ACTIVACIÓN MULTIMONEDA) ---
+            negocio_nombre = str(st.session_state.get("negocio_seleccionado", "")).strip().upper()
+            EMPRESAS_MULTIMONEDA = ["ENVIROTECH URUGUAY"]
+            es_multimoneda = "URUGUAY" in negocio_nombre or negocio_nombre in [e.upper() for e in EMPRESAS_MULTIMONEDA]
+
+            if es_multimoneda:
+                dolar_hoy = obtener_dolar_hoy()
+                st.info(f"🇨🇱 **Valor Dólar Observado (Chile):** ${dolar_hoy:,.2f} CLP")
+                
+                moneda_pago = st.radio(
+                    "Seleccione la moneda del pago:",
+                    ["Moneda Local ($)", "Dólares (USD $)"],
+                    horizontal=True,
+                    key=f"radio_moneda_{folio_seleccionado}"
+                )
+
+                if moneda_pago == "Dólares (USD $)":
+                    col_usd, col_tc = st.columns(2)
+                    with col_usd:
+                        monto_usd = st.number_input(
+                            "Monto recibido en USD ($):",
+                            min_value=0.0,
+                            step=10.0,
+                            format="%.2f",
+                            key=f"usd_{folio_seleccionado}"
+                        )
+                    with col_tc:
+                        tipo_cambio = st.number_input(
+                            "Tipo de Cambio (T/C):",
+                            min_value=1.0,
+                            value=float(dolar_hoy),
+                            step=1.0,
+                            format="%.2f",
+                            key=f"tc_{folio_seleccionado}"
+                        )
+
+                    monto_abono = monto_usd * tipo_cambio
+                    st.success(f"💰 Equivalente a abonar en cuenta: **${monto_abono:,.2f}**")
+                else:
+                    monto_abono = st.number_input(
+                        f"💵 Monto a abonar en dinero (Máximo ${saldo_actual:,.2f}):",
+                        min_value=0.0,
+                        max_value=saldo_actual,
+                        step=100.0,
+                        key=f"clp_{folio_seleccionado}"
+                    )
+            else:
+                monto_abono = st.number_input(
+                    f"💵 Monto a abonar en dinero (Máximo ${saldo_actual:,.2f}):",
+                    min_value=0.0,
+                    max_value=saldo_actual,
+                    step=100.0,
+                    key=f"clp_{folio_seleccionado}"
+                )
+
             if st.button("✅ Registrar Abono en la Nube", use_container_width=True, type="primary"):
-                if monto_abono > 0:
+                if monto_abono > saldo_actual:
+                    st.warning(f"⚠️ El monto a abonar (${monto_abono:,.2f}) no puede superar el saldo pendiente (${saldo_actual:,.2f}).")
+                elif monto_abono > 0:
                     nuevo_saldo = saldo_actual - monto_abono
                     
                     try:
@@ -535,7 +601,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                                         "saldo_pendiente": nuevo_saldo,
                                         "estado": "Pendiente"
                                     }).eq("id", id_deuda).execute()
-                                    st.success(f"✅ Reingreso exitoso. Stock devuelto a bodega y saldo rebajado en ${total_rebaja_calculada:,.2f}. Nuevo saldo: ${nuevo_saldo:,.2f}")
+                                    st.success(f"✅ Reingreso exitoso. Stock devuelto a bodega y saldo rebajado en ${total_rebaja_calculada:,.2f}. Nuevo saldo:${nuevo_saldo:,.2f}")
 
                                 st.rerun()
 
