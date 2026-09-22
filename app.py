@@ -4307,14 +4307,189 @@ elif menu == "⚙️ Configuración General":
                     st.error(f"❌ Ocurrió un error al procesar el archivo: {e}")
 
 
-# ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO) -----------------
+# ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO / HÍBRIDO OFFLINE) -----------------
 elif menu == "💰 Módulo de Ventas (POS)":
+
+    import sqlite3
+    import json
+    import socket
+
+    DB_LOCAL_NAME = "pos_local_cache.db"
+
+    # --- 🛠️ FUNCIONES AUXILIARES PARA MODO OFFLINE (SQLITE + FALLBACK) ---
+    def init_db_local_pos():
+        """Inicializa las tablas locales en SQLite si no existen."""
+        try:
+            conn = sqlite3.connect(DB_LOCAL_NAME)
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS productos_cache (
+                    codigo TEXT PRIMARY KEY,
+                    descripcion TEXT,
+                    precio_venta REAL,
+                    stock REAL,
+                    es_exento TEXT,
+                    impuesto_especifico TEXT,
+                    bodega TEXT,
+                    rut_empresa TEXT
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS ventas_pendientes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fecha TEXT,
+                    rut_empresa TEXT,
+                    caja TEXT,
+                    documento TEXT,
+                    cliente TEXT,
+                    monto_total REAL,
+                    metodo_pago TEXT,
+                    modo_emision TEXT,
+                    items_json TEXT,
+                    estado TEXT DEFAULT 'pendiente'
+                )
+            """)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error inicializando SQLite local: {e}")
+
+    def hay_conexion_activa(host="8.8.8.8", port=53, timeout=1.0):
+        """Verifica si hay conexión a internet disponible."""
+        try:
+            socket.setdefaulttimeout(timeout)
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+            return True
+        except OSError:
+            return False
+
+    def respaldar_catalogo_local(df_prod, rut, bodega):
+        """Guarda una copia del catálogo de productos en SQLite."""
+        try:
+            if df_prod is None or df_prod.empty: return
+            conn = sqlite3.connect(DB_LOCAL_NAME)
+            c = conn.cursor()
+            for _, row in df_prod.iterrows():
+                c.execute("""
+                    INSERT OR REPLACE INTO productos_cache 
+                    (codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico, bodega, rut_empresa)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(row.get('codigo', '')),
+                    str(row.get('descripcion', '')),
+                    float(row.get('precio_venta', 0) or 0),
+                    float(row.get('stock', 0) or 0),
+                    str(row.get('es_exento', False)),
+                    str(row.get('impuesto_especifico', '')),
+                    str(bodega),
+                    str(rut)
+                ))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error guardando catálogo en caché local: {e}")
+
+    def cargar_catalogo_local(rut, bodega):
+        """Carga los productos desde la base de datos SQLite local."""
+        try:
+            conn = sqlite3.connect(DB_LOCAL_NAME)
+            df = pd.read_sql_query(
+                "SELECT codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico FROM productos_cache WHERE rut_empresa = ? AND bodega = ?",
+                conn, params=(str(rut), str(bodega))
+            )
+            conn.close()
+            return df
+        except Exception:
+            return pd.DataFrame()
+
+    def guardar_venta_offline_db(rut, caja, documento, cliente, monto_total, metodo_pago, modo_emision, items):
+        """Registra la venta en la cola de SQLite si no hay red."""
+        try:
+            conn = sqlite3.connect(DB_LOCAL_NAME)
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO ventas_pendientes (fecha, rut_empresa, caja, documento, cliente, monto_total, metodo_pago, modo_emision, items_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                str(rut), str(caja), str(documento), str(cliente),
+                float(monto_total), str(metodo_pago), str(modo_emision),
+                json.dumps(items)
+            ))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error guardando venta offline: {e}")
+            return False
+
+    def sincronizar_ventas_pendientes_pos(supabase_client):
+        """Sube a Supabase las ventas que se registraron estando sin internet."""
+        try:
+            if not hay_conexion_activa(): return 0
+            conn = sqlite3.connect(DB_LOCAL_NAME)
+            c = conn.cursor()
+            c.execute("SELECT id, fecha, rut_empresa, caja, documento, cliente, monto_total, metodo_pago, modo_emision, items_json FROM ventas_pendientes WHERE estado = 'pendiente'")
+            filas = c.fetchall()
+            if not filas:
+                conn.close()
+                return 0
+            
+            sincronizadas = 0
+            for f in filas:
+                v_id, fecha, rut, caja, doc, cliente, monto, metodo, modo, items_str = f
+                items = json.loads(items_str)
+                
+                batch = []
+                folio_off = f"OFF-{v_id}"
+                for item in items:
+                    batch.append({
+                        "folio": str(folio_off),
+                        "rut_empresa": str(rut),
+                        "fecha": fecha,
+                        "caja": caja,
+                        "documento": doc,
+                        "cliente": cliente,
+                        "codigo_producto": str(item.get("Código", "")),
+                        "detalle": str(item.get("Descripción", "")),
+                        "cantidad": float(item.get("Cantidad", 1)),
+                        "monto": float(item.get("Subtotal", 0)),
+                        "metodo_pago": metodo,
+                        "neto": round(float(item.get("Subtotal", 0)) / 1.19, 2),
+                        "iva": round(float(item.get("Subtotal", 0)) - (float(item.get("Subtotal", 0)) / 1.19), 2),
+                        "impuesto_especifico": 0.0,
+                        "modo_emision": modo
+                    })
+                
+                try:
+                    res = supabase_client.table("ventas").insert(batch).execute()
+                    if res.data:
+                        c.execute("UPDATE ventas_pendientes SET estado = 'sincronizado' WHERE id = ?", (v_id,))
+                        sincronizadas += 1
+                except Exception as ex:
+                    print(f"Error subiendo venta {v_id}: {ex}")
+            
+            conn.commit()
+            conn.close()
+            return sincronizadas
+        except Exception as e:
+            print(f"Error en sincronización offline: {e}")
+            return 0
+
+    # --- 🟢 INICIALIZACIÓN DE LA CAJA LOCAL ---
+    init_db_local_pos()
+    modo_online = hay_conexion_activa()
+
+    # Intento de auto-sincronización en segundo plano si hay red
+    if modo_online:
+        cant_sinc, _ = sincronizar_ventas_pendientes_pos(supabase), ""
+        if cant_sinc > 0:
+            st.toast(f"🔄 ¡Se sincronizaron {cant_sinc} ventas pendientes acumuladas offline!", icon="🎉")
 
     # --- 🛡️ 1. GUARDIA DE SESIÓN Y ATRIBUTOS BÁSICOS ---
     rut_actual = get_current_tenant()
 
     if not rut_actual:
-        # Intentar recuperar el primer negocio asociado al usuario si existe en permisos
         permisos = st.session_state.get("permisos_usuario", {})
         negocios = permisos.get("negocios", []) if isinstance(permisos, dict) else []
         
@@ -4328,6 +4503,12 @@ elif menu == "💰 Módulo de Ventas (POS)":
     caja_actual = param_caja if ('param_caja' in locals() and param_caja) else "Caja Principal"
     mostrar_encabezado_con_home(f"Terminal de Ventas - {caja_actual}")
 
+    # Indicador visual del estado de la conexión
+    if modo_online:
+        st.caption("🟢 **Estado:** Sistema En Línea (Sincronizado con Supabase)")
+    else:
+        st.warning("🟠 **Estado:** Modo Offline / Contingencia (Operando con copia local SQLite)")
+
     # --- 🛡️ 2. INICIALIZACIÓN DEFENSIVA DE ESTADOS DE SESIÓN ---
     if "carrito_ventas" not in st.session_state: st.session_state.carrito_ventas = []
     if "ultimo_recibo" not in st.session_state: st.session_state.ultimo_recibo = None
@@ -4339,10 +4520,9 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     # --- 3. SELECTOR MULTI-BODEGA PARA EL POS ---
     rut_limpio = str(rut_actual).replace(".", "").strip()
-
     bodegas_pos = []
 
-    if rut_limpio:
+    if modo_online and rut_limpio:
         try:
             res_bod = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_limpio).execute()
             if res_bod.data:
@@ -4364,15 +4544,23 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     st.markdown("---")
 
-    # --- 4. CARGA PREVIA DEL INVENTARIO (CRÍTICO PARA EL ESCÁNER) ---
+    # --- 4. CARGA PREVIA DEL INVENTARIO (CON FALLBACK AUTOMÁTICO A SQLITE) ---
     df_nube = pd.DataFrame()
-    try:
-        res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", str(rut_actual)).eq("bodega", bodega_actual).limit(10000).execute()
-        if res_pos.data:
-            df_nube = pd.DataFrame(res_pos.data)
+    if modo_online:
+        try:
+            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", str(rut_actual)).eq("bodega", bodega_actual).limit(10000).execute()
+            if res_pos.data:
+                df_nube = pd.DataFrame(res_pos.data)
+                st.session_state.df_nube_pos = df_nube
+                # Respaldar en memoria local por si se corta el internet más adelante
+                respaldar_catalogo_local(df_nube, rut_actual, bodega_actual)
+        except Exception as e:
+            st.warning(f"⚠️ Red inestable. Cambiando a memoria local: {e}")
+            df_nube = cargar_catalogo_local(rut_actual, bodega_actual)
             st.session_state.df_nube_pos = df_nube
-    except Exception as e:
-        st.error(f"⚠️ Error conectando al inventario en la nube: {e}")
+    else:
+        df_nube = cargar_catalogo_local(rut_actual, bodega_actual)
+        st.session_state.df_nube_pos = df_nube
 
     # --- 5. MÓDULO OPTIMIZADO PARA LECTOR DE CÓDIGO DE BARRAS ---
     def procesar_escaneo_pos():
@@ -4414,7 +4602,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 else:
                     st.warning(f"⚠️ No se encontró ningún producto con el código: {codigo_leido}")
             else:
-                st.error("⚠️ La base de datos de productos no está cargada.")
+                st.error("⚠️ La base de datos de productos no está cargada en la memoria local.")
         st.session_state.input_scanner = ""
 
     # --- 6. CABECERA Y SELECCIÓN DE DOCUMENTO ---
@@ -4443,7 +4631,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
             with col_g2:
                 st.write("")
                 if st.button("📥 Cargar Guía", use_container_width=True):
-                    if folio_guia_a_facturar:
+                    if folio_guia_a_facturar and modo_online:
                         try:
                             res_guia = supabase.table("ventas").select("*").eq("rut_empresa", str(rut_actual)).eq("folio", folio_guia_a_facturar.strip()).execute()
                             if res_guia.data:
@@ -4466,11 +4654,13 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                         "Subtotal": monto_total,
                                         "es_guia_previa": True 
                                     })
-                                st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente. Lista para facturar.")
+                                st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente.")
                             else:
                                 st.warning("⚠️ No se encontró ninguna guía con ese folio.")
                         except Exception as e:
                             st.error(f"❌ Error al buscar la guía: {e}")
+                    elif not modo_online:
+                        st.warning("⚠️ La búsqueda de guías previas requiere conexión activa a la nube.")
                     else:
                         st.warning("⚠️ Ingresa un folio válido.")
     st.markdown("---")
@@ -4485,11 +4675,13 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     # --- 8. SELECCIÓN DE CLIENTES ---
     cliente_nombre, cliente_rut = "", ""
-    try:
-        res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", str(rut_actual)).execute()
-        df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
-    except Exception:
-        df_clientes_pos = pd.DataFrame()
+    df_clientes_pos = pd.DataFrame()
+    if modo_online:
+        try:
+            res_clientes = supabase.table("clientes").select("rut, nombre").eq("id_negocio", str(rut_actual)).execute()
+            df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
+        except Exception:
+            pass
 
     c_nombre_def = st.session_state.get("cliente_preseleccionado", "")
     c_rut_def = ""
@@ -4504,7 +4696,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
         df_clientes_pos["etiqueta"] = df_clientes_pos["nombre"].astype(str) + " (" + df_clientes_pos["rut"].astype(str) + ")"
         lista_clientes = df_clientes_pos["etiqueta"].tolist()
         
-    lista_clientes.insert(0, "-- Selecciona un cliente (Opcional / Requerido para Crédito o Consignación) --")
+    lista_clientes.insert(0, "-- Selecciona un cliente (Opcional / Requerido para Crédito) --")
     
     idx_cliente = 0
     if c_nombre_def:
@@ -4515,19 +4707,19 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     cliente_elegido = st.selectbox("👤 Selecciona o asigna un cliente:", lista_clientes, index=idx_cliente)
   
-    if cliente_elegido and cliente_elegido != "-- Selecciona un cliente (Opcional / Requerido para Crédito o Consignación) --" and " (" in cliente_elegido:
+    if cliente_elegido and cliente_elegido != "-- Selecciona un cliente (Opcional / Requerido para Crédito) --" and " (" in cliente_elegido:
         cliente_nombre = cliente_elegido.split(" (")[0]
         cliente_rut = cliente_elegido.split(" (")[1].replace(")", "")
     else:
         col_f1, col_f2 = st.columns(2)
-        with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def, placeholder="Ej: Juan Pérez / Empresa SpA")
+        with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def, placeholder="Ej: Juan Pérez")
         with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def, placeholder="Ej: 12.345.678-9")
 
     # =========================================================================
     # --- VISTA 1: PANTALLA DE ÉXITO ---
     # =========================================================================
     if st.session_state.ultimo_recibo is not None:
-        st.success("🎉 ¡Transacción completada y archivada con éxito!")
+        st.success("🎉 ¡Transacción completada y procesada con éxito!")
         st.markdown(f'<div class="ticket-box">{st.session_state.ultimo_recibo}</div>', unsafe_allow_html=True)
       
         if 'items_recibo_actual' not in st.session_state or st.session_state.items_recibo_actual is None:
@@ -4556,7 +4748,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.rerun()
 
     # =========================================================================
-    # --- VISTA 2: PANTALLA DE PAGO ---
+    # --- VISTA 2: PANTALLA DE PAGO Y CONFIRMACIÓN ---
     # =========================================================================
     elif st.session_state.estado_pago:
         st.markdown("### 💳 2. Formas de Pago")
@@ -4582,7 +4774,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 else:
                     st.error("🔴 Monto insuficiente.")
             elif forma_pago in ["Crédito", "Consignación"]:
-                st.warning(f"⚖️ Esta venta en {forma_pago} se enviará automáticamente al módulo de Cuentas por Cobrar (independiente del tipo de documento).")
+                st.warning(f"⚖️ Esta venta en {forma_pago} se enviará al módulo de Cuentas por Cobrar.")
                 dias_credito = st.number_input(f"⏳ Días de Plazo para pagar ({forma_pago}):", min_value=1, value=30, step=1)
                 fecha_estimada = datetime.now() + timedelta(days=dias_credito)
                 st.info(f"📅 Fecha de vencimiento calculada: **{fecha_estimada.strftime('%d/%m/%Y')}**")
@@ -4599,28 +4791,33 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         st.warning("⚠️ Monto insuficiente para procesar la venta.")
                     else:
                         fecha_hora_actual = datetime.now()
+                        es_offline_para_cobro = not hay_conexion_activa()
                         
-                        try:
-                            res_f = supabase.table("folios_empresa").select("ultimo_folio_usado").eq("rut_empresa", str(rut_actual)).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
-                            if res_f.data and len(res_f.data) > 0:
-                                numero_folio_actual = int(res_f.data[0]["ultimo_folio_usado"]) + 1
-                                supabase.table("folios_empresa").update({"ultimo_folio_usado": numero_folio_actual}).eq("rut_empresa", str(rut_actual)).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
-                            else:
-                                numero_folio_actual = 1
-                                supabase.table("folios_empresa").insert({
-                                    "rut_empresa": str(rut_actual),
-                                    "tipo_documento": tipo_documento,
-                                    "modo": modo_str,
-                                    "ultimo_folio_usado": numero_folio_actual
-                                }).execute()
-                        except Exception:
+                        # --- OBTENER FOLIO ---
+                        if not es_offline_para_cobro:
+                            try:
+                                res_f = supabase.table("folios_empresa").select("ultimo_folio_usado").eq("rut_empresa", str(rut_actual)).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
+                                if res_f.data and len(res_f.data) > 0:
+                                    numero_folio_actual = int(res_f.data[0]["ultimo_folio_usado"]) + 1
+                                    supabase.table("folios_empresa").update({"ultimo_folio_usado": numero_folio_actual}).eq("rut_empresa", str(rut_actual)).eq("tipo_documento", tipo_documento).eq("modo", modo_str).execute()
+                                else:
+                                    numero_folio_actual = 1
+                                    supabase.table("folios_empresa").insert({
+                                        "rut_empresa": str(rut_actual),
+                                        "tipo_documento": tipo_documento,
+                                        "modo": modo_str,
+                                        "ultimo_folio_usado": numero_folio_actual
+                                    }).execute()
+                            except Exception:
+                                numero_folio_actual = int(datetime.now().strftime("%H%M%S"))
+                        else:
                             numero_folio_actual = int(datetime.now().strftime("%H%M%S"))
 
                         transaccion_id_actual = str(numero_folio_actual)
                         lineas_productos = ""
                         
                         folio_origen = st.session_state.get("folio_guia_origen")
-                        if folio_origen and tipo_documento == "Factura Electrónica":
+                        if folio_origen and tipo_documento == "Factura Electrónica" and not es_offline_para_cobro:
                             try:
                                 supabase.table("ventas").delete().eq("rut_empresa", str(rut_actual)).eq("folio", folio_origen).execute()
                                 supabase.table("cuentas_por_cobrar").delete().eq("rut_empresa", str(rut_actual)).eq("folio_venta", folio_origen).execute()
@@ -4633,51 +4830,50 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         iva_porcentaje = float(cfg_actual.get("iva_tasa", tasa_defecto))
                         tasa_iva_global = iva_porcentaje / 100.0
                         
-                        total_neto_ticket = 0.0
-                        total_iva_ticket = 0.0
-                        total_ila_ticket = 0.0
-                        
+                        total_neto_ticket, total_iva_ticket, total_ila_ticket = 0.0, 0.0, 0.0
                         registros_ventas_batch = []
 
                         for item in st.session_state.carrito_ventas:
                             lineas_productos += f"- {item['Descripción']} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
                             
-                            try:
-                                if not item.get("es_guia_previa", False):
-                                    codigo_vendido = str(item["Código"])
-                                    cantidad_vendida = float(item["Cantidad"])
+                            # Intentar descontar stock si estamos online
+                            if not es_offline_para_cobro:
+                                try:
+                                    if not item.get("es_guia_previa", False):
+                                        codigo_vendido = str(item["Código"])
+                                        cantidad_vendida = float(item["Cantidad"])
 
-                                    res_receta_pos = supabase.table("recetas").select("*").eq("rut_empresa", str(rut_actual)).eq("codigo_producto_final", codigo_vendido).execute()
-                                    
-                                    if res_receta_pos.data:
-                                        for componente in res_receta_pos.data:
-                                            cod_componente = str(componente["codigo_ingrediente"])
-                                            cant_por_pack = float(componente["cantidad_usada"])
-                                            cantidad_total_a_descontar = cant_por_pack * cantidad_vendida
+                                        res_receta_pos = supabase.table("recetas").select("*").eq("rut_empresa", str(rut_actual)).eq("codigo_producto_final", codigo_vendido).execute()
+                                        
+                                        if res_receta_pos.data:
+                                            for componente in res_receta_pos.data:
+                                                cod_componente = str(componente["codigo_ingrediente"])
+                                                cant_por_pack = float(componente["cantidad_usada"])
+                                                cantidad_total_a_descontar = cant_por_pack * cantidad_vendida
 
+                                                supabase.rpc(
+                                                    'actualizar_stock_atomico',
+                                                    {
+                                                        'p_rut_empresa': str(rut_actual),
+                                                        'p_codigo': cod_componente,
+                                                        'p_bodega': str(bodega_actual),
+                                                        'p_cantidad': cantidad_total_a_descontar,
+                                                        'p_operacion': 'VENTA'
+                                                    }
+                                                ).execute()
+                                        else:
                                             supabase.rpc(
                                                 'actualizar_stock_atomico',
                                                 {
                                                     'p_rut_empresa': str(rut_actual),
-                                                    'p_codigo': cod_componente,
+                                                    'p_codigo': codigo_vendido,
                                                     'p_bodega': str(bodega_actual),
-                                                    'p_cantidad': cantidad_total_a_descontar,
+                                                    'p_cantidad': cantidad_vendida,
                                                     'p_operacion': 'VENTA'
                                                 }
                                             ).execute()
-                                    else:
-                                        supabase.rpc(
-                                            'actualizar_stock_atomico',
-                                            {
-                                                'p_rut_empresa': str(rut_actual),
-                                                'p_codigo': codigo_vendido,
-                                                'p_bodega': str(bodega_actual),
-                                                'p_cantidad': cantidad_vendida,
-                                                'p_operacion': 'VENTA'
-                                            }
-                                        ).execute()
-                            except Exception as e:
-                                print(f"Error descontando stock en POS: {e}")
+                                except Exception as e:
+                                    print(f"Error descontando stock en POS: {e}")
 
                             tasa_iva_item = 0.0 if item.get("Es Exento", False) else tasa_iva_global
                             tasa_ila_item = item.get("Tasa ILA", 0.0)
@@ -4709,16 +4905,22 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "modo_emision": modo_str
                             })
 
-                        try:
-                            res_venta = supabase.table("ventas").insert(registros_ventas_batch).execute()
-                            if not res_venta.data:
-                                st.error("❌ Ocurrió un error guardando la venta en Supabase.")
-                                st.stop()
-                        except Exception as e:
-                            st.error(f"❌ Error al registrar las líneas de venta: {e}")
-                            st.stop()
+                        # --- REGISTRO DE VENTA (NUBE VS SQLITE OFFLINE) ---
+                        if not es_offline_para_cobro:
+                            try:
+                                res_venta = supabase.table("ventas").insert(registros_ventas_batch).execute()
+                                if not res_venta.data:
+                                    guardar_venta_offline_db(rut_actual, caja_actual, tipo_documento, cliente_nombre, total_venta, forma_pago, modo_str, st.session_state.carrito_ventas)
+                                    st.toast("⚠️ Error de envío a la nube. Venta respaldada localmente en la caja.", icon="💾")
+                            except Exception as e:
+                                guardar_venta_offline_db(rut_actual, caja_actual, tipo_documento, cliente_nombre, total_venta, forma_pago, modo_str, st.session_state.carrito_ventas)
+                                st.toast("⚠️ Sin conexión con la nube. Venta respaldada localmente.", icon="💾")
+                        else:
+                            # Guardado 100% offline en SQLite
+                            guardar_venta_offline_db(rut_actual, caja_actual, tipo_documento, cliente_nombre, total_venta, forma_pago, modo_str, st.session_state.carrito_ventas)
+                            st.toast("✅ Venta registrada en modo Offline. Se subirá automáticamente al recuperar internet.", icon="💾")
 
-                        if forma_pago in ["Crédito", "Consignación"]:
+                        if forma_pago in ["Crédito", "Consignación"] and not es_offline_para_cobro:
                             fecha_vencimiento_str = (fecha_hora_actual + timedelta(days=dias_credito)).strftime("%Y-%m-%d")
                             registro_cxc = {
                                 "rut_empresa": str(rut_actual),
