@@ -765,26 +765,39 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
     
     st.markdown("""
         <div style='background-color: #EFF6FF; padding: 15px; border-radius: 8px; border-left: 4px solid #3B82F6; margin-bottom: 20px;'>
-            <strong>💡 Control Financiero para Emprendedores:</strong> Este módulo te ayuda a calcular el 
-            <strong>retiro seguro de utilidades</strong> basado en tu porcentaje de Markup (margen), evitando que 
-            saques dinero destinado a la reposición de mercadería.
+            <strong>☁️ Control Financiero en la Nube:</strong> Este módulo está respaldado en tiempo real en <strong>Supabase</strong>. 
+            Te permite gestionar retiros seguros y conciliar cartolas bancarias diferenciando entre tus cuentas en <strong>USD</strong> y <strong>CLP</strong>.
         </div>
     """, unsafe_allow_html=True)
 
-    archivo_retiros = os.path.join(ruta_negocio, "Registro_Retiros_Seguros.xlsx")
-    if not os.path.exists(archivo_retiros):
-        pd.DataFrame(columns=['Fecha', 'VentaTotal', 'MarkupAplicado', 'CostoMercaderia', 'UtilidadRealRetirable', 'RetiroEfectuado', 'Observaciones']).to_excel(archivo_retiros, index=False)
+    rut_actual = str(st.session_state.get("negocio_seleccionado", "")).strip()
+    if not rut_actual:
+        st.error("⚠️ No hay un negocio seleccionado en la sesión.")
+        st.stop()
 
-    tab_cr1, tab_cr2, tab_cr3 = st.tabs(["💰 Cálculo de Retiro Seguro (Markup)", "🏦 Conciliación de Cartolas (POS / Banco)", "📂 Historial de Retiros"])
+    tab_cr1, tab_cr2, tab_cr3 = st.tabs([
+        "💰 Cálculo de Retiro Seguro (Markup)", 
+        "🏦 Conciliación de Cartolas (USD / CLP)", 
+        "📂 Historial de Retiros"
+    ])
 
+    # ---------------- TAB 1: CÁLCULO DE RETIRO SEGURO ----------------
     with tab_cr1:
         st.markdown("### 🎯 Asistente de Retiro Diario sin Desfinanciar el Negocio")
         
-        with st.form("form_calculo_retiro"):
+        with st.form("form_calculo_retiro_nube"):
             col_c1, col_c2 = st.columns(2)
             with col_c1:
                 fecha_calculo = st.date_input("Fecha de la Cuadratura", value=date.today())
-                venta_dia_input = st.number_input("💵 Venta Total del Día ($)", min_value=0.0, step=1000.0, value=150000.0)
+                moneda_retiro = st.selectbox("Moneda de la Operación", ["USD ($)", "CLP ($)"])
+                val_defecto = 1500.0 if "USD" in moneda_retiro else 150000.0
+                venta_dia_input = st.number_input(
+                    "💵 Venta Total del Día", 
+                    min_value=0.0, 
+                    step=100.0, 
+                    value=val_defecto,
+                    format="%.2f" if "USD" in moneda_retiro else "%.0f"
+                )
             with col_c2:
                 markup_porcentaje = st.number_input("📈 Markup / Margen Promedio (%)", min_value=1.0, max_value=500.0, value=50.0, step=5.0, help="Porcentaje de margen estimado sobre el costo aplicado a tus productos.")
                 observacion_retiro = st.text_input("📝 Notas u Observaciones del Día", value="Cierre diario normal")
@@ -794,53 +807,106 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
             utilidad_neta_retirable = venta_dia_input - costo_reposicion
 
             st.divider()
+            simbolo = "USD $" if "USD" in moneda_retiro else "CLP $"
             col_m1, col_m2, col_m3 = st.columns(3)
             with col_m1:
-                st.metric(label="🛒 Venta Total Ingresada", value=f"${venta_dia_input:,.2f}")
+                st.metric(label="🛒 Venta Total Ingresada", value=f"{simbolo} {venta_dia_input:,.2f}")
             with col_m2:
-                st.metric(label="🔒 Fondo Intocable (Reposición)", value=f"${costo_reposicion:,.2f}", delta="Guardar en Caja/Cuenta")
+                st.metric(label="🔒 Fondo Intocable (Reposición)", value=f"{simbolo} {costo_reposicion:,.2f}", delta="Guardar en Cuenta")
             with col_m3:
-                st.metric(label="💵 Utilidad Real Retirable", value=f"${utilidad_neta_retirable:,.2f}", delta="Disponible para Retiro")
+                st.metric(label="💵 Utilidad Real Retirable", value=f"{simbolo} {utilidad_neta_retirable:,.2f}", delta="Disponible para Retiro")
 
-            btn_guardar_retiro = st.form_submit_button("💾 Guardar Registro de Retiro Seguro", type="primary")
+            btn_guardar_retiro = st.form_submit_button("☁️ Guardar Registro en la Nube", type="primary", use_container_width=True)
 
             if btn_guardar_retiro:
                 if venta_dia_input <= 0:
                     st.warning("⚠️ Ingresa una venta válida mayor a 0.")
                 else:
-                    df_ret_ant = pd.read_excel(archivo_retiros)
-                    nuevo_reg_ret = pd.DataFrame([{
-                        'Fecha': str(fecha_calculo),
-                        'VentaTotal': venta_dia_input,
-                        'MarkupAplicado': markup_porcentaje,
-                        'CostoMercaderia': costo_reposicion,
-                        'UtilidadRealRetirable': utilidad_neta_retirable,
-                        'RetiroEfectuado': utilidad_neta_retirable,
-                        'Observaciones': observacion_retiro
-                    }])
-                    pd.concat([df_ret_ant, nuevo_reg_ret], ignore_index=True).to_excel(archivo_retiros, index=False)
-                    st.success("✅ ¡Registro guardado con éxito! Se protegió el fondo de reposición de mercadería.")
-                    st.rerun()
+                    try:
+                        data_retiro = {
+                            "rut_empresa": rut_actual,
+                            "fecha": str(fecha_calculo),
+                            "moneda": "USD" if "USD" in moneda_retiro else "CLP",
+                            "venta_total": float(venta_dia_input),
+                            "markup_aplicado": float(markup_porcentaje),
+                            "costo_mercaderia": float(costo_reposicion),
+                            "utilidad_real_retirable": float(utilidad_neta_retirable),
+                            "retiro_efectuado": float(utilidad_neta_retirable),
+                            "observaciones": observacion_retiro
+                        }
+                        supabase.table("registro_retiros_seguros").insert(data_retiro).execute()
+                        st.success("✅ ¡Registro de retiro seguro respaldado en Supabase con éxito!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar en la nube: {e}")
 
+    # ---------------- TAB 2: CONCILIACIÓN DE CARTOLAS ----------------
     with tab_cr2:
-        st.markdown("### 🏦 Conciliación de Transacciones (Transbank / Bancos / Transferencias)")
+        st.markdown("### 🏦 Conciliación de Cartolas por Cuenta Bancaria")
         
-        archivo_conciliacion = os.path.join(ruta_negocio, "Conciliacion_Bancaria.xlsx")
-        if not os.path.exists(archivo_conciliacion):
-            pd.DataFrame(columns=['Fecha', 'Origen', 'MontoVentaPOS', 'MontoAbonadoBanco', 'Diferencia', 'Estado']).to_excel(archivo_conciliacion, index=False)
+        # Cargar historial desde Supabase
+        df_conci = pd.DataFrame()
+        try:
+            res_c = supabase.table("conciliacion_bancaria").select("*").eq("rut_empresa", rut_actual).execute()
+            if res_c.data:
+                df_conci = pd.DataFrame(res_c.data)
+            else:
+                res_c_alt = supabase.table("conciliacion_bancaria").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+                if res_c_alt.data:
+                    df_conci = pd.DataFrame(res_c_alt.data)
+        except Exception as e:
+            st.warning(f"ℹ️ No se pudieron cargar datos de conciliación previa desde la nube: {e}")
 
-        df_conci = pd.read_excel(archivo_conciliacion)
-        st.dataframe(df_conci, use_container_width=True)
+        if not df_conci.empty:
+            st.markdown("#### 📜 Registros de Conciliación en la Nube")
+            columnas_mostrar = ["fecha", "cuenta_destino", "moneda", "origen_pago", "monto_pos", "monto_banco", "diferencia", "estado"]
+            cols_ex = [c for c in columnas_mostrar if c in df_conci.columns]
+            
+            st.dataframe(
+                df_conci[cols_ex].rename(columns={
+                    "fecha": "Fecha",
+                    "cuenta_destino": "Cuenta Bancaria",
+                    "moneda": "Moneda",
+                    "origen_pago": "Origen",
+                    "monto_pos": "Monto POS",
+                    "monto_banco": "Monto Banco",
+                    "diferencia": "Diferencia",
+                    "estado": "Estado"
+                }),
+                use_container_width=True
+            )
+        else:
+            st.info("ℹ️ No hay conciliaciones registradas en la nube para esta empresa.")
 
-        with st.form("form_nueva_conciliacion"):
-            st.markdown("#### ➕ Registrar Validación de Cartola")
-            col_b1, col_b2 = st.columns(2)
+        st.divider()
+        with st.form("form_nueva_conciliacion_nube"):
+            st.markdown("#### ➕ Registrar Nueva Validación de Cartola")
+            
+            col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
-                f_conci = st.date_input("Fecha de Cartola", value=date.today(), key="f_con")
-                origen_pago = st.selectbox("Origen del Abono", ["Transbank / Débito", "Transbank / Crédito", "Transferencia Bancaria Directa", "Efectivo Depositado"])
+                f_conci = st.date_input("Fecha de Cartola", value=date.today(), key="f_con_nube")
+                cuenta_destino = st.selectbox(
+                    "🏦 Cuenta Corriente Destino", 
+                    [
+                        "Cuenta Corriente USD (Itaú / Santander USD)", 
+                        "Cuenta Corriente CLP (Banco Chile / Itaú CLP)",
+                        "Caja Chica / Efectivo"
+                    ]
+                )
             with col_b2:
-                monto_pos = st.number_input("Monto Registrado en POS ($)", min_value=0.0, step=100.0, value=0.0, key="m_pos")
-                monto_banco = st.number_input("Monto Abonado en Banco ($)", min_value=0.0, step=100.0, value=0.0, key="m_ban")
+                moneda_sugerida = "USD" if "USD" in cuenta_destino else "CLP"
+                moneda_conci = st.selectbox("Moneda de Cartola", ["USD", "CLP"], index=0 if moneda_sugerida == "USD" else 1)
+                origen_pago = st.selectbox("Origen del Abono / Transacción", [
+                    "Transferencia Bancaria Directa", 
+                    "POS / Transbank / Débito", 
+                    "POS / Transbank / Crédito", 
+                    "Depósito en Ventanilla / Efectivo",
+                    "Cheque / Otro"
+                ])
+            with col_b3:
+                simb_m = "USD $" if moneda_conci == "USD" else "CLP $"
+                monto_pos = st.number_input(f"Monto Registrado POS/Sistema ({simb_m})", min_value=0.0, step=10.0 if moneda_conci == "USD" else 1000.0, value=0.0, key="m_pos_nube")
+                monto_banco = st.number_input(f"Monto Abonado en Banco ({simb_m})", min_value=0.0, step=10.0 if moneda_conci == "USD" else 1000.0, value=0.0, key="m_ban_nube")
 
             diferencia_banco = monto_banco - monto_pos
             if diferencia_banco == 0:
@@ -850,29 +916,70 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
             else:
                 estado_conci = "Abono Mayor"
 
-            if st.form_submit_button("💾 Guardar Validación Bancaria"):
-                nuevo_c = pd.DataFrame([{
-                    'Fecha': str(f_conci),
-                    'Origen': origen_pago,
-                    'MontoVentaPOS': monto_pos,
-                    'MontoAbonadoBanco': monto_banco,
-                    'Diferencia': diferencia_banco,
-                    'Estado': estado_conci
-                }])
-                pd.concat([df_conci, nuevo_c], ignore_index=True).to_excel(archivo_conciliacion, index=False)
-                st.success("✅ ¡Conciliación registrada correctamente!")
-                st.rerun()
+            btn_guardar_conci = st.form_submit_button("☁️ Guardar Conciliación en Nube", type="primary", use_container_width=True)
 
+            if btn_guardar_conci:
+                try:
+                    data_conci = {
+                        "rut_empresa": rut_actual,
+                        "fecha": str(f_conci),
+                        "cuenta_destino": cuenta_destino,
+                        "moneda": moneda_conci,
+                        "origen_pago": origen_pago,
+                        "monto_pos": float(monto_pos),
+                        "monto_banco": float(monto_banco),
+                        "diferencia": float(diferencia_banco),
+                        "estado": estado_conci
+                    }
+                    supabase.table("conciliacion_bancaria").insert(data_conci).execute()
+                    st.success("✅ ¡Conciliación bancaria guardada en Supabase con éxito!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al guardar la conciliación en Supabase: {e}")
+
+    # ---------------- TAB 3: HISTORIAL DE RETIROS ----------------
     with tab_cr3:
-        st.markdown("### 📂 Historial de Retiros Seguros Realizados")
-        if os.path.exists(archivo_retiros):
-            df_hist_ret = pd.read_excel(archivo_retiros)
-            if not df_hist_ret.empty:
-                st.dataframe(df_hist_ret, use_container_width=True)
-                total_retirado = df_hist_ret['UtilidadRealRetirable'].sum() if 'UtilidadRealRetirable' in df_hist_ret.columns else 0.0
-                st.metric(label="💵 Utilidad Histórica Retirada de forma Segura", value=f"${total_retirado:,.2f}")
+        st.markdown("### 📂 Historial de Retiros Seguros Realizados (Nube)")
+        
+        df_hist_ret = pd.DataFrame()
+        try:
+            res_r = supabase.table("registro_retiros_seguros").select("*").eq("rut_empresa", rut_actual).execute()
+            if res_r.data:
+                df_hist_ret = pd.DataFrame(res_r.data)
             else:
-                st.info("ℹ️ No hay registros de retiros todavía.")
+                res_r_alt = supabase.table("registro_retiros_seguros").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+                if res_r_alt.data:
+                    df_hist_ret = pd.DataFrame(res_r_alt.data)
+        except Exception as e:
+            st.error(f"⚠️ Error al consultar historial de retiros desde la nube: {e}")
+
+        if not df_hist_ret.empty:
+            cols_r = ["fecha", "moneda", "venta_total", "markup_aplicado", "costo_mercaderia", "utilidad_real_retirable", "observaciones"]
+            cols_r_ex = [c for c in cols_r if c in df_hist_ret.columns]
+            
+            df_disp_ret = df_hist_ret[cols_r_ex].rename(columns={
+                "fecha": "Fecha",
+                "moneda": "Moneda",
+                "venta_total": "Venta Total",
+                "markup_aplicado": "Markup (%)",
+                "costo_mercaderia": "Costo Reposición",
+                "utilidad_real_retirable": "Utilidad Retirada",
+                "observaciones": "Observaciones"
+            })
+            
+            st.dataframe(df_disp_ret, use_container_width=True)
+            
+            col_tot1, col_tot2 = st.columns(2)
+            with col_tot1:
+                df_usd = df_hist_ret[df_hist_ret["moneda"] == "USD"] if "moneda" in df_hist_ret.columns else pd.DataFrame()
+                tot_usd = df_usd["utilidad_real_retirable"].sum() if not df_usd.empty else 0.0
+                st.metric(label="💵 Total Utilidad Retirada (USD)", value=f"USD ${tot_usd:,.2f}")
+            with col_tot2:
+                df_clp = df_hist_ret[df_hist_ret["moneda"] == "CLP"] if "moneda" in df_hist_ret.columns else pd.DataFrame()
+                tot_clp = df_clp["utilidad_real_retirable"].sum() if not df_clp.empty else 0.0
+                st.metric(label="🇨🇱 Total Utilidad Retirada (CLP)", value=f"CLP ${tot_clp:,.2f}")
+        else:
+            st.info("ℹ️ No hay registros de retiros guardados en la nube todavía.")
 
 # --- CONEXIÓN DE REPORTES A SUPABASE ---
 def mostrar_modulo_reportes_avanzados(ruta_negocio):
