@@ -62,14 +62,31 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
         )
         return
 
-    # Normalización de fecha y definición estricta de columnas Supabase
+    # Normalización de fecha y ordenamiento
     if "fecha" in df_ventas.columns:
         df_ventas["fecha_dt"] = pd.to_datetime(
             df_ventas["fecha"], errors="coerce"
         )
         df_ventas = df_ventas.sort_values(by="fecha_dt", ascending=False)
 
-    # 🎯 COLUMNAS EXACTAS DE LA TABLA VENTAS
+    # 🎯 COLUMNAS A MOSTRAR Y EN EL ORDEN SOLICITADO
+    columnas_solicitadas = [
+        "id",
+        "folio",
+        "cliente",
+        "fecha",
+        "cantidad",
+        "detalle",
+        "neto",
+        "iva",
+        "monto",
+        "documento",
+    ]
+
+    # Filtramos solo las columnas que existan físicamente en la tabla para evitar errores
+    cols_visibles = [c for c in columnas_solicitadas if c in df_ventas.columns]
+
+    # Columnas clave para filtros
     col_folio = "folio" if "folio" in df_ventas.columns else df_ventas.columns[0]
     col_doc = "documento" if "documento" in df_ventas.columns else None
 
@@ -110,9 +127,12 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
         )
         df_filtrado = df_filtrado[mask]
 
+    # Selección final de las columnas visibles ordenadas
+    df_mostrar = df_filtrado[cols_visibles] if cols_visibles else df_filtrado
+
     with tab_gen:
         st.markdown("#### 📋 Todos los Documentos Emitidos")
-        st.dataframe(df_filtrado.head(limite_filas), use_container_width=True)
+        st.dataframe(df_mostrar.head(limite_filas), use_container_width=True)
 
     with tab_doc:
         st.markdown("#### 📄 Filtrar por Tipo de Documento")
@@ -127,12 +147,12 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             df_doc = df_filtrado.copy()
             if doc_seleccionado != "Todos":
                 df_doc = df_doc[df_doc[col_doc] == doc_seleccionado]
-            st.dataframe(df_doc.head(limite_filas), use_container_width=True)
+            
+            df_doc_mostrar = df_doc[cols_visibles] if cols_visibles else df_doc
+            st.dataframe(df_doc_mostrar.head(limite_filas), use_container_width=True)
         else:
             st.info("ℹ️ No se detectó la columna 'documento'.")
-            st.dataframe(
-                df_filtrado.head(limite_filas), use_container_width=True
-            )
+            st.dataframe(df_mostrar.head(limite_filas), use_container_width=True)
 
     with tab_pag:
         st.markdown("#### 💳 Filtrar por Método de Pago")
@@ -148,12 +168,12 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             df_pag = df_filtrado.copy()
             if pag_seleccionado != "Todos":
                 df_pag = df_pag[df_pag[col_pag] == pag_seleccionado]
-            st.dataframe(df_pag.head(limite_filas), use_container_width=True)
+
+            df_pag_mostrar = df_pag[cols_visibles] if cols_visibles else df_pag
+            st.dataframe(df_pag_mostrar.head(limite_filas), use_container_width=True)
         else:
             st.info("ℹ️ No se detectó la columna 'metodo_pago'.")
-            st.dataframe(
-                df_filtrado.head(limite_filas), use_container_width=True
-            )
+            st.dataframe(df_mostrar.head(limite_filas), use_container_width=True)
 
     with tab_comprobante:
         st.markdown("#### 🖨️ Búsqueda y Descarga de Comprobante Individual")
@@ -168,7 +188,8 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
 
             if not fila_venta.empty:
                 st.success("✅ ¡Transacción encontrada con éxito!")
-                st.dataframe(fila_venta, use_container_width=True)
+                fila_venta_mostrar = fila_venta[cols_visibles] if cols_visibles else fila_venta
+                st.dataframe(fila_venta_mostrar, use_container_width=True)
 
                 primera_fila = fila_venta.iloc[0]
                 detalle_texto = "=== COMPROBANTE DE VENTA ===\n\n"
@@ -215,7 +236,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
 
         col_sel_doc, col_sel_folio = st.columns(2)
 
-        # 1. Filtro opcional por Tipo de Documento
         with col_sel_doc:
             if col_doc:
                 docs_disponibles = ["Todos"] + list(df_ventas[col_doc].dropna().unique())
@@ -227,12 +247,10 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             else:
                 doc_a_eliminar = "Todos"
 
-        # Aplicar filtro de documento si seleccionó alguno
         df_filtrado_doc = df_ventas.copy()
         if col_doc and doc_a_eliminar != "Todos":
             df_filtrado_doc = df_filtrado_doc[df_filtrado_doc[col_doc] == doc_a_eliminar]
 
-        # 2. Selección del Folio (extrae valores únicos de la columna 'folio')
         with col_sel_folio:
             folios_unicos = [""] + df_filtrado_doc["folio"].dropna().astype(str).unique().tolist()
             folio_a_eliminar = st.selectbox(
@@ -242,12 +260,13 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             )
 
         if folio_a_eliminar:
-            # Seleccionar TODAS las filas que coincidan con la columna 'folio'
             filas_a_eliminar = df_ventas[df_ventas["folio"].astype(str) == str(folio_a_eliminar)]
 
             if not filas_a_eliminar.empty:
                 st.info(f"🔎 **Se detectaron {len(filas_a_eliminar)} fila(s)/línea(s) asociadas al Folio `{folio_a_eliminar}`:**")
-                st.dataframe(filas_a_eliminar, use_container_width=True)
+                
+                filas_eliminar_mostrar = filas_a_eliminar[cols_visibles] if cols_visibles else filas_a_eliminar
+                st.dataframe(filas_eliminar_mostrar, use_container_width=True)
 
                 reingresar_stock = st.checkbox(
                     "📦 Reingresar automáticamente el stock de estas líneas a Bodega",
@@ -268,7 +287,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                         st.warning("⚠️ Debe marcar la casilla de confirmación antes de ejecutar la eliminación.")
                     else:
                         try:
-                            # 1. Devuelve stock si está activado
                             if reingresar_stock:
                                 bodega_defecto = st.session_state.get("bodega_pos_seleccionada", "Bodega Principal")
                                 for _, item in filas_a_eliminar.iterrows():
@@ -288,13 +306,11 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                                             }
                                         ).execute()
 
-                            # 2. Borrar de cuentas por cobrar asociadas
                             try:
                                 supabase.table("cuentas_por_cobrar").delete().eq("rut_empresa", str(tenant_id)).eq("folio_venta", str(folio_a_eliminar)).execute()
                             except Exception:
                                 pass
 
-                            # 3. Borrado definitivo en la columna EXACTA 'folio'
                             supabase.table("ventas").delete().eq("rut_empresa", str(tenant_id)).eq("folio", str(folio_a_eliminar)).execute()
 
                             st.success(f"🎉 El Folio **{folio_a_eliminar}** con sus **{len(filas_a_eliminar)} líneas** fue eliminado exitosamente de Supabase.")
@@ -303,11 +319,11 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                         except Exception as err_del:
                             st.error(f"❌ Error al eliminar en Supabase: {err_del}")
 
-    # Botón global de descarga
+    # Botón global de descarga (exporta el DataFrame con las columnas filtradas)
     st.divider()
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_filtrado.to_excel(writer, index=False)
+        df_mostrar.to_excel(writer, index=False)
     excel_data = output.getvalue()
 
     st.download_button(
