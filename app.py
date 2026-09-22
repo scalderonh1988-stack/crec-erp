@@ -765,27 +765,49 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
     
     st.markdown("""
         <div style='background-color: #EFF6FF; padding: 15px; border-radius: 8px; border-left: 4px solid #3B82F6; margin-bottom: 20px;'>
-            <strong>☁️ Control Financiero en la Nube:</strong> Este módulo te permite gestionar tus <strong>cuentas bancarias</strong>, retiros seguros y conciliar cartolas en <strong>USD</strong> y <strong>CLP</strong> respaldado en <strong>Supabase</strong>.
+            <strong>☁️ Control Financiero en la Nube:</strong> Módulo sincronizado con <strong>Supabase</strong>. 
+            Permite gestionar tus <strong>cuentas bancarias</strong>, retiros seguros y conciliar cartolas en <strong>USD</strong> y <strong>CLP</strong>.
         </div>
     """, unsafe_allow_html=True)
 
+    # 1. Obtener el RUT de la empresa activa
     rut_actual = str(st.session_state.get("negocio_seleccionado", "")).strip()
+    rut_limpio = rut_actual.replace(".", "").replace("-", "").strip()
+
     if not rut_actual:
         st.error("⚠️ No hay un negocio seleccionado en la sesión.")
         st.stop()
 
-    # --- CARGAR CUENTAS BANCARIAS DE LA EMPRESA DESDE SUPABASE ---
+    # 2. Consultar cuentas bancarias de la empresa desde Supabase
     lista_cuentas = []
     try:
         res_cuentas = supabase.table("cuentas_bancarias").select("*").eq("rut_empresa", rut_actual).execute()
         if res_cuentas.data:
             lista_cuentas = res_cuentas.data
         else:
-            res_cuentas_alt = supabase.table("cuentas_bancarias").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+            res_cuentas_alt = supabase.table("cuentas_bancarias").select("*").eq("rut_empresa", rut_limpio).execute()
             if res_cuentas_alt.data:
                 lista_cuentas = res_cuentas_alt.data
-    except Exception:
-        pass
+    except Exception as e:
+        st.warning(f"⚠️ Nota al cargar cuentas: {e}")
+
+    # 3. Construir lista dinámica para el selector
+    opciones_cuentas = []
+    dict_cuentas = {}
+
+    if lista_cuentas:
+        for c in lista_cuentas:
+            nombre = c.get('nombre_cuenta', '').strip()
+            banco = f" ({c.get('banco')})" if c.get('banco') else ""
+            num_cta = f" N°{c.get('numero_cuenta')}" if c.get('numero_cuenta') else ""
+            moneda = c.get('moneda', 'USD')
+            
+            # Formato visible: "Itaú USD (Banco Itaú) N°123456 [USD]"
+            etiqueta = f"🏦 {nombre}{banco}{num_cta} [{moneda}]"
+            opciones_cuentas.append(etiqueta)
+            dict_cuentas[etiqueta] = c
+    else:
+        opciones_cuentas = ["⚠️ Sin cuentas registradas (Crea una en la pestaña '⚙️ Cuentas Bancarias')"]
 
     tab_cr1, tab_cr2, tab_cr3, tab_cr4 = st.tabs([
         "💰 Cálculo de Retiro Seguro (Markup)", 
@@ -812,7 +834,7 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
                     format="%.2f" if "USD" in moneda_retiro else "%.0f"
                 )
             with col_c2:
-                markup_porcentaje = st.number_input("📈 Markup / Margen Promedio (%)", min_value=1.0, max_value=500.0, value=50.0, step=5.0, help="Porcentaje de margen estimado sobre el costo aplicado a tus productos.")
+                markup_porcentaje = st.number_input("📈 Markup / Margen Promedio (%)", min_value=1.0, max_value=500.0, value=50.0, step=5.0)
                 observacion_retiro = st.text_input("📝 Notas u Observaciones del Día", value="Cierre diario normal")
 
             markup_decimal = markup_porcentaje / 100.0
@@ -848,27 +870,27 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
                             "observaciones": observacion_retiro
                         }
                         supabase.table("registro_retiros_seguros").insert(data_retiro).execute()
-                        st.success("✅ ¡Registro de retiro seguro respaldado en Supabase con éxito!")
+                        st.success("✅ ¡Registro guardado en Supabase!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en la nube: {e}")
+                        st.error(f"❌ Error al guardar en Supabase: {e}")
 
     # ---------------- TAB 2: CONCILIACIÓN DE CARTOLAS ----------------
     with tab_cr2:
         st.markdown("### 🏦 Conciliación de Cartolas por Cuenta Bancaria")
         
-        # Cargar historial desde Supabase
+        # Historial de conciliaciones
         df_conci = pd.DataFrame()
         try:
             res_c = supabase.table("conciliacion_bancaria").select("*").eq("rut_empresa", rut_actual).execute()
             if res_c.data:
                 df_conci = pd.DataFrame(res_c.data)
             else:
-                res_c_alt = supabase.table("conciliacion_bancaria").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+                res_c_alt = supabase.table("conciliacion_bancaria").select("*").eq("rut_empresa", rut_limpio).execute()
                 if res_c_alt.data:
                     df_conci = pd.DataFrame(res_c_alt.data)
-        except Exception as e:
-            st.warning(f"ℹ️ No se pudieron cargar datos de conciliación previa desde la nube: {e}")
+        except Exception:
+            pass
 
         if not df_conci.empty:
             st.markdown("#### 📜 Registros de Conciliación en la Nube")
@@ -895,39 +917,31 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
         with st.form("form_nueva_conciliacion_nube"):
             st.markdown("#### ➕ Registrar Nueva Validación de Cartola")
             
-            # Formatear lista de cuentas disponibles
-            opciones_cuentas = []
-            dict_cuentas = {}
-
-            if lista_cuentas:
-                for c in lista_cuentas:
-                    banco_str = f" ({c.get('banco')})" if c.get('banco') else ""
-                    num_str = f" N°{c.get('numero_cuenta')}" if c.get('numero_cuenta') else ""
-                    etiqueta = f"{c.get('nombre_cuenta')}{banco_str}{num_str} [{c.get('moneda', 'USD')}]"
-                    opciones_cuentas.append(etiqueta)
-                    dict_cuentas[etiqueta] = c
-            else:
-                # Opciones de respaldo predeterminadas si no hay cuentas creadas
-                opciones_cuentas = [
-                    "Cuenta Corriente USD (Itaú / Santander USD)", 
-                    "Cuenta Corriente CLP (Banco Chile / Itaú CLP)",
-                    "Caja Chica / Efectivo"
-                ]
-
             col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
                 f_conci = st.date_input("Fecha de Cartola", value=date.today(), key="f_con_nube")
-                cuenta_destino_sel = st.selectbox("🏦 Cuenta Corriente Destino", opciones_cuentas)
+                
+                # SELECCIONADOR DE CUENTAS REGISTRADAS
+                cuenta_destino_sel = st.selectbox(
+                    "🏦 Cuenta Corriente Destino", 
+                    opciones_cuentas,
+                    key="sel_cuenta_destino"
+                )
 
-            # Detectar moneda de la cuenta elegida
+            # Auto-detección de moneda según la cuenta elegida
             moneda_sugerida = "USD"
             if cuenta_destino_sel in dict_cuentas:
                 moneda_sugerida = dict_cuentas[cuenta_destino_sel].get("moneda", "USD")
-            elif "CLP" in cuenta_destino_sel:
+            elif "[CLP]" in cuenta_destino_sel or "CLP" in cuenta_destino_sel:
                 moneda_sugerida = "CLP"
 
             with col_b2:
-                moneda_conci = st.selectbox("Moneda de Cartola", ["USD", "CLP"], index=0 if moneda_sugerida == "USD" else 1)
+                moneda_conci = st.selectbox(
+                    "Moneda de Cartola", 
+                    ["USD", "CLP"], 
+                    index=0 if moneda_sugerida == "USD" else 1,
+                    key="sel_moneda_cartola"
+                )
                 origen_pago = st.selectbox("Origen del Abono / Transacción", [
                     "Transferencia Bancaria Directa", 
                     "POS / Transbank / Débito", 
@@ -951,23 +965,26 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
             btn_guardar_conci = st.form_submit_button("☁️ Guardar Conciliación en Nube", type="primary", use_container_width=True)
 
             if btn_guardar_conci:
-                try:
-                    data_conci = {
-                        "rut_empresa": rut_actual,
-                        "fecha": str(f_conci),
-                        "cuenta_destino": cuenta_destino_sel,
-                        "moneda": moneda_conci,
-                        "origen_pago": origen_pago,
-                        "monto_pos": float(monto_pos),
-                        "monto_banco": float(monto_banco),
-                        "diferencia": float(diferencia_banco),
-                        "estado": estado_conci
-                    }
-                    supabase.table("conciliacion_bancaria").insert(data_conci).execute()
-                    st.success("✅ ¡Conciliación bancaria guardada en Supabase con éxito!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Error al guardar la conciliación en Supabase: {e}")
+                if "Sin cuentas registradas" in cuenta_destino_sel:
+                    st.warning("⚠️ Debes registrar al menos una cuenta bancaria en la pestaña '⚙️ Cuentas Bancarias'.")
+                else:
+                    try:
+                        data_conci = {
+                            "rut_empresa": rut_actual,
+                            "fecha": str(f_conci),
+                            "cuenta_destino": cuenta_destino_sel,
+                            "moneda": moneda_conci,
+                            "origen_pago": origen_pago,
+                            "monto_pos": float(monto_pos),
+                            "monto_banco": float(monto_banco),
+                            "diferencia": float(diferencia_banco),
+                            "estado": estado_conci
+                        }
+                        supabase.table("conciliacion_bancaria").insert(data_conci).execute()
+                        st.success("✅ ¡Conciliación bancaria guardada en Supabase!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar conciliación: {e}")
 
     # ---------------- TAB 3: HISTORIAL DE RETIROS ----------------
     with tab_cr3:
@@ -979,11 +996,11 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
             if res_r.data:
                 df_hist_ret = pd.DataFrame(res_r.data)
             else:
-                res_r_alt = supabase.table("registro_retiros_seguros").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+                res_r_alt = supabase.table("registro_retiros_seguros").select("*").eq("rut_empresa", rut_limpio).execute()
                 if res_r_alt.data:
                     df_hist_ret = pd.DataFrame(res_r_alt.data)
-        except Exception as e:
-            st.error(f"⚠️ Error al consultar historial de retiros desde la nube: {e}")
+        except Exception:
+            pass
 
         if not df_hist_ret.empty:
             cols_r = ["fecha", "moneda", "venta_total", "markup_aplicado", "costo_mercaderia", "utilidad_real_retirable", "observaciones"]
@@ -1016,13 +1033,13 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
     # ---------------- TAB 4: GESTIÓN DE CUENTAS BANCARIAS ----------------
     with tab_cr4:
         st.markdown("### ⚙️ Configuración y Creación de Cuentas Bancarias")
-        st.info("💡 Crea aquí las cuentas bancarias o cajas de tu empresa. Aparecerán automáticamente en la pestaña de Conciliación de Cartolas.")
+        st.info("💡 Crea aquí las cuentas corrientes, vistas o cajas de la empresa. Aparecerán automáticamente en el selector de Conciliación.")
 
         with st.form("form_crear_cuenta_bancaria"):
             col_c1, col_c2 = st.columns(2)
             with col_c1:
                 nombre_cuenta = st.text_input("Nombre / Alias de la Cuenta *", placeholder="Ej: Itaú Corriente USD")
-                banco = st.text_input("Banco / Institución Financial", placeholder="Ej: Banco Itaú / Banco Chile")
+                banco = st.text_input("Banco / Institución Financial", placeholder="Ej: Banco Itaú")
                 tipo_cuenta = st.selectbox("Tipo de Cuenta", ["Cuenta Corriente", "Cuenta Vista / RUT", "Caja Chica / Efectivo", "Otra"])
             with col_c2:
                 numero_cuenta = st.text_input("N° de Cuenta (Opcional)", placeholder="Ej: 021-98765-4")
@@ -1045,7 +1062,7 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
                             "activa": True
                         }
                         supabase.table("cuentas_bancarias").insert(nueva_cuenta).execute()
-                        st.success(f"🎉 ¡Cuenta '{nombre_cuenta}' creada exitosamente!")
+                        st.success(f"🎉 ¡Cuenta '{nombre_cuenta}' guardada exitosamente!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ Error al crear la cuenta en Supabase: {e}")
