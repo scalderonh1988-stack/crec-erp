@@ -1504,7 +1504,7 @@ if not st.session_state.get("es_admin_dev", False):
                 if not lic_valida:
                     st.error("🚨 **LICENCIA EXPIRADA O INACTIVA**")
                     st.info("Tu suscripción no se encuentra activa. Para seguir utilizando el sistema, realiza la renovación.")
-                    st.link_button("💳 Renovar Licencia Ahora", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
+                    st.link_button("💳 Renovar Licencia Ahora", "https://mpago.la/2PrU39R", type="primary", use_container_width=True)
                     
                     if st.button("🚪 Cerrar Sesión", use_container_width=True):
                         st.session_state.clear()
