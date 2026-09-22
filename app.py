@@ -763,13 +763,6 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
     else:
         st.markdown("### 🏦 Conciliación Bancaria y Retiros Protegidos por Markup")
     
-    st.markdown("""
-        <div style='background-color: #EFF6FF; padding: 15px; border-radius: 8px; border-left: 4px solid #3B82F6; margin-bottom: 20px;'>
-            <strong>☁️ Control Financiero en la Nube:</strong> Módulo sincronizado con <strong>Supabase</strong>. 
-            Permite gestionar tus <strong>cuentas bancarias</strong>, retiros seguros y conciliar cartolas en <strong>USD</strong> y <strong>CLP</strong>.
-        </div>
-    """, unsafe_allow_html=True)
-
     # 1. Obtener el RUT de la empresa activa
     rut_actual = str(st.session_state.get("negocio_seleccionado", "")).strip()
     rut_limpio = rut_actual.replace(".", "").replace("-", "").strip()
