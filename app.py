@@ -298,6 +298,11 @@ def generar_guia_pdf(cliente_nombre, cliente_rut, carrito, tipo_documento="GUÍA
    
     return pdf.output(dest='S').encode('latin1')
 
+import requests
+import streamlit as st
+import pandas as pd
+from datetime import date
+
 # --- FUNCIÓN AUXILIAR: CONSULTA AUTOMÁTICA DEL DÓLAR ---
 @st.cache_data(ttl=14400) # Se actualiza cada 4 horas automáticamente
 def obtener_dolar_hoy():
@@ -448,10 +453,16 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             except Exception as e:
                 st.warning(f"⚠️ No se pudo obtener el detalle de la venta: {e}")
 
-            # --- REGISTRO DE ABONO EN DINERO (ACTIVACIÓN MULTIMONEDA) ---
-            negocio_nombre = str(st.session_state.get("negocio_seleccionado", "")).strip().upper()
-            EMPRESAS_MULTIMONEDA = ["ENVIROTECH URUGUAY"]
-            es_multimoneda = "URUGUAY" in negocio_nombre or negocio_nombre in [e.upper() for e in EMPRESAS_MULTIMONEDA]
+            # --- REGISTRO DE ABONO EN DINERO (ACTIVACIÓN MULTIMONEDA DETECCIÓN FLEXIBLE) ---
+            # Revisa todos los datos e índices en session_state y ruta para detectar Envirotech / Uruguay
+            texto_sesion_completo = " ".join([f"{k} {v}" for k, v in st.session_state.items()]).upper()
+            texto_ruta = str(ruta_negocio).upper()
+            
+            es_multimoneda = (
+                "URUGUAY" in texto_sesion_completo or 
+                "ENVIROTECH" in texto_sesion_completo or 
+                "URUGUAY" in texto_ruta
+            )
 
             if es_multimoneda:
                 dolar_hoy = obtener_dolar_hoy()
