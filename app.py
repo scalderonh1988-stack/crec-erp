@@ -1523,7 +1523,7 @@ if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
 
 if not st.session_state.get("es_admin_dev", False):
     st.sidebar.write("") 
-    st.sidebar.link_button("💳 Renovar Licencia Mensual", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
+    st.sidebar.link_button("💳 Renovar Licencia Mensual", "https://mpago.la/2PrU39R", type="primary", use_container_width=True)
 
     try:
         rut_actual = st.session_state.get("negocio_seleccionado") 
