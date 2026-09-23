@@ -104,6 +104,61 @@ from historial_ventas import mostrar_modulo_historial_ventas
 from produccion_recetas import mostrar_modulo_produccion
 from modulos.distribucion import mostrar_modulo_distribucion
 
+def obtener_datos_emisor(supabase, tenant_id):
+    """Obtiene los datos legales de la empresa emisora desde Supabase."""
+    try:
+        res = supabase.table("empresas").select("*").eq("rut_empresa", str(tenant_id)).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception as e:
+        pass
+    
+    return {
+        "razon_social": st.session_state.get("empresa_razon_social", "MI EMPRESA SPA"),
+        "rut_empresa": tenant_id or "12345678-9",
+        "giro": st.session_state.get("empresa_giro", "Giro Comercial No Especificado"),
+        "direccion": st.session_state.get("empresa_direccion", "Dirección Matriz"),
+        "comuna": st.session_state.get("empresa_comuna", "Santiago"),
+        "email_dte": st.session_state.get("empresa_email", "dte@miempresa.cl")
+    }
+
+def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
+    """Genera el encabezado visual con datos de la Empresa (Emisor) y del Cliente (Receptor)."""
+    
+    # Recuadro Rojo Tributario (Estilo SII)
+    st.markdown(f"""
+    <div style="border: 2px solid #D32F2F; padding: 12px; text-align: center; border-radius: 6px; margin-bottom: 20px;">
+        <h3 style="color: #D32F2F; margin: 0;">R.U.T.: {emisor.get('rut_empresa', 'N/A')}</h3>
+        <h2 style="color: #D32F2F; margin: 5px 0; font-weight: bold;">{tipo_doc.upper()}</h2>
+        <h4 style="color: #D32F2F; margin: 0;">N° {folio}</h4>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Columnas con datos del Emisor y Receptor
+    col_emisor, col_receptor = st.columns(2)
+
+    with col_emisor:
+        st.markdown("### 🏢 **DATOS EMISOR**")
+        st.markdown(f"""
+        * **Razón Social:** {emisor.get('razon_social', 'N/A')}
+        * **RUT:** {emisor.get('rut_empresa', 'N/A')}
+        * **Giro Comercial:** {emisor.get('giro', 'N/A')}
+        * **Dirección:** {emisor.get('direccion', 'N/A')}
+        * **Comuna:** {emisor.get('comuna', 'N/A')}
+        """)
+
+    with col_receptor:
+        st.markdown("### 👤 **DATOS RECEPTOR**")
+        st.markdown(f"""
+        * **Nombre / Razón Social:** {receptor.get('nombre', 'CLIENTE CONTADO / ANÓNIMO')}
+        * **RUT:** {receptor.get('rut', '66666666-6')}
+        * **Giro Comercial:** {receptor.get('giro', 'Particular / Consumidor Final')}
+        * **Dirección:** {receptor.get('direccion', 'N/A')}
+        * **Comuna:** {receptor.get('comuna', 'N/A')}
+        """)
+
+    st.markdown("---")
+
 def cargar_maestro_proveedores(ruta_negocio):
     archivo_prov = os.path.join(ruta_negocio, "Maestro_Proveedores.xlsx")
     if not os.path.exists(archivo_prov):
@@ -4889,6 +4944,18 @@ elif menu == "💰 Módulo de Ventas (POS)":
     # =========================================================================
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y procesada con éxito!")
+
+        # 🟢 NUEVO: Encabezado visual (Emisor + Receptor)
+        datos_emisor = obtener_datos_emisor(supabase, rut_actual)
+        datos_receptor = {
+            "nombre": cliente_nombre if cliente_nombre else "CLIENTE CONTADO",
+            "rut": cliente_rut if cliente_rut else "66666666-6",
+            "giro": "Particular / Consumidor Final",
+            "direccion": "N/A",
+            "comuna": "Santiago"
+        }
+        generar_encabezado_documento(tipo_documento, st.session_state.get("ultimo_folio", "N/A"), datos_emisor, datos_receptor)
+
         st.markdown(f'<div class="ticket-box">{st.session_state.ultimo_recibo}</div>', unsafe_allow_html=True)
       
         if 'items_recibo_actual' not in st.session_state or st.session_state.items_recibo_actual is None:
@@ -4915,7 +4982,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.pop("cliente_preseleccionado", None)
                 st.session_state.pop("folio_guia_origen", None) 
                 st.rerun()
-
     # =========================================================================
     # --- VISTA 2: PANTALLA DE PAGO Y CONFIRMACIÓN ---
     # =========================================================================
