@@ -2129,115 +2129,139 @@ elif menu == "📊 Dashboard Ejecutivo":
     df_ventas_filtrado = pd.DataFrame()
 
     try:
-        res_v = supabase.table("ventas").select("*").eq("rut_empresa", tenant_id).execute()
+        res_v = supabase.table("ventas").select("*").execute()
         if res_v.data:
             df_v = pd.DataFrame(res_v.data)
-            if not df_v.empty and 'fecha' in df_v.columns:
-                df_v['Fecha_Parsed'] = pd.to_datetime(df_v['fecha'], errors='coerce')
+            if not df_v.empty:
+                if 'rut_empresa' in df_v.columns and tenant_id:
+                    df_v = df_v[df_v['rut_empresa'].astype(str).str.contains(str(tenant_id), case=False, na=False)]
                 
-                if fecha_limite is not None:
-                    if periodo_seleccionado == "Diaria (Hoy)":
-                        df_ventas_filtrado = df_v[df_v['Fecha_Parsed'].dt.date == hoy_dt.date()]
+                if not df_v.empty and 'fecha' in df_v.columns:
+                    df_v['Fecha_Parsed'] = pd.to_datetime(df_v['fecha'], errors='coerce')
+                    
+                    if fecha_limite is not None:
+                        if periodo_seleccionado == "Diaria (Hoy)":
+                            df_ventas_filtrado = df_v[df_v['Fecha_Parsed'].dt.date == hoy_dt.date()]
+                        else:
+                            df_ventas_filtrado = df_v[df_v['Fecha_Parsed'] >= fecha_limite]
                     else:
-                        df_ventas_filtrado = df_v[df_v['Fecha_Parsed'] >= fecha_limite]
-                else:
-                    df_ventas_filtrado = df_v.copy()
+                        df_ventas_filtrado = df_v.copy()
 
-                if not df_ventas_filtrado.empty:
-                    col_monto = 'monto' if 'monto' in df_ventas_filtrado.columns else 'total'
-                    if 'folio' in df_ventas_filtrado.columns:
-                        total_ventas_periodo = float(df_ventas_filtrado.drop_duplicates(subset=["folio"])[col_monto].sum())
-                    else:
-                        total_ventas_periodo = float(df_ventas_filtrado[col_monto].sum())
+                    if not df_ventas_filtrado.empty:
+                        col_monto = 'monto' if 'monto' in df_ventas_filtrado.columns else 'total'
+                        if 'folio' in df_ventas_filtrado.columns:
+                            total_ventas_periodo = float(df_ventas_filtrado.drop_duplicates(subset=["folio"])[col_monto].sum())
+                        else:
+                            total_ventas_periodo = float(df_ventas_filtrado[col_monto].sum())
 
-                    # IVA Débito Fiscal (19% sobre neto / 19/119 sobre total afecto)
-                    if 'iva' in df_ventas_filtrado.columns:
-                        total_debito_fiscal = float(df_ventas_filtrado['iva'].sum())
-                    else:
-                        total_debito_fiscal = float(total_ventas_periodo * (0.19 / 1.19))
+                        if 'iva' in df_ventas_filtrado.columns:
+                            total_debito_fiscal = float(df_ventas_filtrado['iva'].sum())
+                        else:
+                            total_debito_fiscal = float(total_ventas_periodo * (0.19 / 1.19))
     except Exception as e:
         print(f"Error cargando ventas desde la nube: {e}")
 
     # ==============================================================================
-    # 2. GASTOS, COSTOS Y CRÉDITO FISCAL DESDE SUPABASE
+    # 2. COSTOS FIJOS (TABLA DEDICADA 'costos_fijos')
     # ==============================================================================
     costos_fijos = 0.0
+    try:
+        res_cf = supabase.table("costos_fijos").select("*").eq("activo", True).execute()
+        if res_cf.data:
+            df_cf = pd.DataFrame(res_cf.data)
+            if not df_cf.empty:
+                if 'rut_empresa' in df_cf.columns and tenant_id:
+                    df_cf = df_cf[df_cf['rut_empresa'].astype(str).str.contains(str(tenant_id), case=False, na=False)]
+                
+                if not df_cf.empty and 'monto' in df_cf.columns:
+                    costos_fijos = float(pd.to_numeric(df_cf['monto'], errors='coerce').fillna(0).sum())
+    except Exception as e:
+        print(f"Error cargando tabla costos_fijos desde la nube: {e}")
+
+    # ==============================================================================
+    # 3. GASTOS VARIABLES, MERCADERÍA Y CRÉDITO FISCAL (TABLA 'gastos')
+    # ==============================================================================
     costos_variables = 0.0
     inversion_mercaderia_gastos = 0.0
     total_credito_fiscal = 0.0
     df_g_filtrado = pd.DataFrame()
 
     try:
-        res_g = supabase.table("gastos").select("*").eq("rut_empresa", tenant_id).execute()
+        res_g = supabase.table("gastos").select("*").execute()
         if res_g.data:
             df_g = pd.DataFrame(res_g.data)
-            if not df_g.empty and 'fecha' in df_g.columns:
-                df_g['Fecha_Parsed'] = pd.to_datetime(df_g['fecha'], errors='coerce')
+            if not df_g.empty:
+                if 'rut_empresa' in df_g.columns and tenant_id:
+                    df_g = df_g[df_g['rut_empresa'].astype(str).str.contains(str(tenant_id), case=False, na=False)]
                 
-                if fecha_limite is not None:
-                    if periodo_seleccionado == "Diaria (Hoy)":
-                        df_g_filtrado = df_g[df_g['Fecha_Parsed'].dt.date == hoy_dt.date()]
-                    else:
-                        df_g_filtrado = df_g[df_g['Fecha_Parsed'] >= fecha_limite]
-                else:
-                    df_g_filtrado = df_g.copy()
-
-                if not df_g_filtrado.empty:
-                    col_monto_g = 'monto' if 'monto' in df_g_filtrado.columns else 'total'
+                if not df_g.empty and 'fecha' in df_g.columns:
+                    df_g['Fecha_Parsed'] = pd.to_datetime(df_g['fecha'], errors='coerce')
                     
-                    # Cálculo Crédito Fiscal en Gastos
-                    if 'iva' in df_g_filtrado.columns:
-                        total_credito_fiscal = float(df_g_filtrado['iva'].sum())
-                    else:
-                        total_credito_fiscal = float(df_g_filtrado[col_monto_g].sum() * (0.19 / 1.19))
-
-                    # Clasificación por categoría o tipo de costo
-                    for _, row in df_g_filtrado.iterrows():
-                        monto = float(row.get(col_monto_g, 0))
-                        tipo = str(row.get('tipo_costo', row.get('tipo', ''))).lower()
-                        cat = str(row.get('categoria', '')).lower()
-
-                        if 'fijo' in tipo or any(k in cat for k in ['arriendo', 'sueldo', 'servicio', 'patente', 'fijo']):
-                            costos_fijos += monto
-                        elif 'mercadería' in cat or 'mercaderia' in cat or 'compra' in cat or 'inventario' in cat:
-                            inversion_mercaderia_gastos += monto
+                    if fecha_limite is not None:
+                        if periodo_seleccionado == "Diaria (Hoy)":
+                            df_g_filtrado = df_g[df_g['Fecha_Parsed'].dt.date == hoy_dt.date()]
                         else:
-                            costos_variables += monto
+                            df_g_filtrado = df_g[df_g['Fecha_Parsed'] >= fecha_limite]
+                    else:
+                        df_g_filtrado = df_g.copy()
+
+                    if not df_g_filtrado.empty:
+                        col_monto_g = 'monto' if 'monto' in df_g_filtrado.columns else 'total'
+                        
+                        if 'iva' in df_g_filtrado.columns:
+                            total_credito_fiscal = float(df_g_filtrado['iva'].sum())
+                        else:
+                            total_credito_fiscal = float(df_g_filtrado[col_monto_g].sum() * (0.19 / 1.19))
+
+                        for _, row in df_g_filtrado.iterrows():
+                            monto = float(row.get(col_monto_g, 0))
+                            tipo = str(row.get('tipo_costo', row.get('tipo', ''))).lower()
+                            cat = str(row.get('categoria', '')).lower()
+
+                            if 'fijo' in tipo or any(k in cat for k in ['arriendo', 'sueldo', 'servicio', 'patente', 'fijo']):
+                                costos_fijos += monto
+                            elif 'mercadería' in cat or 'mercaderia' in cat or 'compra' in cat or 'inventario' in cat:
+                                inversion_mercaderia_gastos += monto
+                            else:
+                                costos_variables += monto
     except Exception as e:
         print(f"Error cargando gastos desde la nube: {e}")
 
     # ==============================================================================
-    # 3. INVENTARIO Y MARGENES DESDE SUPABASE
+    # 4. INVENTARIO Y MARGENES DESDE SUPABASE
     # ==============================================================================
     inversion_inventario_costo = 0.0
     total_productos = 0
     margen_promedio = 0.0
 
     try:
-        res_prod = supabase.table("productos").select("costo, precio_venta, stock").eq("rut_empresa", tenant_id).execute()
+        res_prod = supabase.table("productos").select("costo, precio_venta, stock, rut_empresa").execute()
         if res_prod.data:
             df_prod = pd.DataFrame(res_prod.data)
-            df_prod['costo'] = pd.to_numeric(df_prod['costo'], errors='coerce').fillna(0)
-            df_prod['precio_venta'] = pd.to_numeric(df_prod['precio_venta'], errors='coerce').fillna(0)
-            df_prod['stock'] = pd.to_numeric(df_prod['stock'], errors='coerce').fillna(0)
+            if not df_prod.empty:
+                if 'rut_empresa' in df_prod.columns and tenant_id:
+                    df_prod = df_prod[df_prod['rut_empresa'].astype(str).str.contains(str(tenant_id), case=False, na=False)]
+                
+                df_prod['costo'] = pd.to_numeric(df_prod['costo'], errors='coerce').fillna(0)
+                df_prod['precio_venta'] = pd.to_numeric(df_prod['precio_venta'], errors='coerce').fillna(0)
+                df_prod['stock'] = pd.to_numeric(df_prod['stock'], errors='coerce').fillna(0)
 
-            inversion_inventario_costo = float((df_prod['costo'] * df_prod['stock']).sum())
-            total_productos = len(df_prod)
+                inversion_inventario_costo = float((df_prod['costo'] * df_prod['stock']).sum())
+                total_productos = len(df_prod)
 
-            df_m = df_prod[(df_prod['costo'] > 0) & (df_prod['precio_venta'] > 0)].copy()
-            if not df_m.empty:
-                df_m['margen'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['precio_venta']) * 100
-                margen_promedio = float(df_m['margen'].mean())
+                df_m = df_prod[(df_prod['costo'] > 0) & (df_prod['precio_venta'] > 0)].copy()
+                if not df_m.empty:
+                    df_m['margen'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['precio_venta']) * 100
+                    margen_promedio = float(df_m['margen'].mean())
     except Exception as e:
         print(f"Error cargando inventario desde la nube: {e}")
 
     # ==============================================================================
-    # 4. CÁLCULOS FINANCIEROS Y PUNTO DE EQUILIBRIO
+    # 5. CÁLCULOS FINANCIEROS Y PUNTO DE EQUILIBRIO
     # ==============================================================================
     total_egresos_operativos = costos_fijos + costos_variables
     utilidad_neta_estimada = total_ventas_periodo - total_egresos_operativos
 
-    # Cálculo Punto de Equilibrio ($)
     pct_margen_decimal = (margen_promedio / 100.0) if margen_promedio > 0 else 0.40
     punto_equilibrio = costos_fijos / pct_margen_decimal if pct_margen_decimal > 0 else 0.0
     estimado_f29_pagar = total_debito_fiscal - total_credito_fiscal
@@ -2250,7 +2274,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     with col_b1_1:
         st.metric(label=f"💵 Ventas Totales ({periodo_seleccionado.split()[0]})", value=f"${total_ventas_periodo:,.0f}")
     with col_b1_2:
-        st.metric(label="🏢 Costos Fijos", value=f"${costos_fijos:,.0f}", help="Arriendos, sueldos fijos, servicios básicos, patentes.")
+        st.metric(label="🏢 Costos Fijos", value=f"${costos_fijos:,.0f}", help="Sueldos, arriendos, servicios básicos y patentes activas.")
     with col_b1_3:
         st.metric(label="🚚 Costos Variables", value=f"${costos_variables:,.0f}", help="Combustible, comisiones, fletes, insumos directos.")
     with col_b1_4:
@@ -2304,22 +2328,26 @@ elif menu == "📊 Dashboard Ejecutivo":
     with col_g1:
         st.markdown("#### 📈 Evolución de Ingresos (Cuadratura Nube)")
         try:
-            res_cuat = supabase.table("cuadratura_diaria").select("*").eq("rut_empresa", tenant_id).execute()
+            res_cuat = supabase.table("cuadratura_diaria").select("*").execute()
             if res_cuat.data:
                 df_cuat = pd.DataFrame(res_cuat.data)
-                if not df_cuat.empty and 'fecha' in df_cuat.columns:
-                    col_monto_cuat = 'monto_total' if 'monto_total' in df_cuat.columns else 'venta_total'
-                    df_cuat['Fecha_Parsed'] = pd.to_datetime(df_cuat['fecha'], errors='coerce')
-                    if fecha_limite is not None and periodo_seleccionado != "Histórico Completo":
-                        if periodo_seleccionado == "Diaria (Hoy)":
-                            df_cuat = df_cuat[df_cuat['Fecha_Parsed'].dt.date == hoy_dt.date()]
-                        else:
-                            df_cuat = df_cuat[df_cuat['Fecha_Parsed'] >= fecha_limite]
+                if not df_cuat.empty:
+                    if 'rut_empresa' in df_cuat.columns and tenant_id:
+                        df_cuat = df_cuat[df_cuat['rut_empresa'].astype(str).str.contains(str(tenant_id), case=False, na=False)]
                     
-                    if not df_cuat.empty and col_monto_cuat in df_cuat.columns:
-                        st.line_chart(df_cuat.set_index('fecha')[col_monto_cuat])
-                    else:
-                        st.info("ℹ️ No hay registros de cuadratura en este período.")
+                    if not df_cuat.empty and 'fecha' in df_cuat.columns:
+                        col_monto_cuat = 'monto_total' if 'monto_total' in df_cuat.columns else 'venta_total'
+                        df_cuat['Fecha_Parsed'] = pd.to_datetime(df_cuat['fecha'], errors='coerce')
+                        if fecha_limite is not None and periodo_seleccionado != "Histórico Completo":
+                            if periodo_seleccionado == "Diaria (Hoy)":
+                                df_cuat = df_cuat[df_cuat['Fecha_Parsed'].dt.date == hoy_dt.date()]
+                            else:
+                                df_cuat = df_cuat[df_cuat['Fecha_Parsed'] >= fecha_limite]
+                        
+                        if not df_cuat.empty and col_monto_cuat in df_cuat.columns:
+                            st.line_chart(df_cuat.set_index('fecha')[col_monto_cuat])
+                        else:
+                            st.info("ℹ️ No hay registros de cuadratura en este período.")
             else:
                 st.info("ℹ️ Sin datos de cuadratura diarios en la nube.")
         except Exception:
@@ -2369,9 +2397,15 @@ elif menu == "📊 Dashboard Ejecutivo":
             
     with col_a2:
         try:
-            res_cpp = supabase.table("cuentas_por_pagar").select("*").eq("rut_empresa", tenant_id).eq("estado", "PENDIENTE").execute()
-            if res_cpp.data and len(res_cpp.data) > 0:
-                st.warning(f"⚠️ Tienes **{len(res_cpp.data)} factura(s) pendiente(s)** de pago a proveedores.")
+            res_cpp = supabase.table("cuentas_por_pagar").select("*").eq("estado", "PENDIENTE").execute()
+            if res_cpp.data:
+                df_cpp = pd.DataFrame(res_cpp.data)
+                if 'rut_empresa' in df_cpp.columns and tenant_id:
+                    df_cpp = df_cpp[df_cpp['rut_empresa'].astype(str).str.contains(str(tenant_id), case=False, na=False)]
+                if not df_cpp.empty:
+                    st.warning(f"⚠️ Tienes **{len(df_cpp)} factura(s) pendiente(s)** de pago a proveedores.")
+                else:
+                    st.info("ℹ️ No hay facturas de proveedores pendientes de pago.")
             else:
                 st.info("ℹ️ No hay facturas de proveedores pendientes de pago.")
         except Exception:
