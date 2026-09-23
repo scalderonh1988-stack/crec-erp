@@ -228,9 +228,11 @@ def generar_guia_pdf(
     datos_empresa=None,
 ):
   import io
+  import json
   from datetime import datetime
   from fpdf import FPDF
   import requests
+  import streamlit as st
 
   # 1. Formateo de la fecha
   if fecha_emision is None:
@@ -243,13 +245,20 @@ def generar_guia_pdf(
   pdf = FPDF(orientation="P", unit="mm", format="Letter")
   pdf.add_page()
 
-  # 2. Rescate de Datos de la Empresa (Desde parámetro o Session State de Supabase)
-  datos_emp = datos_empresa or st.session_state.get("empresa_actual", {})
-  cfg = st.session_state.get("config_ticket", {})
+  # 2. Rescate de Datos de la Empresa (Supabase / Session State)
+  datos_emp = datos_empresa or st.session_state.get("empresa_actual") or {}
+  cfg = st.session_state.get("config_ticket") or {}
+
+  if isinstance(cfg, str):
+    try:
+      cfg = json.loads(cfg)
+    except Exception:
+      cfg = {}
 
   nombre_empresa = (
       datos_emp.get("razon_social")
       or datos_emp.get("nombre_empresa")
+      or datos_emp.get("nombre")
       or cfg.get("nombre_empresa")
       or st.session_state.get("nombre_empresa")
       or "MI EMPRESA SPA"
@@ -259,23 +268,29 @@ def generar_guia_pdf(
       datos_emp.get("rut")
       or datos_emp.get("rut_empresa")
       or cfg.get("rut_empresa")
+      or cfg.get("rut")
       or st.session_state.get("rut_empresa")
+      or st.session_state.get("rut")
       or "Sin RUT"
   )
 
   direccion_empresa = (
       datos_emp.get("direccion")
+      or datos_emp.get("dir_empresa")
       or cfg.get("direccion")
       or st.session_state.get("direccion_empresa")
+      or st.session_state.get("direccion")
       or "Sin Dirección"
   )
 
-  # 3. Descarga del Logo desde Supabase Storage
   url_logo = (
       datos_emp.get("url_logo")
+      or datos_emp.get("logo_url")
       or cfg.get("url_logo")
       or st.session_state.get("url_logo")
   )
+
+  # 3. Descarga del Logo desde URL de Supabase Storage
   if url_logo:
     try:
       resp = requests.get(url_logo, timeout=5)
@@ -285,7 +300,7 @@ def generar_guia_pdf(
     except Exception:
       pass
 
-  # 4. Impresión de Cabecera
+  # 4. Cabecera
   pdf.set_font("Arial", "B", 14)
   pdf.cell(0, 6, str(nombre_empresa).upper(), ln=True, align="C")
   pdf.set_font("Arial", "", 9)
@@ -314,7 +329,7 @@ def generar_guia_pdf(
   pdf.cell(60, 6, f"RUT: {c_rut}", border=1, ln=True)
   pdf.ln(5)
 
-  # 5. Encabezados de Tabla
+  # 5. Encabezados de Tabla (Dinámico)
   pdf.set_font("Arial", "B", 9)
   es_factura = "FACTURA" in titulo_doc
 
@@ -382,8 +397,9 @@ def generar_guia_pdf(
     total_ila += ila_calc
     total_general += subtotal_bruto
 
-  # 7. Totales
+  # 7. Pie de Página con Desglose Total
   pdf.set_font("Arial", "B", 10)
+
   if es_factura:
     pdf.cell(155, 7, "SUBTOTAL NETO:", border=1, align="R")
     pdf.cell(35, 7, f"${total_neto:,.0f}", border=1, align="R", ln=True)
