@@ -70,12 +70,7 @@ st.markdown("""
 # ==============================================================================
 # 2. IMPORTACIÓN DE MÓDULOS DE LA APLICACIÓN
 # ==============================================================================
-# 💾 Módulo de Caché Offline (Respaldo automático de Supabase)
-# from modulos.offline_cache import obtener_tabla_con_cache
-
 from modulos.servicios.data_manager import get_current_tenant
-
-# Servicios y Gestión de Datos
 from modulos.servicios.data_manager import guardar_nuevo_cliente, cargar_maestro_clientes
 from modulos.servicios import data_manager, dte_manager, integrar_productos
 
@@ -124,8 +119,6 @@ def obtener_datos_emisor(supabase, tenant_id):
 
 def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
     """Genera el encabezado visual con datos de la Empresa (Emisor) y del Cliente (Receptor)."""
-    
-    # Recuadro Rojo Tributario (Estilo SII)
     st.markdown(f"""
     <div style="border: 2px solid #D32F2F; padding: 12px; text-align: center; border-radius: 6px; margin-bottom: 20px;">
         <h3 style="color: #D32F2F; margin: 0;">R.U.T.: {emisor.get('rut_empresa', 'N/A')}</h3>
@@ -134,7 +127,6 @@ def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
     </div>
     """, unsafe_allow_html=True)
 
-    # Columnas con datos del Emisor y Receptor
     col_emisor, col_receptor = st.columns(2)
 
     with col_emisor:
@@ -158,6 +150,84 @@ def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
         """)
 
     st.markdown("---")
+
+def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_receptor, items, totales):
+    """Genera una ficha única visual unificada que incluye Caja Roja + Emisor + Receptor + Detalle + Totales."""
+    filas_items = ""
+    for item in items:
+        desc = item.get('Descripción') or item.get('Producto') or 'Ítem'
+        cant = item.get('Cantidad', 1)
+        precio = item.get('Precio Unitario') or item.get('Precio_Unitario') or 0
+        subtotal = item.get('Subtotal') or (cant * precio)
+        filas_items += f"""
+        <tr style="border-bottom: 1px solid #333;">
+            <td style="padding: 8px 4px;">{desc}</td>
+            <td style="padding: 8px 4px; text-align: center;">{cant:g}</td>
+            <td style="padding: 8px 4px; text-align: right;">${precio:,.0f}</td>
+            <td style="padding: 8px 4px; text-align: right;">${subtotal:,.0f}</td>
+        </tr>
+        """
+
+    rut_emisor = datos_emisor.get('rut') or datos_emisor.get('rut_empresa', 'N/A')
+
+    html_unificado = f"""
+    <div style="border: 2px solid #343a40; border-radius: 12px; padding: 20px; background-color: #12161f; color: #e0e0e0; font-family: 'Courier New', Courier, monospace; margin-bottom: 20px;">
+        
+        <!-- CABECERA: EMISOR Y CAJA ROJA DE FOLIO -->
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed #444; padding-bottom: 15px; margin-bottom: 15px; flex-wrap: wrap; gap: 15px;">
+            <div style="flex: 1; min-width: 250px;">
+                <h3 style="margin: 0; color: #64b5f6; font-size: 18px;">🏢 {datos_emisor.get('razon_social', 'EMPRESA').upper()}</h3>
+                <p style="margin: 5px 0 0 0; font-size: 12px; color: #aaa; line-height: 1.4;">
+                    <b>RUT:</b> {rut_emisor}<br>
+                    <b>Giro:</b> {datos_emisor.get('giro', 'N/A')}<br>
+                    <b>Dirección:</b> {datos_emisor.get('direccion', 'N/A')}, {datos_emisor.get('comuna', '')}
+                </p>
+            </div>
+            <div style="border: 2px solid #ff4b4b; border-radius: 8px; padding: 10px 20px; text-align: center; color: #ff4b4b; background-color: rgba(255, 75, 75, 0.05); min-width: 200px;">
+                <div style="font-weight: bold; font-size: 14px;">R.U.T.: {rut_emisor}</div>
+                <div style="font-weight: bold; font-size: 15px; margin: 4px 0;">{tipo_documento.upper()}</div>
+                <div style="font-weight: bold; font-size: 16px;">N° {folio}</div>
+            </div>
+        </div>
+
+        <!-- RECEPTOR -->
+        <div style="background-color: #1e2430; border-left: 4px solid #64b5f6; padding: 10px 14px; border-radius: 4px; margin-bottom: 15px;">
+            <div style="color: #64b5f6; font-weight: bold; font-size: 13px; margin-bottom: 4px;">👤 DATOS RECEPTOR</div>
+            <div style="font-size: 12px; color: #ccc; line-height: 1.4;">
+                <b>Cliente:</b> {datos_receptor.get('nombre', 'CLIENTE CONTADO')} &nbsp;|&nbsp; <b>RUT:</b> {datos_receptor.get('rut', '66666666-6')}<br>
+                <b>Giro:</b> {datos_receptor.get('giro', 'Particular')} &nbsp;|&nbsp; <b>Dirección:</b> {datos_receptor.get('direccion', 'N/A')}, {datos_receptor.get('comuna', 'Santiago')}
+            </div>
+        </div>
+
+        <!-- TABLA DE DETALLES -->
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;">
+            <thead>
+                <tr style="border-bottom: 2px solid #555; color: #888; text-align: left;">
+                    <th style="padding: 6px 4px;">DESCRIPCIÓN</th>
+                    <th style="padding: 6px 4px; text-align: center;">CANT</th>
+                    <th style="padding: 6px 4px; text-align: right;">P. UNIT</th>
+                    <th style="padding: 6px 4px; text-align: right;">TOTAL</th>
+                </tr>
+            </thead>
+            <tbody>
+                {filas_items}
+            </tbody>
+        </table>
+
+        <!-- TOTALES -->
+        <div style="border-top: 2px dashed #444; padding-top: 10px; display: flex; justify-content: flex-end;">
+            <div style="text-align: right; font-size: 13px; min-width: 220px; line-height: 1.6;">
+                <div><b>SUBTOTAL NETO:</b> ${totales.get('neto', 0):,.0f}</div>
+                <div><b>IVA (19%):</b> ${totales.get('iva', 0):,.0f}</div>
+                <div style="font-size: 16px; color: #4caf50; border-top: 1px solid #444; margin-top: 4px; padding-top: 4px;">
+                    <b>TOTAL GENERAL: ${totales.get('total', 0):,.0f}</b>
+                </div>
+            </div>
+        </div>
+
+    </div>
+    """
+    st.markdown(html_unificado, unsafe_allow_html=True)
 
 def cargar_maestro_proveedores(ruta_negocio):
     archivo_prov = os.path.join(ruta_negocio, "Maestro_Proveedores.xlsx")
@@ -4988,13 +5058,19 @@ elif menu == "💰 Módulo de Ventas (POS)":
         with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def, placeholder="Ej: Juan Pérez")
         with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def, placeholder="Ej: 12.345.678-9")
 
-    # =========================================================================
+   # =========================================================================
     # --- VISTA 1: PANTALLA DE ÉXITO ---
     # =========================================================================
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y procesada con éxito!")
 
-        # 🟢 NUEVO: Encabezado visual (Emisor + Receptor)
+        # 1. Asegurar la lista de ítems a mostrar
+        if 'items_recibo_actual' not in st.session_state or st.session_state.items_recibo_actual is None:
+            st.session_state.items_recibo_actual = st.session_state.carrito_ventas.copy()
+
+        items_a_mostrar = st.session_state.items_recibo_actual
+
+        # 2. Preparar los datos de emisor y receptor
         datos_emisor = obtener_datos_emisor(supabase, rut_actual)
         datos_receptor = {
             "nombre": cliente_nombre if cliente_nombre else "CLIENTE CONTADO",
@@ -5003,24 +5079,47 @@ elif menu == "💰 Módulo de Ventas (POS)":
             "direccion": "N/A",
             "comuna": "Santiago"
         }
-        generar_encabezado_documento(tipo_documento, st.session_state.get("ultimo_folio", "N/A"), datos_emisor, datos_receptor)
 
-        st.markdown(f'<div class="ticket-box">{st.session_state.ultimo_recibo}</div>', unsafe_allow_html=True)
-      
-        if 'items_recibo_actual' not in st.session_state or st.session_state.items_recibo_actual is None:
-            st.session_state.items_recibo_actual = st.session_state.carrito_ventas.copy()
+        # 3. Preparar totales (utiliza las variables de totales que ya tengas calculadas)
+        totales_info = {
+            "neto": total_neto_ticket if 'total_neto_ticket' in locals() else 0,
+            "iva": total_iva_ticket if 'total_iva_ticket' in locals() else 0,
+            "total": total_venta if 'total_venta' in locals() else 0
+        }
 
+        # 🟢 NUEVO: Mostrar la vista unificada del documento
+        mostrar_documento_unificado(
+            tipo_documento=tipo_documento,
+            folio=st.session_state.get("ultimo_folio", "N/A"),
+            datos_emisor=datos_emisor,
+            datos_receptor=datos_receptor,
+            items=items_a_mostrar,
+            totales=totales_info
+        )
+
+        # 4. Botones de acción (Descargar / Nueva Venta)
         col_r1, col_r2 = st.columns(2)
         with col_r1:
             if tipo_documento in ["Guía de Despacho", "Factura Electrónica"]:
-                items_a_imprimir = st.session_state.get('items_recibo_actual', st.session_state.carrito_ventas)
                 try:
-                    pdf_bytes = generar_guia_pdf(cliente_nombre, cliente_rut, items_a_imprimir, tipo_documento, fecha_emision_venta)
-                    st.download_button(f"📥 Descargar {tipo_documento} (PDF)", data=bytes(pdf_bytes), file_name=f"{tipo_documento.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
+                    pdf_bytes = generar_guia_pdf(cliente_nombre, cliente_rut, items_a_mostrar, tipo_documento, fecha_emision_venta)
+                    st.download_button(
+                        f"📥 Descargar {tipo_documento} (PDF)",
+                        data=bytes(pdf_bytes),
+                        file_name=f"{tipo_documento.replace(' ', '_')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
                 except Exception as e:
                     st.error(f"⚠️ Error al generar el PDF: {e}")
             else:
-                st.download_button("📥 Descargar Recibo Térmico", data=st.session_state.ultimo_recibo, file_name="Comprobante.txt", mime="text/plain", use_container_width=True)
+                st.download_button(
+                    "📥 Descargar Recibo Térmico",
+                    data=st.session_state.ultimo_recibo,
+                    file_name="Comprobante.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
       
         with col_r2:
             if st.button("➕ Nueva Venta", use_container_width=True, type="primary"):
@@ -5031,6 +5130,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.pop("cliente_preseleccionado", None)
                 st.session_state.pop("folio_guia_origen", None) 
                 st.rerun()
+                
     # =========================================================================
     # --- VISTA 2: PANTALLA DE PAGO Y CONFIRMACIÓN ---
     # =========================================================================
