@@ -348,11 +348,11 @@ def generar_guia_pdf(
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # --- A. ENCABEZADO: EMISOR (Izquierda) y CUADRO ROJO DTE (Derecha) ---
+    # --- A. ENCABEZADO: EMISOR y CUADRO ROJO DTE ---
     start_y = 12
 
     # Cuadro Rojo DTE (Derecha)
-    pdf.set_draw_color(217, 4, 41)  # Rojo DTE
+    pdf.set_draw_color(217, 4, 41)
     pdf.set_line_width(0.7)
     pdf.rect(125, start_y, 75, 28)
 
@@ -388,7 +388,7 @@ def generar_guia_pdf(
     pdf.set_line_width(0.3)
     pdf.line(10, 44, 200, 44)
 
-    # --- B. SECCIÓN RECEPTOR (Caja con borde) ---
+    # --- B. SECCIÓN RECEPTOR ---
     pdf.set_fill_color(245, 247, 250)
     pdf.set_draw_color(210, 215, 225)
     pdf.rect(10, 47, 190, 20, style="DF")
@@ -407,65 +407,69 @@ def generar_guia_pdf(
 
     pdf.set_y(71)
 
-    # --- C. TABLA DE DETALLE ---
+    # --- C. TABLA DE DETALLE (Con 5 Columnas) ---
     pdf.set_fill_color(235, 238, 242)
     pdf.set_draw_color(180, 185, 195)
     pdf.set_text_color(30, 30, 30)
-    pdf.set_font("Arial", "B", 8.5)
+    pdf.set_font("Arial", "B", 8)
 
-    # Encabezados Tabla
-    col_w = [105, 20, 30, 35]  # Ancho total: 190mm
+    # Anchos: 75 + 18 + 32 + 32 + 33 = 190 mm
+    col_w = [75, 18, 32, 32, 33]
     pdf.cell(col_w[0], 7, " DESCRIPCIÓN", border=1, fill=True)
     pdf.cell(col_w[1], 7, "CANT", border=1, align="C", fill=True)
-    pdf.cell(col_w[2], 7, "P. UNIT", border=1, align="R", fill=True)
-    pdf.cell(col_w[3], 7, "TOTAL ", border=1, align="R", fill=True, ln=True)
+    pdf.cell(col_w[2], 7, "P. UNIT BRUTO", border=1, align="R", fill=True)
+    pdf.cell(col_w[3], 7, "P. UNIT NETO", border=1, align="R", fill=True)
+    pdf.cell(col_w[4], 7, "TOTAL NETO ", border=1, align="R", fill=True, ln=True)
 
-    # Filas Dinámicas de Productos (amplía líneas hacia abajo)
+    # Filas de Productos
     pdf.set_font("Arial", "", 8.5)
     pdf.set_text_color(0, 0, 0)
 
-    total_general = 0.0
+    total_general_bruto = 0.0
 
     for item in carrito:
         producto = str(item.get("Descripción") or item.get("Producto") or "Ítem")
         cantidad = float(item.get("Cantidad", 1))
-        precio_unit = float(item.get("Precio Unitario") or item.get("Precio_Unitario") or 0)
-        subtotal = float(item.get("Subtotal") or (cantidad * precio_unit))
+        precio_bruto = float(item.get("Precio Unitario") or item.get("Precio_Unitario") or 0)
+        
+        # Cálculos por item
+        precio_neto = precio_bruto / 1.19
+        subtotal_bruto = cantidad * precio_bruto
+        subtotal_neto = round(subtotal_bruto / 1.19)
 
-        total_general += subtotal
+        total_general_bruto += subtotal_bruto
 
-        pdf.cell(col_w[0], 6.5, f" {producto[:55]}", border="LRB")
+        pdf.cell(col_w[0], 6.5, f" {producto[:38]}", border="LRB")
         pdf.cell(col_w[1], 6.5, f"{cantidad:g}", border="LRB", align="C")
-        pdf.cell(col_w[2], 6.5, f"${precio_unit:,.0f}", border="LRB", align="R")
-        pdf.cell(col_w[3], 6.5, f"${subtotal:,.0f} ", border="LRB", align="R", ln=True)
+        pdf.cell(col_w[2], 6.5, f"${precio_bruto:,.0f}", border="LRB", align="R")
+        pdf.cell(col_w[3], 6.5, f"${round(precio_neto):,.0f}", border="LRB", align="R")
+        pdf.cell(col_w[4], 6.5, f"${subtotal_neto:,.0f} ", border="LRB", align="R", ln=True)
 
     pdf.ln(4)
 
-    # --- D. TOTALES (Derecha) ---
-    tasa_iva = 0.19
-    neto_calc = round(total_general / (1.0 + tasa_iva))
-    iva_calc = total_general - neto_calc
+    # --- D. TOTALES AL PIE ---
+    tot_neto = round(total_general_bruto / 1.19)
+    tot_iva = total_general_bruto - tot_neto
 
     pdf.set_x(110)
     pdf.set_font("Arial", "B", 9)
     pdf.set_text_color(50, 50, 50)
     pdf.cell(50, 6, "SUBTOTAL NETO:", align="R")
-    pdf.cell(40, 6, f"${neto_calc:,.0f} ", align="R", ln=True)
+    pdf.cell(40, 6, f"${tot_neto:,.0f} ", align="R", ln=True)
 
     pdf.set_x(110)
     pdf.cell(50, 6, "IVA (19%):", align="R")
-    pdf.cell(40, 6, f"${iva_calc:,.0f} ", align="R", ln=True)
+    pdf.cell(40, 6, f"${tot_iva:,.0f} ", align="R", ln=True)
 
-    # Línea separadora
     pdf.set_draw_color(180, 180, 180)
     pdf.line(140, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(1)
 
     pdf.set_x(110)
     pdf.set_font("Arial", "B", 10.5)
-    pdf.set_text_color(16, 128, 67)  # Verde destacado
+    pdf.set_text_color(16, 128, 67)
     pdf.cell(50, 7, "TOTAL GENERAL:", align="R")
-    pdf.cell(40, 7, f"${total_general:,.0f} ", align="R", ln=True)
+    pdf.cell(40, 7, f"${total_general_bruto:,.0f} ", align="R", ln=True)
 
     return pdf.output(dest="S").encode("latin1")
 
