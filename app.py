@@ -154,82 +154,71 @@ def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
 import textwrap
 
 def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_receptor, items, totales):
-    """Genera una ficha única visual unificada que incluye Caja Roja + Emisor + Receptor + Detalle + Totales."""
+    """Genera la ficha unificada en HTML pegada al margen para evitar que Markdown lo convierta en código."""
     filas_items = ""
     for item in items:
         desc = item.get('Descripción') or item.get('Producto') or 'Ítem'
         cant = item.get('Cantidad', 1)
         precio = item.get('Precio Unitario') or item.get('Precio_Unitario') or 0
         subtotal = item.get('Subtotal') or (cant * precio)
-        filas_items += f"""
-        <tr style="border-bottom: 1px solid #333;">
-            <td style="padding: 8px 4px;">{desc}</td>
-            <td style="padding: 8px 4px; text-align: center;">{cant:g}</td>
-            <td style="padding: 8px 4px; text-align: right;">${precio:,.0f}</td>
-            <td style="padding: 8px 4px; text-align: right;">${subtotal:,.0f}</td>
-        </tr>
-        """
+        filas_items += f"""<tr style="border-bottom: 1px solid #333;">
+<td style="padding: 8px 4px;">{desc}</td>
+<td style="padding: 8px 4px; text-align: center;">{cant:g}</td>
+<td style="padding: 8px 4px; text-align: right;">${precio:,.0f}</td>
+<td style="padding: 8px 4px; text-align: right;">${subtotal:,.0f}</td>
+</tr>"""
 
     rut_emisor = datos_emisor.get('rut') or datos_emisor.get('rut_empresa', 'N/A')
 
-    html_unificado = f"""
-    <div style="border: 2px solid #343a40; border-radius: 12px; padding: 20px; background-color: #12161f; color: #e0e0e0; font-family: 'Courier New', Courier, monospace; margin-bottom: 20px;">
-        
-        <!-- CABECERA: EMISOR Y CAJA ROJA DE FOLIO -->
-        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed #444; padding-bottom: 15px; margin-bottom: 15px; flex-wrap: wrap; gap: 15px;">
-            <div style="flex: 1; min-width: 250px;">
-                <h3 style="margin: 0; color: #64b5f6; font-size: 18px;">🏢 {datos_emisor.get('razon_social', 'EMPRESA').upper()}</h3>
-                <p style="margin: 5px 0 0 0; font-size: 12px; color: #aaa; line-height: 1.4;">
-                    <b>RUT:</b> {rut_emisor}<br>
-                    <b>Giro:</b> {datos_emisor.get('giro', 'N/A')}<br>
-                    <b>Dirección:</b> {datos_emisor.get('direccion', 'N/A')}, {datos_emisor.get('comuna', '')}
-                </p>
-            </div>
-            <div style="border: 2px solid #ff4b4b; border-radius: 8px; padding: 10px 20px; text-align: center; color: #ff4b4b; background-color: rgba(255, 75, 75, 0.05); min-width: 200px;">
-                <div style="font-weight: bold; font-size: 14px;">R.U.T.: {rut_emisor}</div>
-                <div style="font-weight: bold; font-size: 15px; margin: 4px 0;">{tipo_documento.upper()}</div>
-                <div style="font-weight: bold; font-size: 16px;">N° {folio}</div>
-            </div>
-        </div>
+    html_unificado = f"""<div style="border: 2px solid #343a40; border-radius: 12px; padding: 20px; background-color: #12161f; color: #e0e0e0; font-family: 'Courier New', Courier, monospace; margin-bottom: 20px;">
+<div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed #444; padding-bottom: 15px; margin-bottom: 15px; flex-wrap: wrap; gap: 15px;">
+<div style="flex: 1; min-width: 250px;">
+<h3 style="margin: 0; color: #64b5f6; font-size: 18px;">🏢 {datos_emisor.get('razon_social', 'EMPRESA').upper()}</h3>
+<p style="margin: 5px 0 0 0; font-size: 12px; color: #aaa; line-height: 1.4;">
+<b>RUT:</b> {rut_emisor}<br>
+<b>Giro:</b> {datos_emisor.get('giro', 'N/A')}<br>
+<b>Dirección:</b> {datos_emisor.get('direccion', 'N/A')}, {datos_emisor.get('comuna', '')}
+</p>
+</div>
+<div style="border: 2px solid #ff4b4b; border-radius: 8px; padding: 10px 20px; text-align: center; color: #ff4b4b; background-color: rgba(255, 75, 75, 0.05); min-width: 200px;">
+<div style="font-weight: bold; font-size: 14px;">R.U.T.: {rut_emisor}</div>
+<div style="font-weight: bold; font-size: 15px; margin: 4px 0;">{tipo_documento.upper()}</div>
+<div style="font-weight: bold; font-size: 16px;">N° {folio}</div>
+</div>
+</div>
+<div style="background-color: #1e2430; border-left: 4px solid #64b5f6; padding: 10px 14px; border-radius: 4px; margin-bottom: 15px;">
+<div style="color: #64b5f6; font-weight: bold; font-size: 13px; margin-bottom: 4px;">👤 DATOS RECEPTOR</div>
+<div style="font-size: 12px; color: #ccc; line-height: 1.4;">
+<b>Cliente:</b> {datos_receptor.get('nombre', 'CLIENTE CONTADO')} &nbsp;|&nbsp; <b>RUT:</b> {datos_receptor.get('rut', '66666666-6')}<br>
+<b>Giro:</b> {datos_receptor.get('giro', 'Particular')} &nbsp;|&nbsp; <b>Dirección:</b> {datos_receptor.get('direccion', 'N/A')}, {datos_receptor.get('comuna', 'Santiago')}
+</div>
+</div>
+<table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;">
+<thead>
+<tr style="border-bottom: 2px solid #555; color: #888; text-align: left;">
+<th style="padding: 6px 4px;">DESCRIPCIÓN</th>
+<th style="padding: 6px 4px; text-align: center;">CANT</th>
+<th style="padding: 6px 4px; text-align: right;">P. UNIT</th>
+<th style="padding: 6px 4px; text-align: right;">TOTAL</th>
+</tr>
+</thead>
+<tbody>
+{filas_items}
+</tbody>
+</table>
+<div style="border-top: 2px dashed #444; padding-top: 10px; display: flex; justify-content: flex-end;">
+<div style="text-align: right; font-size: 13px; min-width: 220px; line-height: 1.6;">
+<div><b>SUBTOTAL NETO:</b> ${totales.get('neto', 0):,.0f}</div>
+<div><b>IVA (19%):</b> ${totales.get('iva', 0):,.0f}</div>
+<div style="font-size: 16px; color: #4caf50; border-top: 1px solid #444; margin-top: 4px; padding-top: 4px;">
+<b>TOTAL GENERAL: ${totales.get('total', 0):,.0f}</b>
+</div>
+</div>
+</div>
+</div>"""
 
-        <!-- RECEPTOR -->
-        <div style="background-color: #1e2430; border-left: 4px solid #64b5f6; padding: 10px 14px; border-radius: 4px; margin-bottom: 15px;">
-            <div style="color: #64b5f6; font-weight: bold; font-size: 13px; margin-bottom: 4px;">👤 DATOS RECEPTOR</div>
-            <div style="font-size: 12px; color: #ccc; line-height: 1.4;">
-                <b>Cliente:</b> {datos_receptor.get('nombre', 'CLIENTE CONTADO')} &nbsp;|&nbsp; <b>RUT:</b> {datos_receptor.get('rut', '66666666-6')}<br>
-                <b>Giro:</b> {datos_receptor.get('giro', 'Particular')} &nbsp;|&nbsp; <b>Dirección:</b> {datos_receptor.get('direccion', 'N/A')}, {datos_receptor.get('comuna', 'Santiago')}
-            </div>
-        </div>
+    st.markdown(html_unificado, unsafe_allow_html=True)
 
-        <!-- TABLA DE DETALLES -->
-        <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;">
-            <thead>
-                <tr style="border-bottom: 2px solid #555; color: #888; text-align: left;">
-                    <th style="padding: 6px 4px;">DESCRIPCIÓN</th>
-                    <th style="padding: 6px 4px; text-align: center;">CANT</th>
-                    <th style="padding: 6px 4px; text-align: right;">P. UNIT</th>
-                    <th style="padding: 6px 4px; text-align: right;">TOTAL</th>
-                </tr>
-            </thead>
-            <tbody>
-                {filas_items}
-            </tbody>
-        </table>
-
-        <!-- TOTALES -->
-        <div style="border-top: 2px dashed #444; padding-top: 10px; display: flex; justify-content: flex-end;">
-            <div style="text-align: right; font-size: 13px; min-width: 220px; line-height: 1.6;">
-                <div><b>SUBTOTAL NETO:</b> ${totales.get('neto', 0):,.0f}</div>
-                <div><b>IVA (19%):</b> ${totales.get('iva', 0):,.0f}</div>
-                <div style="font-size: 16px; color: #4caf50; border-top: 1px solid #444; margin-top: 4px; padding-top: 4px;">
-                    <b>TOTAL GENERAL: ${totales.get('total', 0):,.0f}</b>
-                </div>
-            </div>
-        </div>
-
-    </div>
-    """
-    st.markdown(textwrap.dedent(html_unificado), unsafe_allow_html=True)
 
 def cargar_maestro_proveedores(ruta_negocio):
     archivo_prov = os.path.join(ruta_negocio, "Maestro_Proveedores.xlsx")
