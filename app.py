@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import tempfile
 import sys
 import textwrap
 from datetime import date, datetime, timedelta
@@ -318,28 +319,50 @@ def generar_guia_pdf(
     else:
         fecha_str = str(fecha_emision)
 
-    # 2. Rescate de Datos de la Empresa (Emisor) y Logo
+    # 2. Rescate de Datos de la Empresa (Emisor)
     datos_emp = datos_empresa or st.session_state.get("empresa_actual") or {}
     cfg = st.session_state.get("config_ticket") or {}
     if isinstance(cfg, str):
         try: cfg = json.loads(cfg)
         except Exception: cfg = {}
 
-    nombre_empresa = (datos_emp.get("razon_social") or datos_emp.get("nombre_empresa") or datos_emp.get("nombre") or cfg.get("nombre_empresa") or "MI EMPRESA SPA")
-    rut_empresa = (datos_emp.get("rut_empresa") or datos_emp.get("rut") or cfg.get("rut_empresa") or "Sin RUT")
-    giro_empresa = (datos_emp.get("giro") or cfg.get("giro") or "VENTA AL POR MAYOR EN COMERCIOS")
-    direccion_empresa = (datos_emp.get("direccion") or cfg.get("direccion") or "Sin Dirección")
-    comuna_empresa = datos_emp.get("comuna", "")
+    nombre_empresa = (
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("razon_social") or 
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("nombre_empresa") or 
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("nombre") or 
+        cfg.get("nombre_empresa") or 
+        "MI EMPRESA SPA"
+    )
+    rut_empresa = (
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("rut_empresa") or 
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("rut") or 
+        cfg.get("rut_empresa") or 
+        "Sin RUT"
+    )
+    giro_empresa = (
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("giro") or 
+        cfg.get("giro") or 
+        "VENTA AL POR MAYOR EN COMERCIOS"
+    )
+    direccion_empresa = (
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("direccion") or 
+        cfg.get("direccion") or 
+        "Sin Dirección"
+    )
+    comuna_empresa = (datos_emp if isinstance(datos_emp, dict) else {}).get("comuna", "")
     if comuna_empresa:
         direccion_empresa += f", {comuna_empresa}"
 
-    # Búsqueda del Logo en las diferentes propiedades
+    # Búsqueda de la URL / Ruta del Logo
     logo_src = (
-        datos_emp.get("logo_url") or 
-        datos_emp.get("logo") or 
-        datos_emp.get("url_logo") or 
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("logo_url") or 
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("logo") or 
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("url_logo") or 
+        (datos_emp if isinstance(datos_emp, dict) else {}).get("imagen") or 
         cfg.get("logo_url") or 
-        cfg.get("logo")
+        cfg.get("logo") or 
+        st.session_state.get("logo_url") or 
+        st.session_state.get("logo")
     )
 
     # 3. Rescate de Datos del Receptor (Cliente)
@@ -359,27 +382,53 @@ def generar_guia_pdf(
 
     # --- A. ENCABEZADO: LOGO + EMISOR y CUADRO ROJO DTE ---
     start_y = 12
-
-    # Intentar renderizar Logo
     has_logo = False
-    text_x_offset = 10  # Posición X del texto si no hay logo
+    text_x_offset = 10
+    temp_img_path = None
 
     if logo_src:
         try:
+            img_bytes = None
             if str(logo_src).startswith("http://") or str(logo_src).startswith("https://"):
-                resp = requests.get(str(logo_src), timeout=3)
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                resp = requests.get(str(logo_src), headers=headers, timeout=5)
                 if resp.status_code == 200:
-                    img_buf = io.BytesIO(resp.content)
-                    pdf.image(img_buf, x=10, y=start_y, h=22)
-                    has_logo = True
+                    img_bytes = io.BytesIO(resp.content)
             elif os.path.exists(str(logo_src)):
-                pdf.image(str(logo_src), x=10, y=start_y, h=22)
+                with open(str(logo_src), "rb") as f:
+                    img_bytes = io.BytesIO(f.read())
+
+            if img_bytes:
+                img = Image.open(img_bytes)
+
+                # Convertir transparencia RGBA a RGB sobre fondo blanco
+                if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                    img = img.convert("RGBA")
+                    background = Image.new("RGB", img.size, (255, 255, 255))
+                    background.paste(img, mask=img.split()[3])
+                    img = background
+                else:
+                    img = img.convert("RGB")
+
+                # Guardar en archivo temporal para FPDF
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
+                    temp_img_path = tmp_file.name
+                    img.save(temp_img_path, format="PNG")
+
+                pdf.image(temp_img_path, x=10, y=start_y, h=22)
                 has_logo = True
-        except Exception:
-            has_logo = False  # Si falla el logo, continua generando el PDF sin detenerse
+        except Exception as e:
+            st.warning(f"⚠️ No se pudo cargar el logo en el PDF: {e}")
+            has_logo = False
+        finally:
+            if temp_img_path and os.path.exists(temp_img_path):
+                try:
+                    os.remove(temp_img_path)
+                except Exception:
+                    pass
 
     if has_logo:
-        text_x_offset = 38  # Desplaza la información de la empresa a la derecha del logo
+        text_x_offset = 40  # Desplaza los datos del emisor para dejarle espacio al logo
 
     # Cuadro Rojo DTE (Derecha)
     pdf.set_draw_color(217, 4, 41)
