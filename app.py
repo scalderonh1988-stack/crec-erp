@@ -318,7 +318,7 @@ def generar_guia_pdf(
     else:
         fecha_str = str(fecha_emision)
 
-    # 2. Rescate de Datos de la Empresa (Emisor)
+    # 2. Rescate de Datos de la Empresa (Emisor) y Logo
     datos_emp = datos_empresa or st.session_state.get("empresa_actual") or {}
     cfg = st.session_state.get("config_ticket") or {}
     if isinstance(cfg, str):
@@ -332,6 +332,15 @@ def generar_guia_pdf(
     comuna_empresa = datos_emp.get("comuna", "")
     if comuna_empresa:
         direccion_empresa += f", {comuna_empresa}"
+
+    # Búsqueda del Logo en las diferentes propiedades
+    logo_src = (
+        datos_emp.get("logo_url") or 
+        datos_emp.get("logo") or 
+        datos_emp.get("url_logo") or 
+        cfg.get("logo_url") or 
+        cfg.get("logo")
+    )
 
     # 3. Rescate de Datos del Receptor (Cliente)
     if datos_receptor is None:
@@ -348,8 +357,29 @@ def generar_guia_pdf(
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # --- A. ENCABEZADO: EMISOR y CUADRO ROJO DTE ---
+    # --- A. ENCABEZADO: LOGO + EMISOR y CUADRO ROJO DTE ---
     start_y = 12
+
+    # Intentar renderizar Logo
+    has_logo = False
+    text_x_offset = 10  # Posición X del texto si no hay logo
+
+    if logo_src:
+        try:
+            if str(logo_src).startswith("http://") or str(logo_src).startswith("https://"):
+                resp = requests.get(str(logo_src), timeout=3)
+                if resp.status_code == 200:
+                    img_buf = io.BytesIO(resp.content)
+                    pdf.image(img_buf, x=10, y=start_y, h=22)
+                    has_logo = True
+            elif os.path.exists(str(logo_src)):
+                pdf.image(str(logo_src), x=10, y=start_y, h=22)
+                has_logo = True
+        except Exception:
+            has_logo = False  # Si falla el logo, continua generando el PDF sin detenerse
+
+    if has_logo:
+        text_x_offset = 38  # Desplaza la información de la empresa a la derecha del logo
 
     # Cuadro Rojo DTE (Derecha)
     pdf.set_draw_color(217, 4, 41)
@@ -371,16 +401,20 @@ def generar_guia_pdf(
 
     # Datos Emisor (Izquierda)
     pdf.set_text_color(0, 0, 0)
-    pdf.set_xy(10, start_y)
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(110, 6, str(nombre_empresa).upper(), ln=True)
+    pdf.set_xy(text_x_offset, start_y)
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(115 - text_x_offset, 5, str(nombre_empresa).upper(), ln=True)
 
-    pdf.set_font("Arial", "", 8.5)
+    pdf.set_font("Arial", "", 8)
     pdf.set_text_color(60, 60, 60)
-    pdf.cell(110, 4.5, f"RUT: {rut_empresa}", ln=True)
-    pdf.cell(110, 4.5, f"Giro: {giro_empresa}", ln=True)
-    pdf.cell(110, 4.5, f"Dirección: {direccion_empresa}", ln=True)
-    pdf.cell(110, 4.5, f"Fecha de Emisión: {fecha_str}", ln=True)
+    pdf.set_x(text_x_offset)
+    pdf.cell(115 - text_x_offset, 4, f"RUT: {rut_empresa}", ln=True)
+    pdf.set_x(text_x_offset)
+    pdf.cell(115 - text_x_offset, 4, f"Giro: {giro_empresa[:45]}", ln=True)
+    pdf.set_x(text_x_offset)
+    pdf.cell(115 - text_x_offset, 4, f"Dirección: {direccion_empresa[:45]}", ln=True)
+    pdf.set_x(text_x_offset)
+    pdf.cell(115 - text_x_offset, 4, f"Fecha Emisión: {fecha_str}", ln=True)
 
     # Línea divisora
     pdf.set_y(44)
@@ -407,13 +441,12 @@ def generar_guia_pdf(
 
     pdf.set_y(71)
 
-    # --- C. TABLA DE DETALLE (Con 5 Columnas) ---
+    # --- C. TABLA DE DETALLE ---
     pdf.set_fill_color(235, 238, 242)
     pdf.set_draw_color(180, 185, 195)
     pdf.set_text_color(30, 30, 30)
     pdf.set_font("Arial", "B", 8)
 
-    # Anchos: 75 + 18 + 32 + 32 + 33 = 190 mm
     col_w = [75, 18, 32, 32, 33]
     pdf.cell(col_w[0], 7, " DESCRIPCIÓN", border=1, fill=True)
     pdf.cell(col_w[1], 7, "CANT", border=1, align="C", fill=True)
@@ -421,7 +454,6 @@ def generar_guia_pdf(
     pdf.cell(col_w[3], 7, "P. UNIT NETO", border=1, align="R", fill=True)
     pdf.cell(col_w[4], 7, "TOTAL NETO ", border=1, align="R", fill=True, ln=True)
 
-    # Filas de Productos
     pdf.set_font("Arial", "", 8.5)
     pdf.set_text_color(0, 0, 0)
 
@@ -432,7 +464,6 @@ def generar_guia_pdf(
         cantidad = float(item.get("Cantidad", 1))
         precio_bruto = float(item.get("Precio Unitario") or item.get("Precio_Unitario") or 0)
         
-        # Cálculos por item
         precio_neto = precio_bruto / 1.19
         subtotal_bruto = cantidad * precio_bruto
         subtotal_neto = round(subtotal_bruto / 1.19)
@@ -447,7 +478,7 @@ def generar_guia_pdf(
 
     pdf.ln(4)
 
-    # --- D. TOTALES AL PIE ---
+    # --- D. TOTALES ---
     tot_neto = round(total_general_bruto / 1.19)
     tot_iva = total_general_bruto - tot_neto
 
