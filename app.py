@@ -4342,7 +4342,7 @@ elif menu == "⚙️ Configuración General":
     # ==========================================
     st.markdown("---")
     st.markdown("### 🗂️ Administración de archivos")
-    st.write("Gestiona la base de datos de tu negocio: descarga plantillas en blanco, exporta tu información actual o importa cargas masivas.")
+    st.write("Gestiona la base de datos de tu negocio: descarga plantillas en blanco con todas las columnas de Supabase, exporta tu información o realiza cargas masivas.")
 
     accion = st.radio(
         "¿Qué acción deseas realizar?",
@@ -4353,53 +4353,55 @@ elif menu == "⚙️ Configuración General":
 
     tenant_id = st.session_state.get("negocio_seleccionado") or get_current_tenant()
 
-    # 1. DESCARGAR PLANTILLA EN BLANCO (EN MEMORIA)
+    # Columnas por defecto por si la tabla en Supabase está completamente vacía
+    columnas_default = {
+        "productos": ["id", "created_at", "rut_empresa", "codigo_barra", "nombre", "categoria", "costo", "precio_venta", "stock", "descripcion", "unidad_medida", "activo"],
+        "clientes": ["id", "created_at", "rut_empresa", "rut", "nombre", "email", "telefono", "direccion", "comuna", "giro"],
+        "proveedores": ["id", "created_at", "rut_empresa", "rut", "razon_social", "giro", "contacto", "telefono", "email", "direccion"],
+        "gastos": ["id", "created_at", "rut_empresa", "fecha", "categoria", "descripcion", "monto", "tipo_costo", "iva", "comprobante", "proveedor"],
+        "costos_fijos": ["id", "created_at", "rut_empresa", "nombre", "monto", "categoria", "frecuencia", "activo"]
+    }
+
+    # 1. DESCARGAR PLANTILLA EN BLANCO (DINÁMICA DESDE SUPABASE)
     if accion == "Descargar plantilla en blanco":
-        st.info("💡 Selecciona la plantilla que necesitas descargar. El archivo se generará automáticamente en memoria listo para completar.")
+        st.info("💡 La plantilla se genera en tiempo real leyendo la estructura exacta de tu tabla en Supabase.")
         
-        tipo_plantilla = st.selectbox(
-            "Selecciona el tipo de plantilla:",
-            ["Productos y Stock", "Clientes", "Proveedores", "Gastos"],
+        tabla_destino = st.selectbox(
+            "Selecciona la tabla para generar la plantilla:",
+            ["productos", "clientes", "proveedores", "gastos", "costos_fijos"],
             key="select_tipo_plantilla_config"
         )
 
-        if tipo_plantilla == "Productos y Stock":
-            df_plantilla = pd.DataFrame(columns=[
-                "codigo_barra", "nombre", "categoria", "costo", "precio_venta", "stock", "descripcion"
-            ])
-            nombre_archivo = "plantilla_productos.xlsx"
-        elif tipo_plantilla == "Clientes":
-            df_plantilla = pd.DataFrame(columns=[
-                "rut", "nombre", "email", "telefono", "direccion", "comuna"
-            ])
-            nombre_archivo = "plantilla_clientes.xlsx"
-        elif tipo_plantilla == "Proveedores":
-            df_plantilla = pd.DataFrame(columns=[
-                "rut", "razon_social", "giro", "contacto", "telefono", "email"
-            ])
-            nombre_archivo = "plantilla_proveedores.xlsx"
-        elif tipo_plantilla == "Gastos":
-            df_plantilla = pd.DataFrame(columns=[
-                "fecha", "categoria", "descripcion", "monto", "tipo_costo"
-            ])
-            nombre_archivo = "plantilla_gastos.xlsx"
+        try:
+            # Consultamos 1 registro en Supabase para obtener el listado exacto de columnas
+            res = supabase.table(tabla_destino).select("*").limit(1).execute()
+            if res.data and len(res.data) > 0:
+                columnas = list(res.data[0].keys())
+            else:
+                columnas = columnas_default.get(tabla_destino, [])
 
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_plantilla.to_excel(writer, index=False, sheet_name=tipo_plantilla)
-        data_excel = buffer.getvalue()
+            df_plantilla = pd.DataFrame(columns=columnas)
+            nombre_archivo = f"plantilla_{tabla_destino}.xlsx"
 
-        st.download_button(
-            label=f"⬇️ Descargar {nombre_archivo}",
-            data=data_excel,
-            file_name=nombre_archivo,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="btn_download_plantilla_config"
-        )
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_plantilla.to_excel(writer, index=False, sheet_name=tabla_destino)
+            data_excel = buffer.getvalue()
 
-    # 2. EXPORTAR BASE DE DATOS ACTUAL (DESDE SUPABASE)
+            st.download_button(
+                label=f"⬇️ Descargar plantilla_{tabla_destino}.xlsx ({len(columnas)} columnas)",
+                data=data_excel,
+                file_name=nombre_archivo,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="btn_download_plantilla_config"
+            )
+            st.success(f"✅ Plantilla lista con las {len(columnas)} columnas detectadas de Supabase: `{', '.join(columnas)}`")
+        except Exception as e:
+            st.error(f"❌ Error al obtener columnas de Supabase: {e}")
+
+    # 2. EXPORTAR BASE DE DATOS ACTUAL (TODAS LAS COLUMNAS DESDE SUPABASE)
     elif accion == "Exportar base de datos actual":
-        st.info("📦 Obtén una copia de seguridad en Excel con todos los registros actuales almacenados en la nube.")
+        st.info("📦 Obtén una copia de seguridad en Excel con todas las columnas y registros almacenados en la nube.")
         
         tabla_exportar = st.selectbox(
             "Selecciona la información a exportar:",
@@ -4407,7 +4409,7 @@ elif menu == "⚙️ Configuración General":
             key="select_export_tabla_config"
         )
 
-        if st.button("🚀 Generar Exportación", key="btn_exportar_config"):
+        if st.button("🚀 Generar Exportación Completa", key="btn_exportar_config"):
             try:
                 res = supabase.table(tabla_exportar).select("*").execute()
                 if res.data:
@@ -4421,13 +4423,13 @@ elif menu == "⚙️ Configuración General":
                             df_exp.to_excel(writer, index=False, sheet_name=tabla_exportar)
                         
                         st.download_button(
-                            label=f"⬇️ Descargar {tabla_exportar}_actual.xlsx",
+                            label=f"⬇️ Descargar {tabla_exportar}_actual.xlsx ({len(df_exp.columns)} columnas)",
                             data=buffer.getvalue(),
-                            file_name=f"{tabla_exportar}_actual.xlsx",
+                            file_name=f"{tabla_exportar}_export.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="btn_download_export_config"
                         )
-                        st.success(f"✅ ¡Se exportaron {len(df_exp)} registros de '{tabla_exportar}' con éxito!")
+                        st.success(f"✅ Exportados {len(df_exp)} registros con sus {len(df_exp.columns)} columnas.")
                     else:
                         st.warning("⚠️ No hay registros pertenecientes a este negocio.")
                 else:
@@ -4437,11 +4439,11 @@ elif menu == "⚙️ Configuración General":
 
     # 3. IMPORTAR BASE DE DATOS (A SUPABASE)
     elif accion == "Importar base de datos":
-        st.warning("⚠️ *Atención:* Carga un archivo Excel para ingresar registros masivos directamente a la base de datos de Supabase.")
+        st.warning("⚠️ Carga un archivo Excel para ingresar registros masivos directamente a Supabase.")
 
         tabla_destino = st.selectbox(
             "Selecciona la tabla destino para la carga masiva:",
-            ["productos", "clientes", "proveedores", "gastos"],
+            ["productos", "clientes", "proveedores", "gastos", "costos_fijos"],
             key="select_tabla_destino_import_config"
         )
 
@@ -4458,7 +4460,7 @@ elif menu == "⚙️ Configuración General":
                 else:
                     df_nuevo = pd.read_excel(archivo_cargado)
 
-                st.write("📋 **Previsualización de datos a cargar:**")
+                st.write(f"📋 **Previsualización de datos a cargar ({len(df_nuevo.columns)} columnas):**")
                 st.dataframe(df_nuevo.head())
 
                 if st.button("🚀 Confirmar y Cargar a Supabase", key="btn_confirmar_import_config"):
