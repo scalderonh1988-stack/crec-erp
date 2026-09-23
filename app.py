@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import json
@@ -4350,46 +4351,127 @@ elif menu == "⚙️ Configuración General":
         key="radio_adm_archivos_config"
     )
 
+    tenant_id = st.session_state.get("negocio_seleccionado") or get_current_tenant()
+
+    # 1. DESCARGAR PLANTILLA EN BLANCO (EN MEMORIA)
     if accion == "Descargar plantilla en blanco":
-        st.info("💡 Descarga esta plantilla para completar tus productos respetando los encabezados requeridos para la carga masiva.")
-        if os.path.exists(ruta_plantilla_base):
-            with open(ruta_plantilla_base, "rb") as f:
-                st.download_button(
-                    label="⬇️ Descargar Plantilla Base (Excel)",
-                    data=f,
-                    file_name="plantilla_base_datos.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        else:
-            st.warning("⚠️ No se encontró la plantilla base en el sistema.")
+        st.info("💡 Selecciona la plantilla que necesitas descargar. El archivo se generará automáticamente en memoria listo para completar.")
+        
+        tipo_plantilla = st.selectbox(
+            "Selecciona el tipo de plantilla:",
+            ["Productos y Stock", "Clientes", "Proveedores", "Gastos"],
+            key="select_tipo_plantilla_config"
+        )
 
+        if tipo_plantilla == "Productos y Stock":
+            df_plantilla = pd.DataFrame(columns=[
+                "codigo_barra", "nombre", "categoria", "costo", "precio_venta", "stock", "descripcion"
+            ])
+            nombre_archivo = "plantilla_productos.xlsx"
+        elif tipo_plantilla == "Clientes":
+            df_plantilla = pd.DataFrame(columns=[
+                "rut", "nombre", "email", "telefono", "direccion", "comuna"
+            ])
+            nombre_archivo = "plantilla_clientes.xlsx"
+        elif tipo_plantilla == "Proveedores":
+            df_plantilla = pd.DataFrame(columns=[
+                "rut", "razon_social", "giro", "contacto", "telefono", "email"
+            ])
+            nombre_archivo = "plantilla_proveedores.xlsx"
+        elif tipo_plantilla == "Gastos":
+            df_plantilla = pd.DataFrame(columns=[
+                "fecha", "categoria", "descripcion", "monto", "tipo_costo"
+            ])
+            nombre_archivo = "plantilla_gastos.xlsx"
+
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df_plantilla.to_excel(writer, index=False, sheet_name=tipo_plantilla)
+        data_excel = buffer.getvalue()
+
+        st.download_button(
+            label=f"⬇️ Descargar {nombre_archivo}",
+            data=data_excel,
+            file_name=nombre_archivo,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="btn_download_plantilla_config"
+        )
+
+    # 2. EXPORTAR BASE DE DATOS ACTUAL (DESDE SUPABASE)
     elif accion == "Exportar base de datos actual":
-        st.info("📦 Obtén una copia de seguridad con todos los registros actuales de tu inventario o base de datos.")
-        if os.path.exists(ruta_bd_actual):
-            with open(ruta_bd_actual, "rb") as f:
-                st.download_button(
-                    label="⬇️ Descargar mi Base de Datos Actual (Excel)",
-                    data=f,
-                    file_name="BASE_DE_DATOS_actual.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        else:
-            st.warning("⚠️ Todavía no existe un archivo 'BASE DE DATOS.xlsx' registrado para este negocio.")
+        st.info("📦 Obtén una copia de seguridad en Excel con todos los registros actuales almacenados en la nube.")
+        
+        tabla_exportar = st.selectbox(
+            "Selecciona la información a exportar:",
+            ["productos", "clientes", "proveedores", "gastos", "ventas", "costos_fijos"],
+            key="select_export_tabla_config"
+        )
 
+        if st.button("🚀 Generar Exportación", key="btn_exportar_config"):
+            try:
+                res = supabase.table(tabla_exportar).select("*").execute()
+                if res.data:
+                    df_exp = pd.DataFrame(res.data)
+                    if 'rut_empresa' in df_exp.columns and tenant_id:
+                        df_exp = df_exp[df_exp['rut_empresa'].astype(str).str.contains(str(tenant_id), case=False, na=False)]
+
+                    if not df_exp.empty:
+                        buffer = io.BytesIO()
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            df_exp.to_excel(writer, index=False, sheet_name=tabla_exportar)
+                        
+                        st.download_button(
+                            label=f"⬇️ Descargar {tabla_exportar}_actual.xlsx",
+                            data=buffer.getvalue(),
+                            file_name=f"{tabla_exportar}_actual.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="btn_download_export_config"
+                        )
+                        st.success(f"✅ ¡Se exportaron {len(df_exp)} registros de '{tabla_exportar}' con éxito!")
+                    else:
+                        st.warning("⚠️ No hay registros pertenecientes a este negocio.")
+                else:
+                    st.warning("⚠️ No se encontraron datos registrados en esta tabla.")
+            except Exception as e:
+                st.error(f"❌ Ocurrió un error al exportar los datos: {e}")
+
+    # 3. IMPORTAR BASE DE DATOS (A SUPABASE)
     elif accion == "Importar base de datos":
-        st.warning("⚠️ *Atención:* Al importar una nueva base de datos, se sobrescribirán los datos actuales de tu negocio.")
-      
-        archivo_cargado = st.file_uploader("Selecciona tu archivo Excel desde tu equipo", type=["xlsx"], key="uploader_importar_bd")
-      
+        st.warning("⚠️ *Atención:* Carga un archivo Excel para ingresar registros masivos directamente a la base de datos de Supabase.")
+
+        tabla_destino = st.selectbox(
+            "Selecciona la tabla destino para la carga masiva:",
+            ["productos", "clientes", "proveedores", "gastos"],
+            key="select_tabla_destino_import_config"
+        )
+
+        archivo_cargado = st.file_uploader(
+            "Selecciona tu archivo Excel (.xlsx) o CSV desde tu equipo", 
+            type=["xlsx", "csv"], 
+            key="uploader_importar_bd_config"
+        )
+
         if archivo_cargado is not None:
-            if st.button("🚀 Confirmar y Reemplazar Base de Datos"):
-                try:
+            try:
+                if archivo_cargado.name.endswith(".csv"):
+                    df_nuevo = pd.read_csv(archivo_cargado)
+                else:
                     df_nuevo = pd.read_excel(archivo_cargado)
-                    df_nuevo.to_excel(ruta_bd_actual, index=False)
-                    st.success("✅ ¡Base de datos importada y actualizada con éxito!")
+
+                st.write("📋 **Previsualización de datos a cargar:**")
+                st.dataframe(df_nuevo.head())
+
+                if st.button("🚀 Confirmar y Cargar a Supabase", key="btn_confirmar_import_config"):
+                    if tenant_id and 'rut_empresa' not in df_nuevo.columns:
+                        df_nuevo['rut_empresa'] = str(tenant_id)
+
+                    registros = df_nuevo.where(pd.notnull(df_nuevo), None).to_dict(orient="records")
+
+                    supabase.table(tabla_destino).upsert(registros).execute()
+                    st.success(f"✅ ¡Base de datos cargada con éxito! Se procesaron {len(registros)} registros en '{tabla_destino}'.")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Ocurrió un error al procesar el archivo: {e}")
+            except Exception as e:
+                st.error(f"❌ Ocurrió un error al procesar la importación: {e}")
 
 
 # ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO / HÍBRIDO OFFLINE) -----------------
