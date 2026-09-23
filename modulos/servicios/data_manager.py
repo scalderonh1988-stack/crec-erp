@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from supabase import Client, create_client
+from modulos.offline_cache import ClienteSupabaseConCache
 
 # --- CONFIGURACIÓN SEGURA DE LA NUBE (DESDE ST.SECRETS) ---
 def _obtener_credencial(clave_directa: str, clave_seccion: str) -> str:
@@ -25,7 +26,9 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     st.stop()
 
 # Cliente Supabase seguro
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Por esto:
+supabase_real = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = ClienteSupabaseConCache(supabase_real)
 
 BASE_TENANTS_DIR = "clientes"
 

@@ -4,3 +4,18 @@ primaryColor="#3B82F6"
 backgroundColor="#111827"
 secondaryBackgroundColor="#1F2937"
 textColor="#F3F4F6"
+
+[global]
+developmentMode = false
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true

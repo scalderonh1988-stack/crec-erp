@@ -70,7 +70,7 @@ st.markdown("""
 # 2. IMPORTACIÓN DE MÓDULOS DE LA APLICACIÓN
 # ==============================================================================
 # 💾 Módulo de Caché Offline (Respaldo automático de Supabase)
-from modulos.offline_cache import obtener_tabla_con_cache
+# from modulos.offline_cache import obtener_tabla_con_cache
 
 from modulos.servicios.data_manager import get_current_tenant
 
