@@ -151,6 +151,8 @@ def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
 
     st.markdown("---")
 
+import textwrap
+
 def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_receptor, items, totales):
     """Genera una ficha única visual unificada que incluye Caja Roja + Emisor + Receptor + Detalle + Totales."""
     filas_items = ""
@@ -227,7 +229,7 @@ def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_recep
 
     </div>
     """
-    st.markdown(html_unificado, unsafe_allow_html=True)
+    st.markdown(textwrap.dedent(html_unificado), unsafe_allow_html=True)
 
 def cargar_maestro_proveedores(ruta_negocio):
     archivo_prov = os.path.join(ruta_negocio, "Maestro_Proveedores.xlsx")
@@ -5130,7 +5132,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.pop("cliente_preseleccionado", None)
                 st.session_state.pop("folio_guia_origen", None) 
                 st.rerun()
-                
+
     # =========================================================================
     # --- VISTA 2: PANTALLA DE PAGO Y CONFIRMACIÓN ---
     # =========================================================================
