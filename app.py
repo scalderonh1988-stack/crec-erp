@@ -11,9 +11,68 @@ from supabase import create_client, Client
 from fpdf import FPDF
 from PIL import Image
 from werkzeug.security import generate_password_hash
-from modulos.servicios.data_manager import get_current_tenant
 
-# --- MÓDULOS REESTRUCTURADOS ---
+# ==============================================================================
+# 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN DE ELEMENTOS DE DESARROLLADOR
+# (Obligatorio: debe ser la PRIMERA llamada a 'st' en todo el código)
+# ==============================================================================
+st.set_page_config(
+    page_title="CREC-ERP - Gestión Inteligente",
+    page_icon="📦",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Oculta menú de Streamlit, barra superior con botón Fork/GitHub, footer, estado y estilos CSS generales
+st.markdown("""
+    <style>
+    /* Ocultar menú principal, encabezado y pie de página */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Ocultar barra superior nativa (Fork, GitHub, Botones de desarrollador) */
+    .stAppHeader {display: none !important;}
+    [data-testid="stHeader"] {display: none !important;}
+    [data-testid="stToolbar"] {display: none !important;}
+    [data-testid="stDecoration"] {display: none !important;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    
+    /* Bloquear selección accidental de texto en pantallas de caja */
+    .stApp { user-select: none; }
+
+    /* Estilos globales */
+    .main-title {
+        font-size: 1.8rem;
+        color: #1E3A8A;
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 0px;
+    }
+    .sub-title {
+        font-size: 0.95rem;
+        color: #4B5563;
+        text-align: center;
+        margin-bottom: 15px;
+    }
+    .ticket-box {
+        background-color: #1F2937;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px dashed #3B82F6;
+        color: #F3F4F6;
+        font-family: monospace;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
+# 2. IMPORTACIÓN DE MÓDULOS DE LA APLICACIÓN
+# ==============================================================================
+# 💾 Módulo de Caché Offline (Respaldo automático de Supabase)
+from modulos.offline_cache import obtener_tabla_con_cache
+
+from modulos.servicios.data_manager import get_current_tenant
 
 # Servicios y Gestión de Datos
 from modulos.servicios.data_manager import guardar_nuevo_cliente, cargar_maestro_clientes
@@ -44,15 +103,6 @@ from historial_ventas import mostrar_modulo_historial_ventas
 from produccion_recetas import mostrar_modulo_produccion
 from modulos.distribucion import mostrar_modulo_distribucion
 
-# Ocultar el menú predeterminado y la marca de agua de Streamlit
-hide_st_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            </style>
-            """
-st.markdown(hide_st_style, unsafe_allow_html=True)
-
 def cargar_maestro_proveedores(ruta_negocio):
     archivo_prov = os.path.join(ruta_negocio, "Maestro_Proveedores.xlsx")
     if not os.path.exists(archivo_prov):
@@ -78,40 +128,6 @@ def guardar_nuevo_proveedor(ruta_negocio, nombre, rut="", contacto="", telefono=
     
     df_actualizado = pd.concat([df_prov, nuevo], ignore_index=True)
     df_actualizado.to_excel(archivo_prov, index=False)
-# ⚙️ 1. CONFIGURACIÓN DE PÁGINA (SIEMPRE LO PRIMERO)
-st.set_page_config(
-    page_title="CREC-ERP - Gestión Inteligente",
-    page_icon="📦",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Estilo visual general
-st.markdown("""
-    <style>
-    .main-title {
-        font-size: 1.8rem;
-        color: #1E3A8A;
-        text-align: center;
-        font-weight: bold;
-        margin-bottom: 0px;
-    }
-    .sub-title {
-        font-size: 0.95rem;
-        color: #4B5563;
-        text-align: center;
-        margin-bottom: 15px;
-    }
-    .ticket-box {
-        background-color: #1F2937;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px dashed #3B82F6;
-        color: #F3F4F6;
-        font-family: monospace;
-    }
-    </style>
-""", unsafe_allow_html=True)
 
 # --- 2. RUTAS Y CARPETAS GLOBALES ---
 if getattr(sys, 'frozen', False):
@@ -2081,10 +2097,11 @@ elif menu == "📑 Cuentas por Cobrar":
 # ----------------- SECCIÓN DASHBOARD EJECUTIVO -----------------
 elif menu == "📊 Dashboard Ejecutivo":
     mostrar_encabezado_con_home("⚡ Resumen Ejecutivo en Tiempo Real")
+    tenant_id = st.session_state.get("negocio_seleccionado") or get_current_tenant()
    
-    # 🕒 Selector de Período Temporal en Tiempo Real
+    # 🕒 Selector de Período Temporal
     st.markdown("### 🎛️ Filtro Temporal de Análisis")
-    col_f1, col_f2 = st.columns([2, 2])
+    col_f1, _ = st.columns([2, 2])
     with col_f1:
         periodo_seleccionado = st.selectbox(
             "Selecciona el período a visualizar:",
@@ -2104,182 +2121,220 @@ elif menu == "📊 Dashboard Ejecutivo":
     else:
         fecha_limite = None
 
-    archivo_gastos = os.path.join(ruta_negocio, "Registro_Gastos.xlsx")
-    archivo_cxp = os.path.join(ruta_negocio, "Cuentas_por_Cobrar.xlsx")
-    archivo_cpp = os.path.join(ruta_negocio, "Cuentas_Por_Pagar.xlsx")
-    archivo_cuadratura = os.path.join(ruta_negocio, "Cuadratura_Diaria.xlsx")
-
-    # 1. Cálculo de Ventas Filtradas por Período desde Supabase
+    # ==============================================================================
+    # 1. VENTAS Y DÉBITO FISCAL DESDE SUPABASE
+    # ==============================================================================
     total_ventas_periodo = 0.0
+    total_debito_fiscal = 0.0
+    df_ventas_filtrado = pd.DataFrame()
+
     try:
-        res_ventas_nube = supabase.table("ventas").select("fecha, monto, folio").eq("rut_empresa", st.session_state.negocio_seleccionado).execute()
-        
-        if res_ventas_nube.data:
-            df_temp_v = pd.DataFrame(res_ventas_nube.data)
-            if not df_temp_v.empty:
-                df_temp_v['Fecha_Parsed'] = pd.to_datetime(df_temp_v['fecha'], errors='coerce')
+        res_v = supabase.table("ventas").select("*").eq("rut_empresa", tenant_id).execute()
+        if res_v.data:
+            df_v = pd.DataFrame(res_v.data)
+            if not df_v.empty and 'fecha' in df_v.columns:
+                df_v['Fecha_Parsed'] = pd.to_datetime(df_v['fecha'], errors='coerce')
                 
                 if fecha_limite is not None:
                     if periodo_seleccionado == "Diaria (Hoy)":
-                        df_temp_v = df_temp_v[df_temp_v['Fecha_Parsed'].dt.date == hoy_dt.date()]
+                        df_ventas_filtrado = df_v[df_v['Fecha_Parsed'].dt.date == hoy_dt.date()]
                     else:
-                        df_temp_v = df_temp_v[df_temp_v['Fecha_Parsed'] >= fecha_limite]
-                
-                if 'monto' in df_temp_v.columns:
-                    if "folio" in df_temp_v.columns:
-                        total_ventas_periodo = df_temp_v.drop_duplicates(subset=["folio"])['monto'].sum()
-                    else:
-                        total_ventas_periodo = df_temp_v['monto'].sum()
-    except Exception as e:
-        print(f"Error cargando ventas desde Supabase para el dashboard: {e}")
-        total_ventas_periodo = 0.0
+                        df_ventas_filtrado = df_v[df_v['Fecha_Parsed'] >= fecha_limite]
+                else:
+                    df_ventas_filtrado = df_v.copy()
 
-    # 2. Cálculo de Gastos Filtrados por Período
-    total_gastos_periodo = 0.0
+                if not df_ventas_filtrado.empty:
+                    col_monto = 'monto' if 'monto' in df_ventas_filtrado.columns else 'total'
+                    if 'folio' in df_ventas_filtrado.columns:
+                        total_ventas_periodo = float(df_ventas_filtrado.drop_duplicates(subset=["folio"])[col_monto].sum())
+                    else:
+                        total_ventas_periodo = float(df_ventas_filtrado[col_monto].sum())
+
+                    # IVA Débito Fiscal (19% sobre neto / 19/119 sobre total afecto)
+                    if 'iva' in df_ventas_filtrado.columns:
+                        total_debito_fiscal = float(df_ventas_filtrado['iva'].sum())
+                    else:
+                        total_debito_fiscal = float(total_ventas_periodo * (0.19 / 1.19))
+    except Exception as e:
+        print(f"Error cargando ventas desde la nube: {e}")
+
+    # ==============================================================================
+    # 2. GASTOS, COSTOS Y CRÉDITO FISCAL DESDE SUPABASE
+    # ==============================================================================
+    costos_fijos = 0.0
+    costos_variables = 0.0
+    inversion_mercaderia_gastos = 0.0
+    total_credito_fiscal = 0.0
     df_g_filtrado = pd.DataFrame()
-    if os.path.exists(archivo_gastos):
-        try:
-            df_g = pd.read_excel(archivo_gastos)
-            if not df_g.empty and 'Monto' in df_g.columns:
-                if 'Fecha' in df_g.columns and fecha_limite is not None:
-                    df_g['Fecha_Parsed'] = pd.to_datetime(df_g['Fecha'], errors='coerce')
+
+    try:
+        res_g = supabase.table("gastos").select("*").eq("rut_empresa", tenant_id).execute()
+        if res_g.data:
+            df_g = pd.DataFrame(res_g.data)
+            if not df_g.empty and 'fecha' in df_g.columns:
+                df_g['Fecha_Parsed'] = pd.to_datetime(df_g['fecha'], errors='coerce')
+                
+                if fecha_limite is not None:
                     if periodo_seleccionado == "Diaria (Hoy)":
                         df_g_filtrado = df_g[df_g['Fecha_Parsed'].dt.date == hoy_dt.date()]
                     else:
                         df_g_filtrado = df_g[df_g['Fecha_Parsed'] >= fecha_limite]
                 else:
                     df_g_filtrado = df_g.copy()
-                
-                total_gastos_periodo = df_g_filtrado['Monto'].sum()
-        except Exception:
-            pass
 
-    # 3. Cálculo de Inventario, Margen y Ganancia Real sobre Ventas desde la Nube
+                if not df_g_filtrado.empty:
+                    col_monto_g = 'monto' if 'monto' in df_g_filtrado.columns else 'total'
+                    
+                    # Cálculo Crédito Fiscal en Gastos
+                    if 'iva' in df_g_filtrado.columns:
+                        total_credito_fiscal = float(df_g_filtrado['iva'].sum())
+                    else:
+                        total_credito_fiscal = float(df_g_filtrado[col_monto_g].sum() * (0.19 / 1.19))
+
+                    # Clasificación por categoría o tipo de costo
+                    for _, row in df_g_filtrado.iterrows():
+                        monto = float(row.get(col_monto_g, 0))
+                        tipo = str(row.get('tipo_costo', row.get('tipo', ''))).lower()
+                        cat = str(row.get('categoria', '')).lower()
+
+                        if 'fijo' in tipo or any(k in cat for k in ['arriendo', 'sueldo', 'servicio', 'patente', 'fijo']):
+                            costos_fijos += monto
+                        elif 'mercadería' in cat or 'mercaderia' in cat or 'compra' in cat or 'inventario' in cat:
+                            inversion_mercaderia_gastos += monto
+                        else:
+                            costos_variables += monto
+    except Exception as e:
+        print(f"Error cargando gastos desde la nube: {e}")
+
+    # ==============================================================================
+    # 3. INVENTARIO Y MARGENES DESDE SUPABASE
+    # ==============================================================================
+    inversion_inventario_costo = 0.0
+    total_productos = 0
+    margen_promedio = 0.0
+
     try:
-        res_prod = supabase.table("productos").select("costo, precio_venta, stock").eq("rut_empresa", st.session_state.negocio_seleccionado).limit(10000).execute()
+        res_prod = supabase.table("productos").select("costo, precio_venta, stock").eq("rut_empresa", tenant_id).execute()
         if res_prod.data:
-            df_prod_nube = pd.DataFrame(res_prod.data)
-            df_prod_nube['costo'] = pd.to_numeric(df_prod_nube['costo'], errors='coerce').fillna(0)
-            df_prod_nube['precio_venta'] = pd.to_numeric(df_prod_nube['precio_venta'], errors='coerce').fillna(0)
-            df_prod_nube['stock'] = pd.to_numeric(df_prod_nube['stock'], errors='coerce').fillna(0)
+            df_prod = pd.DataFrame(res_prod.data)
+            df_prod['costo'] = pd.to_numeric(df_prod['costo'], errors='coerce').fillna(0)
+            df_prod['precio_venta'] = pd.to_numeric(df_prod['precio_venta'], errors='coerce').fillna(0)
+            df_prod['stock'] = pd.to_numeric(df_prod['stock'], errors='coerce').fillna(0)
 
-            inversion_total = (df_prod_nube['costo'] * df_prod_nube['stock']).sum()
-            valor_venta_total = (df_prod_nube['precio_venta'] * df_prod_nube['stock']).sum()
-            ganancia_potencial = valor_venta_total - inversion_total
-            total_productos = len(df_prod_nube)
+            inversion_inventario_costo = float((df_prod['costo'] * df_prod['stock']).sum())
+            total_productos = len(df_prod)
 
-            # Cálculos de rentabilidad y margen exactos
-            df_m = df_prod_nube[(df_prod_nube['costo'] > 0) & (df_prod_nube['precio_venta'] > 0)]
+            df_m = df_prod[(df_prod['costo'] > 0) & (df_prod['precio_venta'] > 0)].copy()
             if not df_m.empty:
-                df_m['markup'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['costo']) * 100
                 df_m['margen'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['precio_venta']) * 100
-                markup_promedio = df_m['markup'].mean()
-                margen_promedio = df_m['margen'].mean()
-            else:
-                markup_promedio = 0.0
-                margen_promedio = 0.0
-        else:
-            inversion_total = valor_venta_total = ganancia_potencial = 0.0
-            total_productos = 0
-            markup_promedio = margen_promedio = 0.0
-    except Exception:
-        inversion_total = valor_venta_total = ganancia_potencial = 0.0
-        total_productos = 0
-        markup_promedio = margen_promedio = 0.0
+                margen_promedio = float(df_m['margen'].mean())
+    except Exception as e:
+        print(f"Error cargando inventario desde la nube: {e}")
 
-    # Ganancia real en dinero basada en las ventas del período y el margen promedio
-    ganancia_real_ventas = total_ventas_periodo * (margen_promedio / 100.0)
-    utilidad_neta_estimada = total_ventas_periodo - total_gastos_periodo
+    # ==============================================================================
+    # 4. CÁLCULOS FINANCIEROS Y PUNTO DE EQUILIBRIO
+    # ==============================================================================
+    total_egresos_operativos = costos_fijos + costos_variables
+    utilidad_neta_estimada = total_ventas_periodo - total_egresos_operativos
+
+    # Cálculo Punto de Equilibrio ($)
+    pct_margen_decimal = (margen_promedio / 100.0) if margen_promedio > 0 else 0.40
+    punto_equilibrio = costos_fijos / pct_margen_decimal if pct_margen_decimal > 0 else 0.0
+    estimado_f29_pagar = total_debito_fiscal - total_credito_fiscal
 
     st.divider()
 
-    # --- BLOQUE DE KPIS SUPERIORES ---
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric(label=f"💰 Venta ({periodo_seleccionado.split()[0]})", value=f"${total_ventas_periodo:,.2f}")
-    with col2:
-        st.metric(label=f"📉 Gastos ({periodo_seleccionado.split()[0]})", value=f"${total_gastos_periodo:,.2f}", delta="Egresos", delta_color="inverse")
-    with col3:
-        st.metric(label=f"💼 Utilidad Est. ({periodo_seleccionado.split()[0]})", value=f"${utilidad_neta_estimada:,.2f}", delta="Margen")
-    with col4:
-        st.metric(label="📦 Total Productos", value=total_productos)
+    # --- BLOQUE 1: ESTRUCTURA DE COSTOS Y VENTAS ---
+    st.markdown("### 💰 Flujo Operacional y Estructura de Costos")
+    col_b1_1, col_b1_2, col_b1_3, col_b1_4 = st.columns(4)
+    with col_b1_1:
+        st.metric(label=f"💵 Ventas Totales ({periodo_seleccionado.split()[0]})", value=f"${total_ventas_periodo:,.0f}")
+    with col_b1_2:
+        st.metric(label="🏢 Costos Fijos", value=f"${costos_fijos:,.0f}", help="Arriendos, sueldos fijos, servicios básicos, patentes.")
+    with col_b1_3:
+        st.metric(label="🚚 Costos Variables", value=f"${costos_variables:,.0f}", help="Combustible, comisiones, fletes, insumos directos.")
+    with col_b1_4:
+        st.metric(label="🛍️ Inversión en Mercadería", value=f"${inversion_mercaderia_gastos:,.0f}", help="Egresos destinados a compras de stock en el período.")
 
     st.divider()
 
-    # --- BLOQUE DE INVENTARIO ---
-    col_inv1, col_inv2, col_inv3 = st.columns(3)
-    with col_inv1:
-        st.metric(label="📉 Inversión Total (Costo)", value=f"${inversion_total:,.2f}")
-    with col_inv2:
-        st.metric(label="📈 Valor Venta Potencial", value=f"${valor_venta_total:,.2f}")
-    with col_inv3:
-        st.metric(label="💰 Ganancia Potencial", value=f"${ganancia_potencial:,.2f}")
-
-    st.divider()
-
-    st.markdown("### 📊 Indicadores de Rentabilidad y Ganancia Real")
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
+    # --- BLOQUE 2: SALUD DE INVENTARIO Y UTILIDAD REAL ---
+    st.markdown("### 📈 Inventario, Punto de Equilibrio y Rentabilidad")
+    col_b2_1, col_b2_2, col_b2_3 = st.columns(3)
+    with col_b2_1:
+        st.metric(label="📦 Inventario Valorizado (al Costo)", value=f"${inversion_inventario_costo:,.0f}", delta=f"{total_productos} productos")
+    with col_b2_2:
         st.metric(
-            label="📈 Markup Promedio (Sobre Costo)", 
-            value=f"{markup_promedio:,.1f}%", 
-            help="Porcentaje que se le suma al costo para llegar al precio de venta."
+            label="⚖️ Punto de Equilibrio Mensual", 
+            value=f"${punto_equilibrio:,.0f}", 
+            help="Monto de venta mínimo necesario para cubrir los costos fijos según tu margen promedio."
         )
-    with col_m2:
+    with col_b2_3:
+        color_delta = "normal" if utilidad_neta_estimada >= 0 else "inverse"
         st.metric(
-            label="🎯 Ganancia Real en Ventas", 
-            value=f"${ganancia_real_ventas:,.2f}", 
-            delta=f"Margen: {margen_promedio:,.1f}%",
-            help="Dinero exacto de ganancia obtenido en base a las ventas del período y tu margen promedio."
+            label="💼 Utilidad Neta Estimada", 
+            value=f"${utilidad_neta_estimada:,.0f}", 
+            delta=f"Egresos Totales: ${total_egresos_operativos:,.0f}",
+            delta_color=color_delta
         )
-    
+
     st.divider()
 
-    # --- GRÁFICOS Y TENDENCIAS INTERACTIVAS ---
+    # --- BLOQUE 3: SALUD FISCAL E IMPUESTOS (F29) ---
+    st.markdown("### 🏛️ Salud Fiscal e Impuestos Estimados (F29)")
+    col_b3_1, col_b3_2, col_b3_3 = st.columns(3)
+    with col_b3_1:
+        st.metric(label="📈 Débito Fiscal (IVA Ventas)", value=f"${total_debito_fiscal:,.0f}", help="IVA recaudado en tus ventas del período.")
+    with col_b3_2:
+        st.metric(label="📉 Crédito Fiscal (IVA Compras/Gastos)", value=f"${total_credito_fiscal:,.0f}", help="IVA pagado en tus compras y gastos facturados.")
+    with col_b3_3:
+        label_f29 = "🏛️ Estimado a Pagar (F29)" if estimado_f29_pagar >= 0 else "🏛️ Remanente a Favor"
+        st.metric(
+            label=label_f29, 
+            value=f"${abs(estimado_f29_pagar):,.0f}", 
+            delta="A pagar al Fisco" if estimado_f29_pagar >= 0 else "Favor del Contribuyente",
+            delta_color="inverse" if estimado_f29_pagar >= 0 else "normal"
+        )
+
+    st.divider()
+
+    # --- GRÁFICOS Y TENDENCIAS ---
     col_g1, col_g2 = st.columns(2)
 
     with col_g1:
-        st.markdown("#### 📈 Evolución Diaria de Ingresos (Cuadratura)")
-        if os.path.exists(archivo_cuadratura):
-            try:
-                df_cuat = pd.read_excel(archivo_cuadratura)
-                if not df_cuat.empty and 'Fecha' in df_cuat.columns and 'VentaTotal' in df_cuat.columns:
+        st.markdown("#### 📈 Evolución de Ingresos (Cuadratura Nube)")
+        try:
+            res_cuat = supabase.table("cuadratura_diaria").select("*").eq("rut_empresa", tenant_id).execute()
+            if res_cuat.data:
+                df_cuat = pd.DataFrame(res_cuat.data)
+                if not df_cuat.empty and 'fecha' in df_cuat.columns:
+                    col_monto_cuat = 'monto_total' if 'monto_total' in df_cuat.columns else 'venta_total'
+                    df_cuat['Fecha_Parsed'] = pd.to_datetime(df_cuat['fecha'], errors='coerce')
                     if fecha_limite is not None and periodo_seleccionado != "Histórico Completo":
-                        df_cuat['Fecha_Parsed'] = pd.to_datetime(df_cuat['Fecha'], errors='coerce')
                         if periodo_seleccionado == "Diaria (Hoy)":
                             df_cuat = df_cuat[df_cuat['Fecha_Parsed'].dt.date == hoy_dt.date()]
                         else:
                             df_cuat = df_cuat[df_cuat['Fecha_Parsed'] >= fecha_limite]
                     
-                    if not df_cuat.empty:
-                        st.line_chart(df_cuat.set_index('Fecha')['VentaTotal'])
+                    if not df_cuat.empty and col_monto_cuat in df_cuat.columns:
+                        st.line_chart(df_cuat.set_index('fecha')[col_monto_cuat])
                     else:
                         st.info("ℹ️ No hay registros de cuadratura en este período.")
-                else:
-                    st.info("ℹ️ Sin datos de cuadratura diarios.")
-            except Exception:
-                st.info("ℹ️ Error leyendo archivo de cuadratura.")
-        else:
-            st.info("ℹ️ Archivo de cuadratura no encontrado.")
+            else:
+                st.info("ℹ️ Sin datos de cuadratura diarios en la nube.")
+        except Exception:
+            st.info("ℹ️ Módulo de cuadratura no disponible en la nube.")
 
     with col_g2:
         st.markdown("#### 📊 Distribución de Gastos por Categoría")
-        with st.expander("💡 ¿Qué significa este gráfico y por qué es importante?"):
-            st.write("""
-            **¿Qué mide exactamente?** 
-            Te muestra de forma visual en qué se está yendo el dinero de tu negocio, calculando qué porcentaje del total de tus egresos corresponde a cada categoría.
-            
-            **¿Por qué es clave para tu éxito?**
-            * **Detección de fugas:** Si la categoría *Gastos Operativos* (arriendo, luz, sueldos) domina la gráfica, significa que los costos fijos de mantener tu local están muy altos.
-            * **Equilibrio sano:** Lo ideal en tu negocio es que la porción más grande de esta gráfica sea siempre la **Mercadería**, ya que esa es la inversión que te generará ventas y ganancias reales.
-            """)
-        if not df_g_filtrado.empty and 'Categoria' in df_g_filtrado.columns and 'Monto' in df_g_filtrado.columns:
-            df_cat = df_g_filtrado.groupby('Categoria')['Monto'].sum().reset_index()
+        if not df_g_filtrado.empty and 'categoria' in df_g_filtrado.columns:
+            col_m_g = 'monto' if 'monto' in df_g_filtrado.columns else 'total'
+            df_cat = df_g_filtrado.groupby('categoria')[col_m_g].sum().reset_index()
             
             fig_dona = px.pie(
                 df_cat, 
-                values='Monto', 
-                names='Categoria', 
+                values=col_m_g, 
+                names='categoria', 
                 hole=0.65,
                 color_discrete_sequence=px.colors.qualitative.Pastel
             )
@@ -2303,28 +2358,24 @@ elif menu == "📊 Dashboard Ejecutivo":
             st.info("ℹ️ No hay registros de gastos para el período seleccionado.")
 
     st.divider()
-    st.markdown("### 🔔 Alertas y Salud Financiera del negocio")
+    st.markdown("### 🔔 Alertas y Salud Financiera del Negocio")
     
     col_a1, col_a2 = st.columns(2)
     with col_a1:
-        if total_gastos_periodo > (total_ventas_periodo * 0.7) and total_ventas_periodo > 0:
-            st.error("⚠️ **Alerta Financiera:** Los gastos operativos superan el 70% de las ventas en este período.")
+        if total_egresos_operativos > (total_ventas_periodo * 0.7) and total_ventas_periodo > 0:
+            st.error("⚠️ **Alerta Financiera:** Los gastos operativos (fijos + variables) superan el 70% de las ventas en este período.")
         else:
             st.success("✅ **Salud Financiera Estable:** Niveles de gastos controlados para el período analizado.")
             
     with col_a2:
-        if os.path.exists(archivo_cpp):
-            try:
-                df_prov_pend = pd.read_excel(archivo_cpp)
-                pendientes = df_prov_pend[df_prov_pend.get('Estado', '') == 'PENDIENTE'] if 'Estado' in df_prov_pend.columns else pd.DataFrame()
-                if not pendientes.empty:
-                    st.warning(f"⚠️ Tienes **{len(pendientes)} factura(s) pendiente(s)** de pago a proveedores.")
-                else:
-                    st.info("ℹ️ No hay facturas de proveedores pendientes de pago.")
-            except Exception:
-                st.info("ℹ️ Módulo de cuentas por pagar sin registros activos.")
-        else:
-            st.info("ℹ️ Módulo de cuentas por pagar sin registros activos.")
+        try:
+            res_cpp = supabase.table("cuentas_por_pagar").select("*").eq("rut_empresa", tenant_id).eq("estado", "PENDIENTE").execute()
+            if res_cpp.data and len(res_cpp.data) > 0:
+                st.warning(f"⚠️ Tienes **{len(res_cpp.data)} factura(s) pendiente(s)** de pago a proveedores.")
+            else:
+                st.info("ℹ️ No hay facturas de proveedores pendientes de pago.")
+        except Exception:
+            st.info("ℹ️ Módulo de cuentas por pagar sin registros activos en la nube.")
 
 # ----------------- SECCIÓN INVENTARIO GENERAL -----------------
 elif menu == "📦 Inventario y Productos":
