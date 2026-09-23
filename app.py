@@ -304,11 +304,13 @@ def generar_guia_pdf(
     cliente_nombre,
     cliente_rut,
     carrito,
-    tipo_documento="GUÍA DE DESPACHO",
+    tipo_documento="FACTURA ELECTRÓNICA",
     fecha_emision=None,
     datos_empresa=None,
+    folio="N/A",
+    datos_receptor=None
 ):
-    # Formateo de la fecha
+    # 1. Configuración de Fecha
     if fecha_emision is None:
         fecha_str = datetime.now().strftime("%d/%m/%Y")
     elif hasattr(fecha_emision, "strftime"):
@@ -316,180 +318,154 @@ def generar_guia_pdf(
     else:
         fecha_str = str(fecha_emision)
 
-    pdf = FPDF(orientation="P", unit="mm", format="Letter")
-    pdf.add_page()
-
-    # Rescate de Datos de la Empresa
+    # 2. Rescate de Datos de la Empresa (Emisor)
     datos_emp = datos_empresa or st.session_state.get("empresa_actual") or {}
     cfg = st.session_state.get("config_ticket") or {}
-
     if isinstance(cfg, str):
-        try:
-            cfg = json.loads(cfg)
-        except Exception:
-            cfg = {}
+        try: cfg = json.loads(cfg)
+        except Exception: cfg = {}
 
-    nombre_empresa = (
-        datos_emp.get("razon_social")
-        or datos_emp.get("nombre_empresa")
-        or datos_emp.get("nombre")
-        or cfg.get("nombre_empresa")
-        or st.session_state.get("nombre_empresa")
-        or "MI EMPRESA SPA"
-    )
+    nombre_empresa = (datos_emp.get("razon_social") or datos_emp.get("nombre_empresa") or datos_emp.get("nombre") or cfg.get("nombre_empresa") or "MI EMPRESA SPA")
+    rut_empresa = (datos_emp.get("rut_empresa") or datos_emp.get("rut") or cfg.get("rut_empresa") or "Sin RUT")
+    giro_empresa = (datos_emp.get("giro") or cfg.get("giro") or "VENTA AL POR MAYOR EN COMERCIOS")
+    direccion_empresa = (datos_emp.get("direccion") or cfg.get("direccion") or "Sin Dirección")
+    comuna_empresa = datos_emp.get("comuna", "")
+    if comuna_empresa:
+        direccion_empresa += f", {comuna_empresa}"
 
-    rut_empresa = (
-        datos_emp.get("rut")
-        or datos_emp.get("rut_empresa")
-        or cfg.get("rut_empresa")
-        or cfg.get("rut")
-        or st.session_state.get("rut_empresa")
-        or st.session_state.get("rut")
-        or "Sin RUT"
-    )
+    # 3. Rescate de Datos del Receptor (Cliente)
+    if datos_receptor is None:
+        datos_receptor = {}
 
-    direccion_empresa = (
-        datos_emp.get("direccion")
-        or datos_emp.get("dir_empresa")
-        or cfg.get("direccion")
-        or st.session_state.get("direccion_empresa")
-        or st.session_state.get("direccion")
-        or "Sin Dirección"
-    )
+    c_nombre = datos_receptor.get("nombre") or cliente_nombre or "CLIENTE CONTADO"
+    c_rut = datos_receptor.get("rut") or cliente_rut or "66666666-6"
+    c_giro = datos_receptor.get("giro") or "Particular / Consumidor Final"
+    c_dir = datos_receptor.get("direccion") or "N/A"
+    c_comuna = datos_receptor.get("comuna") or "Santiago"
 
-    url_logo = (
-        datos_emp.get("url_logo")
-        or datos_emp.get("logo_url")
-        or cfg.get("url_logo")
-        or st.session_state.get("url_logo")
-    )
+    # 4. Inicializar PDF
+    pdf = FPDF(orientation="P", unit="mm", format="Letter")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
 
-    # Descarga del Logo desde URL
-    if url_logo:
-        try:
-            resp = requests.get(url_logo, timeout=5)
-            if resp.status_code == 200:
-                img_bytes = io.BytesIO(resp.content)
-                pdf.image(img_bytes, x=10, y=8, w=25)
-        except Exception:
-            pass
+    # --- A. ENCABEZADO: EMISOR (Izquierda) y CUADRO ROJO DTE (Derecha) ---
+    start_y = 12
 
-    # Cabecera
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 6, str(nombre_empresa).upper(), ln=True, align="C")
-    pdf.set_font("Arial", "", 9)
-    pdf.cell(0, 5, f"Dirección: {str(direccion_empresa)}", ln=True, align="C")
-    pdf.cell(0, 5, f"RUT: {str(rut_empresa)}", ln=True, align="C")
-    pdf.ln(5)
+    # Cuadro Rojo DTE (Derecha)
+    pdf.set_draw_color(217, 4, 41)  # Rojo DTE
+    pdf.set_line_width(0.7)
+    pdf.rect(125, start_y, 75, 28)
 
-    titulo_doc = str(tipo_documento).upper()
+    pdf.set_xy(125, start_y + 3)
+    pdf.set_text_color(217, 4, 41)
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(75, 6, f"R.U.T. : {rut_empresa}", ln=True, align="C")
+
+    pdf.set_font("Arial", "B", 11)
+    pdf.set_x(125)
+    pdf.cell(75, 6, str(tipo_documento).upper(), ln=True, align="C")
+
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 8, titulo_doc, ln=True, align="C")
-    pdf.set_font("Arial", "", 10)
-    pdf.cell(0, 5, f"Fecha de Emisión: {fecha_str}", ln=True, align="C")
-    pdf.ln(5)
+    pdf.set_x(125)
+    pdf.cell(75, 7, f"N° {folio}", ln=True, align="C")
 
-    c_nombre = (
-        cliente_nombre
-        if cliente_nombre and cliente_nombre.strip()
-        else "Consumidor Final"
-    )
-    c_rut = cliente_rut if cliente_rut and cliente_rut.strip() else "Sin RUT"
+    # Datos Emisor (Izquierda)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_xy(10, start_y)
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(110, 6, str(nombre_empresa).upper(), ln=True)
 
-    pdf.set_font("Arial", "B", 10)
-    pdf.cell(0, 6, "DATOS DEL CLIENTE", ln=True)
-    pdf.set_font("Arial", "", 10)
-    pdf.cell(115, 6, f"Razón Social / Nombre: {c_nombre}", border=1)
-    pdf.cell(60, 6, f"RUT: {c_rut}", border=1, ln=True)
-    pdf.ln(5)
+    pdf.set_font("Arial", "", 8.5)
+    pdf.set_text_color(60, 60, 60)
+    pdf.cell(110, 4.5, f"RUT: {rut_empresa}", ln=True)
+    pdf.cell(110, 4.5, f"Giro: {giro_empresa}", ln=True)
+    pdf.cell(110, 4.5, f"Dirección: {direccion_empresa}", ln=True)
+    pdf.cell(110, 4.5, f"Fecha de Emisión: {fecha_str}", ln=True)
 
-    # Encabezados de Tabla (Dinámico)
+    # Línea divisora
+    pdf.set_y(44)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.set_line_width(0.3)
+    pdf.line(10, 44, 200, 44)
+
+    # --- B. SECCIÓN RECEPTOR (Caja con borde) ---
+    pdf.set_fill_color(245, 247, 250)
+    pdf.set_draw_color(210, 215, 225)
+    pdf.rect(10, 47, 190, 20, style="DF")
+
+    pdf.set_xy(13, 49)
+    pdf.set_text_color(30, 58, 138)
     pdf.set_font("Arial", "B", 9)
-    es_factura = "FACTURA" in titulo_doc
+    pdf.cell(184, 5, "DATOS RECEPTOR", ln=True)
 
-    if es_factura:
-        pdf.cell(70, 8, "Descripción", border=1, align="C")
-        pdf.cell(15, 8, "Cant", border=1, align="C")
-        pdf.cell(35, 8, "P. Unit. Neto", border=1, align="C")
-        pdf.cell(35, 8, "P. Unit. Bruto", border=1, align="C")
-        pdf.cell(35, 8, "Total Bruto", border=1, align="C", ln=True)
-    else:
-        pdf.cell(90, 8, "Descripción", border=1, align="C")
-        pdf.cell(20, 8, "Cant.", border=1, align="C")
-        pdf.cell(40, 8, "P. Unitario", border=1, align="C")
-        pdf.cell(40, 8, "Total", border=1, align="C", ln=True)
+    pdf.set_text_color(40, 40, 40)
+    pdf.set_font("Arial", "", 8.5)
+    pdf.set_x(13)
+    pdf.cell(184, 4.5, f"Cliente: {c_nombre}   |   RUT: {c_rut}", ln=True)
+    pdf.set_x(13)
+    pdf.cell(184, 4.5, f"Giro: {c_giro}   |   Dirección: {c_dir}, {c_comuna}", ln=True)
 
-    # Detalle y Motor Contable
-    tasa_defecto = (
-        22.0
-        if "URUGUAY" in str(nombre_empresa).upper()
-        else 19.0
-    )
-    tasa_iva_global = float(cfg.get("iva_tasa", tasa_defecto))
+    pdf.set_y(71)
 
-    pdf.set_font("Arial", "", 9)
+    # --- C. TABLA DE DETALLE ---
+    pdf.set_fill_color(235, 238, 242)
+    pdf.set_draw_color(180, 185, 195)
+    pdf.set_text_color(30, 30, 30)
+    pdf.set_font("Arial", "B", 8.5)
+
+    # Encabezados Tabla
+    col_w = [105, 20, 30, 35]  # Ancho total: 190mm
+    pdf.cell(col_w[0], 7, " DESCRIPCIÓN", border=1, fill=True)
+    pdf.cell(col_w[1], 7, "CANT", border=1, align="C", fill=True)
+    pdf.cell(col_w[2], 7, "P. UNIT", border=1, align="R", fill=True)
+    pdf.cell(col_w[3], 7, "TOTAL ", border=1, align="R", fill=True, ln=True)
+
+    # Filas Dinámicas de Productos (amplía líneas hacia abajo)
+    pdf.set_font("Arial", "", 8.5)
+    pdf.set_text_color(0, 0, 0)
+
     total_general = 0.0
-    total_neto = 0.0
-    total_iva = 0.0
-    total_ila = 0.0
 
     for item in carrito:
         producto = str(item.get("Descripción") or item.get("Producto") or "Ítem")
-        cantidad = float(item.get("Cantidad", 0))
-        precio_unitario_bruto = float(
-            item.get("Precio Unitario") or item.get("Precio_Unitario") or 0
-        )
-        subtotal_bruto = float(item.get("Subtotal", 0))
+        cantidad = float(item.get("Cantidad", 1))
+        precio_unit = float(item.get("Precio Unitario") or item.get("Precio_Unitario") or 0)
+        subtotal = float(item.get("Subtotal") or (cantidad * precio_unit))
 
-        tasa_iva_item = (
-            0.0 if item.get("Es Exento", False) else (tasa_iva_global / 100.0)
-        )
-        tasa_ila_item = float(item.get("Tasa ILA", 0.0))
+        total_general += subtotal
 
-        precio_unitario_neto = precio_unitario_bruto / (
-            1.0 + tasa_iva_item + tasa_ila_item
-        )
+        pdf.cell(col_w[0], 6.5, f" {producto[:55]}", border="LRB")
+        pdf.cell(col_w[1], 6.5, f"{cantidad:g}", border="LRB", align="C")
+        pdf.cell(col_w[2], 6.5, f"${precio_unit:,.0f}", border="LRB", align="R")
+        pdf.cell(col_w[3], 6.5, f"${subtotal:,.0f} ", border="LRB", align="R", ln=True)
 
-        if es_factura:
-            pdf.cell(70, 7, producto[:35], border=1)
-            pdf.cell(15, 7, f"{cantidad:g}", border=1, align="C")
-            pdf.cell(35, 7, f"${precio_unitario_neto:,.0f}", border=1, align="R")
-            pdf.cell(35, 7, f"${precio_unitario_bruto:,.0f}", border=1, align="R")
-            pdf.cell(35, 7, f"${subtotal_bruto:,.0f}", border=1, align="R", ln=True)
-        else:
-            pdf.cell(90, 7, producto, border=1)
-            pdf.cell(20, 7, f"{cantidad:g}", border=1, align="C")
-            pdf.cell(40, 7, f"${precio_unitario_bruto:,.0f}", border=1, align="R")
-            pdf.cell(40, 7, f"${subtotal_bruto:,.0f}", border=1, align="R", ln=True)
+    pdf.ln(4)
 
-        neto_calc = subtotal_bruto / (1.0 + tasa_iva_item + tasa_ila_item)
-        iva_calc = neto_calc * tasa_iva_item
-        ila_calc = neto_calc * tasa_ila_item
+    # --- D. TOTALES (Derecha) ---
+    tasa_iva = 0.19
+    neto_calc = round(total_general / (1.0 + tasa_iva))
+    iva_calc = total_general - neto_calc
 
-        total_neto += neto_calc
-        total_iva += iva_calc
-        total_ila += ila_calc
-        total_general += subtotal_bruto
+    pdf.set_x(110)
+    pdf.set_font("Arial", "B", 9)
+    pdf.set_text_color(50, 50, 50)
+    pdf.cell(50, 6, "SUBTOTAL NETO:", align="R")
+    pdf.cell(40, 6, f"${neto_calc:,.0f} ", align="R", ln=True)
 
-    # Pie de Página con Desglose Total
-    pdf.set_font("Arial", "B", 10)
+    pdf.set_x(110)
+    pdf.cell(50, 6, "IVA (19%):", align="R")
+    pdf.cell(40, 6, f"${iva_calc:,.0f} ", align="R", ln=True)
 
-    if es_factura:
-        pdf.cell(155, 7, "SUBTOTAL NETO:", border=1, align="R")
-        pdf.cell(35, 7, f"${total_neto:,.0f}", border=1, align="R", ln=True)
+    # Línea separadora
+    pdf.set_draw_color(180, 180, 180)
+    pdf.line(140, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(1)
 
-        pdf.cell(155, 7, f"IVA ({tasa_iva_global:g}%):", border=1, align="R")
-        pdf.cell(35, 7, f"${total_iva:,.0f}", border=1, align="R", ln=True)
-
-        if total_ila > 0:
-            pdf.cell(155, 7, "IMP. ESPECÍFICO:", border=1, align="R")
-            pdf.cell(35, 7, f"${total_ila:,.0f}", border=1, align="R", ln=True)
-
-        pdf.cell(155, 8, "TOTAL GENERAL:", border=1, align="R")
-        pdf.cell(35, 8, f"${total_general:,.0f}", border=1, align="R", ln=True)
-    else:
-        pdf.cell(150, 8, "TOTAL GENERAL:", border=1, align="R")
-        pdf.cell(40, 8, f"${total_general:,.0f}", border=1, align="R", ln=True)
+    pdf.set_x(110)
+    pdf.set_font("Arial", "B", 10.5)
+    pdf.set_text_color(16, 128, 67)  # Verde destacado
+    pdf.cell(50, 7, "TOTAL GENERAL:", align="R")
+    pdf.cell(40, 7, f"${total_general:,.0f} ", align="R", ln=True)
 
     return pdf.output(dest="S").encode("latin1")
 
