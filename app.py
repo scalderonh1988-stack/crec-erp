@@ -1,16 +1,18 @@
 import io
+import json
 import os
 import sys
-import json
-from datetime import datetime, timedelta, date
+import textwrap
+from datetime import date, datetime, timedelta
 
+from fpdf import FPDF
+import pandas as pd
+from PIL import Image
+import plotly.express as px
+import requests
+from supabase import Client, create_client
 import streamlit as st
 import streamlit.components.v1 as components
-import pandas as pd
-import plotly.express as px
-from supabase import create_client, Client
-from fpdf import FPDF
-from PIL import Image
 from werkzeug.security import generate_password_hash
 
 # ==============================================================================
@@ -99,13 +101,49 @@ from historial_ventas import mostrar_modulo_historial_ventas
 from produccion_recetas import mostrar_modulo_produccion
 from modulos.distribucion import mostrar_modulo_distribucion
 
+# --- 2.1 CONEXIÓN A SUPABASE Y RUTAS GLOBALES ---
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CLIENTES_DIR = os.path.join(BASE_DIR, "clientes")
+CARPETA_CLIENTES = CLIENTES_DIR
+PERMISOS_FILE = os.path.join(BASE_DIR, "permisos_negocios.json")
+
+if not os.path.exists(CLIENTES_DIR):
+    os.makedirs(CLIENTES_DIR)
+
+negocios_disponibles = [d for d in os.listdir(CLIENTES_DIR) if os.path.isdir(os.path.join(CLIENTES_DIR, d))]
+if not negocios_disponibles:
+    negocio_default = "negocio_1"
+    os.makedirs(os.path.join(CLIENTES_DIR, negocio_default), exist_ok=True)
+    negocios_disponibles = [negocio_default]
+
+url = st.secrets["supabase"]["url"]
+key = st.secrets["supabase"]["key"]
+supabase: Client = create_client(url, key)
+
+try:
+    resultado = supabase.table("empresas").select("*").execute()
+    empresas_data = resultado.data
+except Exception:
+    empresas_data = []
+
+PROVEEDORES_FILE = os.path.join(CLIENTES_DIR, "maestro_proveedores.xlsx")
+
+
+# ==============================================================================
+# 3. FUNCIONES AUXILIARES Y DE DOCUMENTOS
+# ==============================================================================
+
 def obtener_datos_emisor(supabase, tenant_id):
     """Obtiene los datos legales de la empresa emisora desde Supabase."""
     try:
         res = supabase.table("empresas").select("*").eq("rut_empresa", str(tenant_id)).execute()
         if res.data and len(res.data) > 0:
             return res.data[0]
-    except Exception as e:
+    except Exception:
         pass
     
     return {
@@ -151,22 +189,36 @@ def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
 
     st.markdown("---")
 
-import textwrap
 
 def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_receptor, items, totales):
-    """Genera la ficha unificada en HTML pegada al margen para evitar que Markdown lo convierta en código."""
+    """Genera la ficha unificada en HTML para previsualización de DTE / Comprobantes."""
     filas_items = ""
+    subtotal_calculado = 0.0
+
     for item in items:
         desc = item.get('Descripción') or item.get('Producto') or 'Ítem'
-        cant = item.get('Cantidad', 1)
-        precio = item.get('Precio Unitario') or item.get('Precio_Unitario') or 0
-        subtotal = item.get('Subtotal') or (cant * precio)
+        cant = float(item.get('Cantidad', 1))
+        precio = float(item.get('Precio Unitario') or item.get('Precio_Unitario') or 0)
+        subtotal = float(item.get('Subtotal') or (cant * precio))
+        subtotal_calculado += subtotal
+        
         filas_items += f"""<tr style="border-bottom: 1px solid #333;">
 <td style="padding: 8px 4px;">{desc}</td>
 <td style="padding: 8px 4px; text-align: center;">{cant:g}</td>
 <td style="padding: 8px 4px; text-align: right;">${precio:,.0f}</td>
 <td style="padding: 8px 4px; text-align: right;">${subtotal:,.0f}</td>
 </tr>"""
+
+    # Recalcula totales automáticamente si vienen en 0 teniendo productos cargados
+    if not totales or (totales.get('total', 0) == 0 and subtotal_calculado > 0):
+        tasa_iva = 0.19
+        neto_calc = round(subtotal_calculado / (1.0 + tasa_iva))
+        iva_calc = subtotal_calculado - neto_calc
+        totales = {
+            'neto': neto_calc,
+            'iva': iva_calc,
+            'total': subtotal_calculado
+        }
 
     rut_emisor = datos_emisor.get('rut') or datos_emisor.get('rut_empresa', 'N/A')
 
@@ -227,6 +279,7 @@ def cargar_maestro_proveedores(ruta_negocio):
         df_ini.to_excel(archivo_prov, index=False)
     return pd.read_excel(archivo_prov)
 
+
 def guardar_nuevo_proveedor(ruta_negocio, nombre, rut="", contacto="", telefono="", email=""):
     archivo_prov = os.path.join(ruta_negocio, "Maestro_Proveedores.xlsx")
     df_prov = cargar_maestro_proveedores(ruta_negocio)
@@ -246,40 +299,7 @@ def guardar_nuevo_proveedor(ruta_negocio, nombre, rut="", contacto="", telefono=
     df_actualizado = pd.concat([df_prov, nuevo], ignore_index=True)
     df_actualizado.to_excel(archivo_prov, index=False)
 
-# --- 2. RUTAS Y CARPETAS GLOBALES ---
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CLIENTES_DIR = os.path.join(BASE_DIR, "clientes")
-CARPETA_CLIENTES = CLIENTES_DIR
-PERMISOS_FILE = os.path.join(BASE_DIR, "permisos_negocios.json")
-
-if not os.path.exists(CLIENTES_DIR):
-    os.makedirs(CLIENTES_DIR)
-
-negocios_disponibles = [d for d in os.listdir(CLIENTES_DIR) if os.path.isdir(os.path.join(CLIENTES_DIR, d))]
-if not negocios_disponibles:
-    negocio_default = "negocio_1"
-    os.makedirs(os.path.join(CLIENTES_DIR, negocio_default), exist_ok=True)
-    negocios_disponibles = [negocio_default]
-
-# 🔌 Conexión a Supabase usando st.secrets
-url = st.secrets["supabase"]["url"]
-key = st.secrets["supabase"]["key"]
-supabase: Client = create_client(url, key)
-
-try:
-    resultado = supabase.table("empresas").select("*").execute()
-    empresas_data = resultado.data
-except:
-    empresas_data = []
-
-PROVEEDORES_FILE = os.path.join(CLIENTES_DIR, "maestro_proveedores.xlsx")
-
-
-# --- 3. FUNCIONES DE MÓDULOS ---
 def generar_guia_pdf(
     cliente_nombre,
     cliente_rut,
@@ -288,202 +308,190 @@ def generar_guia_pdf(
     fecha_emision=None,
     datos_empresa=None,
 ):
-  import io
-  import json
-  from datetime import datetime
-  from fpdf import FPDF
-  import requests
-  import streamlit as st
+    # Formateo de la fecha
+    if fecha_emision is None:
+        fecha_str = datetime.now().strftime("%d/%m/%Y")
+    elif hasattr(fecha_emision, "strftime"):
+        fecha_str = fecha_emision.strftime("%d/%m/%Y")
+    else:
+        fecha_str = str(fecha_emision)
 
-  # 1. Formateo de la fecha
-  if fecha_emision is None:
-    fecha_str = datetime.now().strftime("%d/%m/%Y")
-  elif hasattr(fecha_emision, "strftime"):
-    fecha_str = fecha_emision.strftime("%d/%m/%Y")
-  else:
-    fecha_str = str(fecha_emision)
+    pdf = FPDF(orientation="P", unit="mm", format="Letter")
+    pdf.add_page()
 
-  pdf = FPDF(orientation="P", unit="mm", format="Letter")
-  pdf.add_page()
+    # Rescate de Datos de la Empresa
+    datos_emp = datos_empresa or st.session_state.get("empresa_actual") or {}
+    cfg = st.session_state.get("config_ticket") or {}
 
-  # 2. Rescate de Datos de la Empresa (Supabase / Session State)
-  datos_emp = datos_empresa or st.session_state.get("empresa_actual") or {}
-  cfg = st.session_state.get("config_ticket") or {}
+    if isinstance(cfg, str):
+        try:
+            cfg = json.loads(cfg)
+        except Exception:
+            cfg = {}
 
-  if isinstance(cfg, str):
-    try:
-      cfg = json.loads(cfg)
-    except Exception:
-      cfg = {}
-
-  nombre_empresa = (
-      datos_emp.get("razon_social")
-      or datos_emp.get("nombre_empresa")
-      or datos_emp.get("nombre")
-      or cfg.get("nombre_empresa")
-      or st.session_state.get("nombre_empresa")
-      or "MI EMPRESA SPA"
-  )
-
-  rut_empresa = (
-      datos_emp.get("rut")
-      or datos_emp.get("rut_empresa")
-      or cfg.get("rut_empresa")
-      or cfg.get("rut")
-      or st.session_state.get("rut_empresa")
-      or st.session_state.get("rut")
-      or "Sin RUT"
-  )
-
-  direccion_empresa = (
-      datos_emp.get("direccion")
-      or datos_emp.get("dir_empresa")
-      or cfg.get("direccion")
-      or st.session_state.get("direccion_empresa")
-      or st.session_state.get("direccion")
-      or "Sin Dirección"
-  )
-
-  url_logo = (
-      datos_emp.get("url_logo")
-      or datos_emp.get("logo_url")
-      or cfg.get("url_logo")
-      or st.session_state.get("url_logo")
-  )
-
-  # 3. Descarga del Logo desde URL de Supabase Storage
-  if url_logo:
-    try:
-      resp = requests.get(url_logo, timeout=5)
-      if resp.status_code == 200:
-        img_bytes = io.BytesIO(resp.content)
-        pdf.image(img_bytes, x=10, y=8, w=25)
-    except Exception:
-      pass
-
-  # 4. Cabecera
-  pdf.set_font("Arial", "B", 14)
-  pdf.cell(0, 6, str(nombre_empresa).upper(), ln=True, align="C")
-  pdf.set_font("Arial", "", 9)
-  pdf.cell(0, 5, f"Dirección: {str(direccion_empresa)}", ln=True, align="C")
-  pdf.cell(0, 5, f"RUT: {str(rut_empresa)}", ln=True, align="C")
-  pdf.ln(5)
-
-  titulo_doc = str(tipo_documento).upper()
-  pdf.set_font("Arial", "B", 12)
-  pdf.cell(0, 8, titulo_doc, ln=True, align="C")
-  pdf.set_font("Arial", "", 10)
-  pdf.cell(0, 5, f"Fecha de Emisión: {fecha_str}", ln=True, align="C")
-  pdf.ln(5)
-
-  c_nombre = (
-      cliente_nombre
-      if cliente_nombre and cliente_nombre.strip()
-      else "Consumidor Final"
-  )
-  c_rut = cliente_rut if cliente_rut and cliente_rut.strip() else "Sin RUT"
-
-  pdf.set_font("Arial", "B", 10)
-  pdf.cell(0, 6, "DATOS DEL CLIENTE", ln=True)
-  pdf.set_font("Arial", "", 10)
-  pdf.cell(115, 6, f"Razón Social / Nombre: {c_nombre}", border=1)
-  pdf.cell(60, 6, f"RUT: {c_rut}", border=1, ln=True)
-  pdf.ln(5)
-
-  # 5. Encabezados de Tabla (Dinámico)
-  pdf.set_font("Arial", "B", 9)
-  es_factura = "FACTURA" in titulo_doc
-
-  if es_factura:
-    pdf.cell(70, 8, "Descripción", border=1, align="C")
-    pdf.cell(15, 8, "Cant", border=1, align="C")
-    pdf.cell(35, 8, "P. Unit. Neto", border=1, align="C")
-    pdf.cell(35, 8, "P. Unit. Bruto", border=1, align="C")
-    pdf.cell(35, 8, "Total Bruto", border=1, align="C", ln=True)
-  else:
-    pdf.cell(90, 8, "Descripción", border=1, align="C")
-    pdf.cell(20, 8, "Cant.", border=1, align="C")
-    pdf.cell(40, 8, "P. Unitario", border=1, align="C")
-    pdf.cell(40, 8, "Total", border=1, align="C", ln=True)
-
-  # 6. Detalle y Motor Contable
-  tasa_defecto = (
-      22.0
-      if "URUGUAY" in str(nombre_empresa).upper()
-      else 19.0
-  )
-  tasa_iva_global = float(cfg.get("iva_tasa", tasa_defecto))
-
-  pdf.set_font("Arial", "", 9)
-  total_general = 0.0
-  total_neto = 0.0
-  total_iva = 0.0
-  total_ila = 0.0
-
-  for item in carrito:
-    producto = str(item.get("Descripción") or item.get("Producto") or "Ítem")
-    cantidad = float(item.get("Cantidad", 0))
-    precio_unitario_bruto = float(
-        item.get("Precio Unitario") or item.get("Precio_Unitario") or 0
+    nombre_empresa = (
+        datos_emp.get("razon_social")
+        or datos_emp.get("nombre_empresa")
+        or datos_emp.get("nombre")
+        or cfg.get("nombre_empresa")
+        or st.session_state.get("nombre_empresa")
+        or "MI EMPRESA SPA"
     )
-    subtotal_bruto = float(item.get("Subtotal", 0))
 
-    tasa_iva_item = (
-        0.0 if item.get("Es Exento", False) else (tasa_iva_global / 100.0)
+    rut_empresa = (
+        datos_emp.get("rut")
+        or datos_emp.get("rut_empresa")
+        or cfg.get("rut_empresa")
+        or cfg.get("rut")
+        or st.session_state.get("rut_empresa")
+        or st.session_state.get("rut")
+        or "Sin RUT"
     )
-    tasa_ila_item = float(item.get("Tasa ILA", 0.0))
 
-    precio_unitario_neto = precio_unitario_bruto / (
-        1.0 + tasa_iva_item + tasa_ila_item
+    direccion_empresa = (
+        datos_emp.get("direccion")
+        or datos_emp.get("dir_empresa")
+        or cfg.get("direccion")
+        or st.session_state.get("direccion_empresa")
+        or st.session_state.get("direccion")
+        or "Sin Dirección"
     )
+
+    url_logo = (
+        datos_emp.get("url_logo")
+        or datos_emp.get("logo_url")
+        or cfg.get("url_logo")
+        or st.session_state.get("url_logo")
+    )
+
+    # Descarga del Logo desde URL
+    if url_logo:
+        try:
+            resp = requests.get(url_logo, timeout=5)
+            if resp.status_code == 200:
+                img_bytes = io.BytesIO(resp.content)
+                pdf.image(img_bytes, x=10, y=8, w=25)
+        except Exception:
+            pass
+
+    # Cabecera
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 6, str(nombre_empresa).upper(), ln=True, align="C")
+    pdf.set_font("Arial", "", 9)
+    pdf.cell(0, 5, f"Dirección: {str(direccion_empresa)}", ln=True, align="C")
+    pdf.cell(0, 5, f"RUT: {str(rut_empresa)}", ln=True, align="C")
+    pdf.ln(5)
+
+    titulo_doc = str(tipo_documento).upper()
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 8, titulo_doc, ln=True, align="C")
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 5, f"Fecha de Emisión: {fecha_str}", ln=True, align="C")
+    pdf.ln(5)
+
+    c_nombre = (
+        cliente_nombre
+        if cliente_nombre and cliente_nombre.strip()
+        else "Consumidor Final"
+    )
+    c_rut = cliente_rut if cliente_rut and cliente_rut.strip() else "Sin RUT"
+
+    pdf.set_font("Arial", "B", 10)
+    pdf.cell(0, 6, "DATOS DEL CLIENTE", ln=True)
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(115, 6, f"Razón Social / Nombre: {c_nombre}", border=1)
+    pdf.cell(60, 6, f"RUT: {c_rut}", border=1, ln=True)
+    pdf.ln(5)
+
+    # Encabezados de Tabla (Dinámico)
+    pdf.set_font("Arial", "B", 9)
+    es_factura = "FACTURA" in titulo_doc
 
     if es_factura:
-      pdf.cell(70, 7, producto[:35], border=1)
-      pdf.cell(15, 7, f"{cantidad:g}", border=1, align="C")
-      pdf.cell(35, 7, f"${precio_unitario_neto:,.0f}", border=1, align="R")
-      pdf.cell(35, 7, f"${precio_unitario_bruto:,.0f}", border=1, align="R")
-      pdf.cell(35, 7, f"${subtotal_bruto:,.0f}", border=1, align="R", ln=True)
+        pdf.cell(70, 8, "Descripción", border=1, align="C")
+        pdf.cell(15, 8, "Cant", border=1, align="C")
+        pdf.cell(35, 8, "P. Unit. Neto", border=1, align="C")
+        pdf.cell(35, 8, "P. Unit. Bruto", border=1, align="C")
+        pdf.cell(35, 8, "Total Bruto", border=1, align="C", ln=True)
     else:
-      pdf.cell(90, 7, producto, border=1)
-      pdf.cell(20, 7, f"{cantidad:g}", border=1, align="C")
-      pdf.cell(40, 7, f"${precio_unitario_bruto:,.0f}", border=1, align="R")
-      pdf.cell(40, 7, f"${subtotal_bruto:,.0f}", border=1, align="R", ln=True)
+        pdf.cell(90, 8, "Descripción", border=1, align="C")
+        pdf.cell(20, 8, "Cant.", border=1, align="C")
+        pdf.cell(40, 8, "P. Unitario", border=1, align="C")
+        pdf.cell(40, 8, "Total", border=1, align="C", ln=True)
 
-    neto_calc = subtotal_bruto / (1.0 + tasa_iva_item + tasa_ila_item)
-    iva_calc = neto_calc * tasa_iva_item
-    ila_calc = neto_calc * tasa_ila_item
+    # Detalle y Motor Contable
+    tasa_defecto = (
+        22.0
+        if "URUGUAY" in str(nombre_empresa).upper()
+        else 19.0
+    )
+    tasa_iva_global = float(cfg.get("iva_tasa", tasa_defecto))
 
-    total_neto += neto_calc
-    total_iva += iva_calc
-    total_ila += ila_calc
-    total_general += subtotal_bruto
+    pdf.set_font("Arial", "", 9)
+    total_general = 0.0
+    total_neto = 0.0
+    total_iva = 0.0
+    total_ila = 0.0
 
-  # 7. Pie de Página con Desglose Total
-  pdf.set_font("Arial", "B", 10)
+    for item in carrito:
+        producto = str(item.get("Descripción") or item.get("Producto") or "Ítem")
+        cantidad = float(item.get("Cantidad", 0))
+        precio_unitario_bruto = float(
+            item.get("Precio Unitario") or item.get("Precio_Unitario") or 0
+        )
+        subtotal_bruto = float(item.get("Subtotal", 0))
 
-  if es_factura:
-    pdf.cell(155, 7, "SUBTOTAL NETO:", border=1, align="R")
-    pdf.cell(35, 7, f"${total_neto:,.0f}", border=1, align="R", ln=True)
+        tasa_iva_item = (
+            0.0 if item.get("Es Exento", False) else (tasa_iva_global / 100.0)
+        )
+        tasa_ila_item = float(item.get("Tasa ILA", 0.0))
 
-    pdf.cell(155, 7, f"IVA ({tasa_iva_global:g}%):", border=1, align="R")
-    pdf.cell(35, 7, f"${total_iva:,.0f}", border=1, align="R", ln=True)
+        precio_unitario_neto = precio_unitario_bruto / (
+            1.0 + tasa_iva_item + tasa_ila_item
+        )
 
-    if total_ila > 0:
-      pdf.cell(155, 7, "IMP. ESPECÍFICO:", border=1, align="R")
-      pdf.cell(35, 7, f"${total_ila:,.0f}", border=1, align="R", ln=True)
+        if es_factura:
+            pdf.cell(70, 7, producto[:35], border=1)
+            pdf.cell(15, 7, f"{cantidad:g}", border=1, align="C")
+            pdf.cell(35, 7, f"${precio_unitario_neto:,.0f}", border=1, align="R")
+            pdf.cell(35, 7, f"${precio_unitario_bruto:,.0f}", border=1, align="R")
+            pdf.cell(35, 7, f"${subtotal_bruto:,.0f}", border=1, align="R", ln=True)
+        else:
+            pdf.cell(90, 7, producto, border=1)
+            pdf.cell(20, 7, f"{cantidad:g}", border=1, align="C")
+            pdf.cell(40, 7, f"${precio_unitario_bruto:,.0f}", border=1, align="R")
+            pdf.cell(40, 7, f"${subtotal_bruto:,.0f}", border=1, align="R", ln=True)
 
-    pdf.cell(155, 8, "TOTAL GENERAL:", border=1, align="R")
-    pdf.cell(35, 8, f"${total_general:,.0f}", border=1, align="R", ln=True)
-  else:
-    pdf.cell(150, 8, "TOTAL GENERAL:", border=1, align="R")
-    pdf.cell(40, 8, f"${total_general:,.0f}", border=1, align="R", ln=True)
+        neto_calc = subtotal_bruto / (1.0 + tasa_iva_item + tasa_ila_item)
+        iva_calc = neto_calc * tasa_iva_item
+        ila_calc = neto_calc * tasa_ila_item
 
-  return pdf.output(dest="S").encode("latin1")
+        total_neto += neto_calc
+        total_iva += iva_calc
+        total_ila += ila_calc
+        total_general += subtotal_bruto
 
-import requests
-import streamlit as st
-import pandas as pd
-from datetime import date
+    # Pie de Página con Desglose Total
+    pdf.set_font("Arial", "B", 10)
+
+    if es_factura:
+        pdf.cell(155, 7, "SUBTOTAL NETO:", border=1, align="R")
+        pdf.cell(35, 7, f"${total_neto:,.0f}", border=1, align="R", ln=True)
+
+        pdf.cell(155, 7, f"IVA ({tasa_iva_global:g}%):", border=1, align="R")
+        pdf.cell(35, 7, f"${total_iva:,.0f}", border=1, align="R", ln=True)
+
+        if total_ila > 0:
+            pdf.cell(155, 7, "IMP. ESPECÍFICO:", border=1, align="R")
+            pdf.cell(35, 7, f"${total_ila:,.0f}", border=1, align="R", ln=True)
+
+        pdf.cell(155, 8, "TOTAL GENERAL:", border=1, align="R")
+        pdf.cell(35, 8, f"${total_general:,.0f}", border=1, align="R", ln=True)
+    else:
+        pdf.cell(150, 8, "TOTAL GENERAL:", border=1, align="R")
+        pdf.cell(40, 8, f"${total_general:,.0f}", border=1, align="R", ln=True)
+
+    return pdf.output(dest="S").encode("latin1")
 
 # --- FUNCIÓN AUXILIAR: CONSULTA AUTOMÁTICA DEL DÓLAR ---
 @st.cache_data(ttl=14400) # Se actualiza cada 4 horas automáticamente
@@ -5071,14 +5079,21 @@ elif menu == "💰 Módulo de Ventas (POS)":
             "comuna": "Santiago"
         }
 
-        # 3. Preparar totales (utiliza las variables de totales que ya tengas calculadas)
+        # 3. Preparar totales (con respaldo de cálculo dinámico para evitar valores en $0)
+        tot_general = total_venta if ('total_venta' in locals() and total_venta > 0) else sum(
+            float(i.get('Subtotal', 0)) or (float(i.get('Cantidad', 1)) * float(i.get('Precio Unitario', 0))) 
+            for i in items_a_mostrar
+        )
+        tot_neto = total_neto_ticket if ('total_neto_ticket' in locals() and total_neto_ticket > 0) else round(tot_general / 1.19)
+        tot_iva = total_iva_ticket if ('total_iva_ticket' in locals() and total_iva_ticket > 0) else (tot_general - tot_neto)
+
         totales_info = {
-            "neto": total_neto_ticket if 'total_neto_ticket' in locals() else 0,
-            "iva": total_iva_ticket if 'total_iva_ticket' in locals() else 0,
-            "total": total_venta if 'total_venta' in locals() else 0
+            "neto": tot_neto,
+            "iva": tot_iva,
+            "total": tot_general
         }
 
-        # 🟢 NUEVO: Mostrar la vista unificada del documento
+        # 🟢 Mostrar la vista unificada del documento
         mostrar_documento_unificado(
             tipo_documento=tipo_documento,
             folio=st.session_state.get("ultimo_folio", "N/A"),
@@ -5093,11 +5108,19 @@ elif menu == "💰 Módulo de Ventas (POS)":
         with col_r1:
             if tipo_documento in ["Guía de Despacho", "Factura Electrónica"]:
                 try:
-                    pdf_bytes = generar_guia_pdf(cliente_nombre, cliente_rut, items_a_mostrar, tipo_documento, fecha_emision_venta)
+                    pdf_bytes = generar_guia_pdf(
+                        cliente_nombre,
+                        cliente_rut,
+                        items_a_mostrar,
+                        tipo_documento,
+                        fecha_emision_venta,
+                        datos_empresa=datos_emisor
+                    )
+                    
                     st.download_button(
-                        f"📥 Descargar {tipo_documento} (PDF)",
-                        data=bytes(pdf_bytes),
-                        file_name=f"{tipo_documento.replace(' ', '_')}.pdf",
+                        label=f"📄 Descargar {tipo_documento} (PDF)",
+                        data=pdf_bytes,
+                        file_name=f"{tipo_documento.replace(' ', '_')}_{st.session_state.get('ultimo_folio', 'N/A')}.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
@@ -5105,7 +5128,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     st.error(f"⚠️ Error al generar el PDF: {e}")
             else:
                 st.download_button(
-                    "📥 Descargar Recibo Térmico",
+                    label="📥 Descargar Recibo Térmico",
                     data=st.session_state.ultimo_recibo,
                     file_name="Comprobante.txt",
                     mime="text/plain",
@@ -5121,7 +5144,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.pop("cliente_preseleccionado", None)
                 st.session_state.pop("folio_guia_origen", None) 
                 st.rerun()
-
     # =========================================================================
     # --- VISTA 2: PANTALLA DE PAGO Y CONFIRMACIÓN ---
     # =========================================================================
