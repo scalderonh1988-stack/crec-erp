@@ -3964,10 +3964,9 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                     tipo_etiqueta = "Insumo" if item.get("EsInsumo") else "Producto"
                                     lineas_detalle_grc += f"- [{tipo_etiqueta}] {item['Descripción']} (x{item['Cantidad']}) | Neto: ${item['SubtotalNeto']:,.2f} | IVA: ${item['IVA']:,.2f} | Total: ${item['CostoTotal']:,.2f} | Bodega: {item.get('BodegaDestino', 'Bodega Principal')}\n"
                                     
-                                    # 1. Registro directo en la tabla 'compras' de Supabase
+                                    # 1. Registro directo en la tabla 'compras' de Supabase (usando solo columnas existentes)
                                     nuevo_reg_compra_nube = {
                                         "fecha_hora": datetime.now().isoformat(),
-                                        "fecha_emision": str(fecha_compra),
                                         "tipo_recepcion": "GRC",
                                         "tipo_documento": str(item.get("TipoDocumentoTributario", tipo_documento)),
                                         "es_afecto": bool(item.get("EsFacturaAfecta", es_factura_afecta)),
@@ -3983,14 +3982,13 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                         "lote": str(item["Lote"]),
                                         "fecha_vencimiento_lote": str(item["FechaVencimiento"]),
                                         "condicion_pago": str(condicion_pago),
-                                        "id_negocio": str(rut_actual).strip(),
-                                        "rut_empresa": str(rut_actual).strip()
+                                        "id_negocio": str(rut_actual).strip()  # 👈 'id_negocio' es el nombre correcto según la tabla
                                     }
-                                    
+
                                     try:
                                         supabase.table("compras").insert(nuevo_reg_compra_nube).execute()
                                     except Exception as e_full:
-                                        # Fallback con captura limpia de excepción
+                                        # Fallback con campos mínimos indispensables que sí existen en la tabla
                                         reg_simple = {
                                             "fecha_hora": datetime.now().isoformat(),
                                             "tipo_recepcion": "GRC",
@@ -4004,8 +4002,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                             "monto_iva": float(item["IVA"]),
                                             "costo_total": float(item["CostoTotal"]),
                                             "es_afecto": bool(item.get("EsFacturaAfecta", es_factura_afecta)),
-                                            "id_negocio": str(rut_actual).strip(),
-                                            "rut_empresa": str(rut_actual).strip()
+                                            "id_negocio": str(rut_actual).strip()
                                         }
                                         try:
                                             supabase.table("compras").insert(reg_simple).execute()
