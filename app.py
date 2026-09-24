@@ -4985,7 +4985,14 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 if st.button("📥 Cargar Guía", use_container_width=True):
                     if folio_guia_a_facturar and modo_online:
                         try:
-                            res_guia = supabase.table("ventas").select("*").eq("rut_empresa", str(rut_actual)).eq("folio", folio_guia_a_facturar.strip()).execute()
+                            # CORRECCIÓN: Filtra por tipo de documento para evitar mezclar con otras ventas
+                            res_guia = supabase.table("ventas") \
+                                .select("*") \
+                                .eq("rut_empresa", str(rut_actual)) \
+                                .eq("folio", folio_guia_a_facturar.strip()) \
+                                .ilike("tipo_documento", "%guía%") \
+                                .execute()
+
                             if res_guia.data:
                                 st.session_state.carrito_ventas = []
                                 st.session_state.folio_guia_origen = folio_guia_a_facturar.strip()
@@ -5000,13 +5007,14 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                     
                                     st.session_state.carrito_ventas.append({
                                         "Código": item.get("codigo_producto", ""),
-                                        "Descripción": item.get("detalle", "Producto"),
+                                        "Descripción": f"{item.get('detalle', 'Producto')} (📄 de Guía)",
                                         "Cantidad": cant,
                                         "Precio Unitario": precio_unitario,
                                         "Subtotal": monto_total,
                                         "es_guia_previa": True 
                                     })
                                 st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente.")
+                                st.rerun()
                             else:
                                 st.warning("⚠️ No se encontró ninguna guía con ese folio.")
                         except Exception as e:
@@ -5016,14 +5024,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     else:
                         st.warning("⚠️ Ingresa un folio válido.")
     st.markdown("---")
-
-    modo_inventario = st.radio(
-        "📦 Modo de trabajo del POS:",
-        ["Control Estricto de Stock (Alerta si no hay inventario)", "Venta Libre / Solo Base de Datos"],
-        horizontal=True,
-        key="radio_modo_inventario"
-    )
-    controlar_stock = "Estricto" in modo_inventario
 
     # --- 8. SELECCIÓN DE CLIENTES ---
     cliente_nombre, cliente_rut = "", ""
@@ -5382,7 +5382,7 @@ PAGO: {forma_pago.upper()}
                         st.session_state.estado_pago = False
                         st.rerun()
 
-    # =========================================================================
+   # =========================================================================
     # --- VISTA 3: PANTALLA PRINCIPAL (BUSCADOR Y CARRITO) ---
     # =========================================================================
     else:
@@ -5457,6 +5457,9 @@ PAGO: {forma_pago.upper()}
                         
                         unidades_en_carrito = sum(item["Cantidad"] for item in st.session_state.carrito_ventas if item["Código"] == c_buscado)
                         total_intentado = unidades_en_carrito + float(cantidad_vendida)
+
+                        # Definición explícita de controlar_stock evitando NameError
+                        controlar_stock = "Estricto" in st.session_state.get("radio_modo_inventario", "Estricto")
 
                         if controlar_stock and total_intentado > stock_disponible:
                             st.error(f"🚨 **¡Inventario Insuficiente en {bodega_actual}!** Stock disponible: {stock_disponible:,.2f}")
