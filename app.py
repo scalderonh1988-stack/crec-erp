@@ -2421,7 +2421,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     mostrar_encabezado_con_home("⚡ Resumen Ejecutivo en Tiempo Real")
     tenant_id = st.session_state.get("negocio_seleccionado") or get_current_tenant()
    
-    # Función auxiliar para limpiar RUTs en comparaciones
+    # Función auxiliar para limpiar RUTs / Nombres en comparaciones
     def limpiar_rut_str(rut):
         return str(rut).replace(".", "").replace("-", "").strip().lower() if pd.notna(rut) else ""
 
@@ -2436,9 +2436,9 @@ elif menu == "📊 Dashboard Ejecutivo":
         if res_iny.data:
             df_iny = pd.DataFrame(res_iny.data)
             if not df_iny.empty:
-                col_rut_iny = 'rut_empresa' if 'rut_empresa' in df_iny.columns else ('id_negocio' if 'id_negocio' in df_iny.columns else None)
+                col_rut_iny = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_iny.columns), None)
                 if col_rut_iny and tenant_clean:
-                    df_iny = df_iny[df_iny[col_rut_iny].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
+                    df_iny = df_iny[df_iny[col_rut_iny].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
                 if not df_iny.empty and 'monto' in df_iny.columns:
                     total_inversion_inicial = float(pd.to_numeric(df_iny['monto'], errors='coerce').fillna(0).sum())
     except Exception as e:
@@ -2508,9 +2508,9 @@ elif menu == "📊 Dashboard Ejecutivo":
         if res_v.data:
             df_v = pd.DataFrame(res_v.data)
             if not df_v.empty:
-                col_rut_v = 'rut_empresa' if 'rut_empresa' in df_v.columns else ('id_negocio' if 'id_negocio' in df_v.columns else None)
+                col_rut_v = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_v.columns), None)
                 if col_rut_v and tenant_clean:
-                    df_v = df_v[df_v[col_rut_v].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
+                    df_v = df_v[df_v[col_rut_v].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
                 
                 if not df_v.empty:
                     col_fecha_v = 'fecha' if 'fecha' in df_v.columns else ('fecha_hora' if 'fecha_hora' in df_v.columns else None)
@@ -2550,9 +2550,9 @@ elif menu == "📊 Dashboard Ejecutivo":
         if res_cf.data:
             df_cf = pd.DataFrame(res_cf.data)
             if not df_cf.empty:
-                col_rut_cf = 'rut_empresa' if 'rut_empresa' in df_cf.columns else ('id_negocio' if 'id_negocio' in df_cf.columns else None)
+                col_rut_cf = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_cf.columns), None)
                 if col_rut_cf and tenant_clean:
-                    df_cf = df_cf[df_cf[col_rut_cf].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
+                    df_cf = df_cf[df_cf[col_rut_cf].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
                 
                 if not df_cf.empty and 'monto' in df_cf.columns:
                     costos_fijos = float(pd.to_numeric(df_cf['monto'], errors='coerce').fillna(0).sum())
@@ -2572,9 +2572,9 @@ elif menu == "📊 Dashboard Ejecutivo":
         if res_c.data:
             df_c = pd.DataFrame(res_c.data)
             if not df_c.empty:
-                col_rut_c = 'rut_empresa' if 'rut_empresa' in df_c.columns else ('id_negocio' if 'id_negocio' in df_c.columns else None)
+                col_rut_c = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_c.columns), None)
                 if col_rut_c and tenant_clean:
-                    df_c = df_c[df_c[col_rut_c].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
+                    df_c = df_c[df_c[col_rut_c].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
                 
                 if not df_c.empty:
                     col_fecha_c = 'fecha' if 'fecha' in df_c.columns else ('fecha_compra' if 'fecha_compra' in df_c.columns else None)
@@ -2619,9 +2619,9 @@ elif menu == "📊 Dashboard Ejecutivo":
         if res_g.data:
             df_g = pd.DataFrame(res_g.data)
             if not df_g.empty:
-                col_rut_g = 'rut_empresa' if 'rut_empresa' in df_g.columns else ('id_negocio' if 'id_negocio' in df_g.columns else None)
+                col_rut_g = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_g.columns), None)
                 if col_rut_g and tenant_clean:
-                    df_g = df_g[df_g[col_rut_g].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
+                    df_g = df_g[df_g[col_rut_g].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
                 
                 if not df_g.empty:
                     if 'fecha' in df_g.columns:
@@ -2661,44 +2661,51 @@ elif menu == "📊 Dashboard Ejecutivo":
     except Exception as e:
         print(f"Error cargando gastos desde la nube: {e}")
 
-    # CRÉDITO FISCAL TOTAL (COMPRAS + GASTOS QUE FACTURAN)
+    # CRÉDITO FISCAL TOTAL
     total_credito_fiscal = credito_fiscal_compras + credito_fiscal_gastos
 
     # ==============================================================================
-    # 5. INVENTARIO Y MARGENES DESDE SUPABASE
+    # 5. INVENTARIO Y MARGENES DESDE SUPABASE (SECCIÓN OPTIMIZADA)
     # ==============================================================================
     inversion_inventario_costo = 0.0
     total_productos = 0
     margen_promedio = 0.0
 
     try:
-        res_prod = supabase.table("productos").select("costo, precio_venta, stock, rut_empresa, id_negocio").execute()
+        res_prod = supabase.table("productos").select("*").execute()
         if res_prod.data:
             df_prod = pd.DataFrame(res_prod.data)
             if not df_prod.empty:
-                col_rut_p = 'rut_empresa' if 'rut_empresa' in df_prod.columns else ('id_negocio' if 'id_negocio' in df_prod.columns else None)
+                col_rut_p = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_prod.columns), None)
                 if col_rut_p and tenant_clean:
-                    df_prod = df_prod[df_prod[col_rut_p].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
-                
+                    df_prod_filtrado = df_prod[df_prod[col_rut_p].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
+                    if not df_prod_filtrado.empty:
+                        df_prod = df_prod_filtrado
+
                 if not df_prod.empty:
-                    df_prod['costo'] = pd.to_numeric(df_prod['costo'], errors='coerce').fillna(0)
-                    df_prod['precio_venta'] = pd.to_numeric(df_prod['precio_venta'], errors='coerce').fillna(0)
-                    df_prod['stock'] = pd.to_numeric(df_prod['stock'], errors='coerce').fillna(0)
+                    col_costo = next((c for c in ['costo', 'costo_unitario', 'precio_costo', 'costo_promedio', 'costo_compra', 'precio_compra'] if c in df_prod.columns), None)
+                    col_stock = next((c for c in ['stock', 'stock_actual', 'cantidad', 'existencia', 'unidades'] if c in df_prod.columns), None)
+                    col_precio = next((c for c in ['precio_venta', 'precio', 'precio_unitario', 'pvp', 'precio_bruto'] if c in df_prod.columns), None)
 
-                    inversion_inventario_costo = float((df_prod['costo'] * df_prod['stock']).sum())
-                    total_productos = len(df_prod)
+                    if col_costo and col_stock:
+                        df_prod['costo_clean'] = pd.to_numeric(df_prod[col_costo], errors='coerce').fillna(0)
+                        df_prod['stock_clean'] = pd.to_numeric(df_prod[col_stock], errors='coerce').fillna(0)
+                        
+                        inversion_inventario_costo = float((df_prod['costo_clean'] * df_prod['stock_clean']).sum())
+                        total_productos = len(df_prod)
 
-                    df_m = df_prod[(df_prod['costo'] > 0) & (df_prod['precio_venta'] > 0)].copy()
-                    if not df_m.empty:
-                        df_m['margen'] = ((df_m['precio_venta'] - df_m['costo']) / df_m['precio_venta']) * 100
-                        margen_promedio = float(df_m['margen'].mean())
+                    if col_precio and col_costo:
+                        df_prod['precio_clean'] = pd.to_numeric(df_prod[col_precio], errors='coerce').fillna(0)
+                        df_m = df_prod[(df_prod['costo_clean'] > 0) & (df_prod['precio_clean'] > 0)].copy()
+                        if not df_m.empty:
+                            df_m['margen'] = ((df_m['precio_clean'] - df_m['costo_clean']) / df_m['precio_clean']) * 100
+                            margen_promedio = float(df_m['margen'].mean())
     except Exception as e:
         print(f"Error cargando inventario desde la nube: {e}")
 
     # ==============================================================================
-    # 6. CÁLCULOS FINANCIEROS Y FLUJO BRUTO REAL DE CAJA (HISTÓRICO REAL)
+    # 6. CÁLCULOS FINANCIEROS Y FLUJO BRUTO REAL DE CAJA
     # ==============================================================================
-    # A) INGRESOS HISTÓRICOS TOTALES
     total_ventas_historico = 0.0
     if not df_v.empty:
         col_monto_v = next((c for c in ['monto', 'total', 'monto_total'] if c in df_v.columns), None)
@@ -2707,7 +2714,6 @@ elif menu == "📊 Dashboard Ejecutivo":
 
     total_entradas = total_ventas_historico + float(total_inversion_inicial)
 
-    # B) EGRESOS HISTÓRICOS TOTALES
     total_compras_historico = 0.0
     if not df_c.empty:
         col_monto_c_h = next((c for c in ['costo_total', 'CostoTotal', 'monto_total', 'monto', 'total'] if c in df_c.columns), None)
@@ -2725,11 +2731,8 @@ elif menu == "📊 Dashboard Ejecutivo":
     total_ventas_historico = round(total_ventas_historico)
 
     total_egresos_historico = total_compras_historico + total_gastos_historico
-
-    # C) DINERO ESTIMADO EN CAJA REAL ($282.105)
     dinero_estimado_caja = round(total_entradas - total_egresos_historico)
 
-    # D) MÉTRICAS DE EVALUACIÓN DEL PERÍODO
     total_inversion_mercaderia_total = inversion_mercaderia_gastos + compras_totales_periodo
     total_egresos_operativos = costos_fijos + costos_variables
     utilidad_neta_estimada = total_ventas_periodo - total_egresos_operativos
@@ -2813,9 +2816,9 @@ elif menu == "📊 Dashboard Ejecutivo":
             if res_cuat.data:
                 df_cuat = pd.DataFrame(res_cuat.data)
                 if not df_cuat.empty:
-                    col_rut_cuat = 'rut_empresa' if 'rut_empresa' in df_cuat.columns else ('id_negocio' if 'id_negocio' in df_cuat.columns else None)
+                    col_rut_cuat = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_cuat.columns), None)
                     if col_rut_cuat and tenant_clean:
-                        df_cuat = df_cuat[df_cuat[col_rut_cuat].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
+                        df_cuat = df_cuat[df_cuat[col_rut_cuat].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
                     
                     if not df_cuat.empty and 'fecha' in df_cuat.columns:
                         col_monto_cuat = 'monto_total' if 'monto_total' in df_cuat.columns else 'venta_total'
@@ -2885,9 +2888,9 @@ elif menu == "📊 Dashboard Ejecutivo":
             res_cpp = supabase.table("cuentas_por_pagar").select("*").eq("estado", "PENDIENTE").execute()
             if res_cpp.data:
                 df_cpp = pd.DataFrame(res_cpp.data)
-                col_rut_cpp = 'rut_empresa' if 'rut_empresa' in df_cpp.columns else ('id_negocio' if 'id_negocio' in df_cpp.columns else None)
+                col_rut_cpp = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_cpp.columns), None)
                 if col_rut_cpp and tenant_clean:
-                    df_cpp = df_cpp[df_cpp[col_rut_cpp].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
+                    df_cpp = df_cpp[df_cpp[col_rut_cpp].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
                 if not df_cpp.empty:
                     st.warning(f"⚠️ Tienes **{len(df_cpp)} factura(s) pendiente(s)** de pago a proveedores.")
                 else:
