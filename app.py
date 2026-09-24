@@ -4985,22 +4985,29 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 if st.button("📥 Cargar Guía", use_container_width=True):
                     if folio_guia_a_facturar and modo_online:
                         try:
-                            # CORRECCIÓN: Filtra por tipo de documento para evitar mezclar con otras ventas
+                            # Consulta limpia sin columna de tipo inexistente
                             res_guia = supabase.table("ventas") \
                                 .select("*") \
                                 .eq("rut_empresa", str(rut_actual)) \
                                 .eq("folio", folio_guia_a_facturar.strip()) \
-                                .ilike("tipo_documento", "%guía%") \
                                 .execute()
 
                             if res_guia.data:
+                                # Filtrado en Python si existe alguna columna de tipo
+                                lineas = [
+                                    item for item in res_guia.data 
+                                    if "gui" in str(item.get("tipo_doc") or item.get("tipo") or item.get("documento") or "guia").lower()
+                                ]
+                                if not lineas:
+                                    lineas = res_guia.data
+
                                 st.session_state.carrito_ventas = []
                                 st.session_state.folio_guia_origen = folio_guia_a_facturar.strip()
-                                cliente_de_guia = res_guia.data[0].get("cliente", "")
+                                cliente_de_guia = lineas[0].get("cliente", "")
                                 if cliente_de_guia and cliente_de_guia != "Cliente General":
                                     st.session_state.cliente_preseleccionado = cliente_de_guia
 
-                                for item in res_guia.data:
+                                for item in lineas:
                                     cant = float(item.get("cantidad", 1))
                                     monto_total = float(item.get("monto", 0))
                                     precio_unitario = monto_total / cant if cant > 0 else 0
