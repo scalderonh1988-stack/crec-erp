@@ -2681,14 +2681,36 @@ elif menu == "📊 Dashboard Ejecutivo":
     # ==============================================================================
     # 6. CÁLCULOS FINANCIEROS Y FLUJO BRUTO REAL DE CAJA
     # ==============================================================================
+    # A) INGRESOS Y EGRESOS HISTÓRICOS TOTALES (PARA EL DINERO REAL EN CAJA)
+    total_ventas_historico = 0.0
+    if 'df_v' in locals() and not df_v.empty:
+        col_monto_v = 'monto' if 'monto' in df_v.columns else 'total'
+        if 'folio' in df_v.columns:
+            total_ventas_historico = float(df_v.drop_duplicates(subset=["folio"])[col_monto_v].sum())
+        else:
+            total_ventas_historico = float(df_v[col_monto_v].sum())
+
+    total_compras_historico = 0.0
+    if 'df_c' in locals() and not df_c.empty:
+        col_monto_c = 'monto_total' if 'monto_total' in df_c.columns else ('monto' if 'monto' in df_c.columns else 'total')
+        if col_monto_c in df_c.columns:
+            total_compras_historico = float(pd.to_numeric(df_c[col_monto_c], errors='coerce').fillna(0).sum())
+
+    total_gastos_historico = 0.0
+    if 'df_g' in locals() and not df_g.empty:
+        col_monto_g = 'monto' if 'monto' in df_g.columns else 'total'
+        if col_monto_g in df_g.columns:
+            total_gastos_historico = float(pd.to_numeric(df_g[col_monto_g], errors='coerce').fillna(0).sum())
+
+    # Egresos Históricos Acumulados
+    total_egresos_historico = total_compras_historico + total_gastos_historico
+
+    # 🏦 DINERO ESTIMADO EN CAJA (Histórico Real)
+    dinero_estimado_caja = (total_ventas_historico + total_inversion_inicial) - total_egresos_historico
+
+    # B) MÉTRICAS DEL PERÍODO SELECCIONADO (Para evaluar el mes/período actual)
     total_inversion_mercaderia_total = inversion_mercaderia_gastos + compras_totales_periodo
     total_egresos_operativos = costos_fijos + costos_variables
-    total_egresos_efectivo = costos_fijos + costos_variables + total_inversion_mercaderia_total
-
-    # Dinero estimado disponible en caja con la fórmula solicitada:
-    # (Ventas Totales + Inversión Inicial/Abonos) - (Gastos Totales + Costos Fijos + Compras de Mercadería)
-    dinero_estimado_caja = (total_ventas_periodo + total_inversion_inicial) - total_egresos_efectivo
-
     utilidad_neta_estimada = total_ventas_periodo - total_egresos_operativos
 
     pct_margen_decimal = (margen_promedio / 100.0) if margen_promedio > 0 else 0.40
