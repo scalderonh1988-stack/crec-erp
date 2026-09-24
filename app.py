@@ -9,6 +9,7 @@ import streamlit as st
 from datetime import datetime
 from fpdf import FPDF
 from PIL import Image
+from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 
 # Desactivar advertencias de SSL en peticiones HTTP
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -1607,8 +1608,9 @@ if not st.session_state.autenticado:
                 st.error("❌ Debes ingresar tanto el usuario como la contraseña.")
             else:
                 supabase_client = globals().get('supabase', None) or st.session_state.get("supabase", None)
+                es_online = st.session_state.get("is_online", True) and (supabase_client is not None)
 
-                # 1. Validación Admin Master desde secretos (sin valores quemados en código)
+                # 1. Validación Admin Master
                 if (
                     ADMIN_MASTER_USER 
                     and ADMIN_MASTER_PASS 
@@ -1629,8 +1631,11 @@ if not st.session_state.autenticado:
                 else:
                     acceso_exitoso = False
                     
-                    # 1.5 Validación Propietario en Supabase (Dueño del Negocio)
-                    if supabase_client:
+                    # -----------------------------------------------------------------
+                    # A. FLUJO ONLINE (Conexión a Supabase disponible)
+                    # -----------------------------------------------------------------
+                    if es_online:
+                        # 1.5 Validación Propietario en Supabase
                         try:
                             res_dueño = supabase_client.table("empresas").select("*").eq("rut_empresa", usuario_limpio).execute()
                             if res_dueño and res_dueño.data:
@@ -1638,12 +1643,19 @@ if not st.session_state.autenticado:
                                 pass_db = str(datos_empresa.get("password", ""))
                                 if pass_db == password_limpio:
                                     lic_activa = datos_empresa.get("licencia_activa", True)
-                                    fecha_exp_str = datos_empresa.get("fecha_expiracion")
-                                    expirada_por_fecha = False
+                                    fecha_exp_str = str(datos_empresa.get("fecha_expiracion", ""))
                                     
-                                    if fecha_exp_str and str(fecha_exp_str).strip() not in ["None", "NaT", "nan", ""]:
+                                    # 🟢 RESPALDO Y FIRMA LOCAL DE LICENCIA
+                                    guardar_licencia_online(
+                                        rut_empresa=usuario_limpio,
+                                        fecha_expiracion=fecha_exp_str,
+                                        licencia_activa=lic_activa
+                                    )
+
+                                    expirada_por_fecha = False
+                                    if fecha_exp_str and fecha_exp_str.strip() not in ["None", "NaT", "nan", ""]:
                                         try:
-                                            expirada_por_fecha = pd.to_datetime(str(fecha_exp_str)).date() < date.today()
+                                            expirada_por_fecha = pd.to_datetime(fecha_exp_str).date() < date.today()
                                         except Exception:
                                             pass
 
@@ -1666,76 +1678,106 @@ if not st.session_state.autenticado:
                         except Exception:
                             pass
                     
-                    # 2. Validación Usuarios Operativos (Vendedores, Cajeros, Bodegueros, etc.)
-                    if not acceso_exitoso and supabase_client:
-                        try:
-                            res_usr = supabase_client.table("usuarios").select("*").eq("rut_usuario", usuario_limpio).execute()
-                            if res_usr and res_usr.data:
-                                datos_usr = res_usr.data[0]
-                                if str(datos_usr.get("password_hash")) == password_limpio:
-                                    id_empresa = datos_usr.get("empresa_id")
-                                    res_emp = supabase_client.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa", "fecha_expiracion").eq("id", id_empresa).execute()
-                                    if res_emp and res_emp.data:
-                                        datos_empresa = res_emp.data[0]
-                                        lic_activa = datos_empresa.get("licencia_activa", True)
-                                        fecha_exp_str = datos_empresa.get("fecha_expiracion")
-                                        expirada_por_fecha = False
-                                        
-                                        if fecha_exp_str and str(fecha_exp_str).strip() not in ["None", "NaT", "nan", ""]:
-                                            try:
-                                                expirada_por_fecha = pd.to_datetime(str(fecha_exp_str)).date() < date.today()
-                                            except Exception:
-                                                pass
-
-                                        if lic_activa and not expirada_por_fecha:
+                        # 2. Validación Usuarios Operativos
+                        if not acceso_exitoso:
+                            try:
+                                res_usr = supabase_client.table("usuarios").select("*").eq("rut_usuario", usuario_limpio).execute()
+                                if res_usr and res_usr.data:
+                                    datos_usr = res_usr.data[0]
+                                    if str(datos_usr.get("password_hash")) == password_limpio:
+                                        id_empresa = datos_usr.get("empresa_id")
+                                        res_emp = supabase_client.table("empresas").select("rut_empresa", "empresa_nombre", "licencia_activa", "fecha_expiracion").eq("id", id_empresa).execute()
+                                        if res_emp and res_emp.data:
+                                            datos_empresa = res_emp.data[0]
+                                            lic_activa = datos_empresa.get("licencia_activa", True)
+                                            fecha_exp_str = str(datos_empresa.get("fecha_expiracion", ""))
                                             rut_negocio = datos_empresa.get("rut_empresa")
-                                            nombre_negocio = datos_empresa.get("empresa_nombre")
-                                            rol_encontrado = str(datos_usr.get("rol", "Operador")).strip()
-                                            
-                                            # REGLA POR DEFECTO: Vendedor en Ruta (Sólo Preventa)
-                                            if "vendedor en ruta" in rol_encontrado.lower() or rol_encontrado.lower() == "vendedor":
-                                                st.session_state.autenticado = True
-                                                st.session_state.es_admin_dev = False
-                                                st.session_state.negocio_actual = rut_negocio
-                                                st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
-                                                st.session_state.rol_usuario = rol_encontrado
-                                                st.session_state.tipo_usuario = "Vendedor"
-                                                st.session_state.modulos_permitidos = ["🏠 Home / Bienvenida", "🚚 Logística y Distribución (Preventa)"]
-                                                st.session_state.menu_seleccionado = "🚚 Logística y Distribución (Preventa)"
-                                                st.session_state.intentos_fallidos = 0
-                                                st.session_state.nombre_empresa = nombre_negocio
-                                                acceso_exitoso = True
-                                                st.rerun()
-                                            else:
-                                                # OTROS ROLES: Módulos configurados individualmente por el Propietario en la BD
-                                                raw_modulos = datos_usr.get("modulos", "")
+
+                                            # 🟢 RESPALDO Y FIRMA LOCAL DE LICENCIA DE LA EMPRESA
+                                            guardar_licencia_online(
+                                                rut_empresa=rut_negocio,
+                                                fecha_expiracion=fecha_exp_str,
+                                                licencia_activa=lic_activa
+                                            )
+
+                                            expirada_por_fecha = False
+                                            if fecha_exp_str and fecha_exp_str.strip() not in ["None", "NaT", "nan", ""]:
+                                                try:
+                                                    expirada_por_fecha = pd.to_datetime(fecha_exp_str).date() < date.today()
+                                                except Exception:
+                                                    pass
+
+                                            if lic_activa and not expirada_por_fecha:
+                                                nombre_negocio = datos_empresa.get("empresa_nombre")
+                                                rol_encontrado = str(datos_usr.get("rol", "Operador")).strip()
                                                 
-                                                if str(raw_modulos).upper().strip() == "ALL":
-                                                    modulos_operador = list(modulos_totales)
-                                                else:
-                                                    modulos_operador = normalizar_lista_modulos(raw_modulos)
-                                                
-                                                if not raw_modulos and len(modulos_operador) <= 1:
-                                                    st.error("❌ El Propietario aún no ha asignado módulos a esta cuenta.")
-                                                    acceso_exitoso = True 
-                                                else:
+                                                if "vendedor en ruta" in rol_encontrado.lower() or rol_encontrado.lower() == "vendedor":
                                                     st.session_state.autenticado = True
                                                     st.session_state.es_admin_dev = False
                                                     st.session_state.negocio_actual = rut_negocio
                                                     st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
                                                     st.session_state.rol_usuario = rol_encontrado
-                                                    st.session_state.tipo_usuario = "Operador"
-                                                    st.session_state.modulos_permitidos = modulos_operador
+                                                    st.session_state.tipo_usuario = "Vendedor"
+                                                    st.session_state.modulos_permitidos = ["🏠 Home / Bienvenida", "🚚 Logística y Distribución (Preventa)"]
+                                                    st.session_state.menu_seleccionado = "🚚 Logística y Distribución (Preventa)"
                                                     st.session_state.intentos_fallidos = 0
                                                     st.session_state.nombre_empresa = nombre_negocio
                                                     acceso_exitoso = True
                                                     st.rerun()
-                                        else:
-                                            st.error("❌ La licencia de la empresa se encuentra expirada.")
-                                            st.link_button("💳 Renovar Licencia Ahora", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
-                                            acceso_exitoso = True
-                        except Exception:
-                            pass
+                                                else:
+                                                    raw_modulos = datos_usr.get("modulos", "")
+                                                    if str(raw_modulos).upper().strip() == "ALL":
+                                                        modulos_operador = list(modulos_totales)
+                                                    else:
+                                                        modulos_operador = normalizar_lista_modulos(raw_modulos)
+                                                    
+                                                    if not raw_modulos and len(modulos_operador) <= 1:
+                                                        st.error("❌ El Propietario aún no ha asignado módulos a esta cuenta.")
+                                                        acceso_exitoso = True 
+                                                    else:
+                                                        st.session_state.autenticado = True
+                                                        st.session_state.es_admin_dev = False
+                                                        st.session_state.negocio_actual = rut_negocio
+                                                        st.session_state.usuario_logueado = datos_usr.get("nombre", usuario_limpio)
+                                                        st.session_state.rol_usuario = rol_encontrado
+                                                        st.session_state.tipo_usuario = "Operador"
+                                                        st.session_state.modulos_permitidos = modulos_operador
+                                                        st.session_state.intentos_fallidos = 0
+                                                        st.session_state.nombre_empresa = nombre_negocio
+                                                        acceso_exitoso = True
+                                                        st.rerun()
+                                            else:
+                                                st.error("❌ La licencia de la empresa se encuentra expirada.")
+                                                st.link_button("💳 Renovar Licencia Ahora", "https://mpago.la/1XfbC1E", type="primary", use_container_width=True)
+                                                acceso_exitoso = True
+                            except Exception:
+                                pass
+
+                    # -----------------------------------------------------------------
+                    # B. FLUJO OFFLINE (Validación de Licencia Local en SQLite)
+                    # -----------------------------------------------------------------
+                    if not es_online and not acceso_exitoso:
+                        # Validar si existe token firmado en SQLite local para el RUT ingresado
+                        res_val = validar_licencia_offline(usuario_limpio)
+                        if res_val["valida"]:
+                            st.session_state.autenticado = True
+                            st.session_state.es_admin_dev = False
+                            st.session_state.negocio_actual = usuario_limpio
+                            st.session_state.usuario_logueado = "Usuario Offline"
+                            st.session_state.rol_usuario = "Propietario"
+                            st.session_state.tipo_usuario = "Propietario"
+                            st.session_state.modulos_permitidos = "ALL"
+                            st.session_state.intentos_fallidos = 0
+                            st.session_state.nombre_empresa = f"Empresa ({usuario_limpio})"
+                            
+                            dias_rem = res_val["dias_restantes"]
+                            st.toast(f"📶 Modo Offline Activo. Licencia local válida por {dias_rem} días.", icon="ℹ️")
+                            acceso_exitoso = True
+                            st.rerun()
+                        else:
+                            st.error(res_val["mensaje"])
+                            st.info("💡 Para reactivar la licencia local, conecta el equipo a internet e inicia sesión.")
+                            acceso_exitoso = True
                         
                     if not acceso_exitoso:
                         st.session_state.intentos_fallidos += 1
@@ -3402,14 +3444,13 @@ elif menu == "🛒 Registrar Compra (CPP)":
     # --- CARGA DE PRODUCTOS DIRECTO DESDE LA NUBE (SUPABASE) PARA GRC/GRI ---
     df_base = pd.DataFrame()
     try:
-        res_prod_nube = supabase.table("productos").select("codigo, descripcion, stock, precio_venta").eq("rut_empresa", rut_actual).limit(10000).execute()
+        res_prod_nube = supabase.table("productos").select("codigo, descripcion, stock, costo, precio_venta").eq("rut_empresa", rut_actual).limit(10000).execute()
         if res_prod_nube.data:
             df_base = pd.DataFrame(res_prod_nube.data)
     except Exception as e:
         st.error(f"⚠️ Error conectando al inventario de la nube para compras: {e}")
 
     if not df_base.empty:
-        # Definimos las columnas estándar que usarán los selectbox y campos de la GRC
         col_cod = 'codigo'
         col_desc = 'descripcion'
         col_stock = 'stock'
@@ -3424,17 +3465,13 @@ elif menu == "🛒 Registrar Compra (CPP)":
             # --- CARGA DE PROVEEDORES DIRECTO DESDE LA NUBE (SUPABASE) ---
             lista_proveedores = ["Proveedor General"]
             try:
-                # 1. Cargar todos los proveedores sin filtro rígido de columna
                 res_prov_nube = supabase.table("proveedores").select("*").execute()
                 
                 if res_prov_nube.data:
                     tenant_clean = str(rut_actual).strip().lower() if 'rut_actual' in locals() and rut_actual else ""
                     
                     for p in res_prov_nube.data:
-                        # Obtener negocio asociado
                         emp_p = str(p.get("id_negocio") or p.get("rut_empresa") or p.get("rut") or "").strip().lower()
-                        
-                        # Incluir si coincide con la empresa actual o si el proveedor no tiene empresa fija
                         if not emp_p or not tenant_clean or emp_p == tenant_clean:
                             nom_p = (
                                 p.get("nombre") or 
@@ -3450,7 +3487,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
             except Exception as e:
                 print(f"Error cargando proveedores desde Supabase en GRC: {e}")
 
-            # 🚨 CARGAR BODEGAS DESDE SUPABASE PARA LA GRC
+            # BODEGAS DESDE SUPABASE
             bodegas_grc_opc = ["Bodega Principal"]
             try:
                 res_bod_grc = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_actual).execute()
@@ -3462,7 +3499,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
             except Exception:
                 pass
 
-            # 🚨 CARGAR INGREDIENTES ADEMÁS DE PRODUCTOS PARA EL BUSCADOR DE GRC
+            # BUSCADOR UNIFICADO DE INGREDIENTES Y PRODUCTOS
             opciones_items_grc = []
             try:
                 res_ing_grc = supabase.table("ingredientes").select("codigo, descripcion").eq("rut_empresa", rut_actual).execute()
@@ -3479,21 +3516,27 @@ elif menu == "🛒 Registrar Compra (CPP)":
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             with col_f1:
                 proveedor_factura = st.selectbox("Nombre del Proveedor", options=lista_proveedores)
-                num_factura = st.text_input("Número de Factura / Folio GRC")
+                tipo_documento = st.selectbox(
+                    "Tipo de Documento Tributario", 
+                    ["Factura Electrónica (Afecta)", "Guía de Despacho", "Boleta de Compra", "Sin Documento / Exento"]
+                )
             with col_f2:
+                num_factura = st.text_input("Número de Documento / Folio GRC", value="FAC-001")
                 fecha_compra = st.date_input("Fecha de Recepción GRC", value=date.today())
-                condicion_pago = st.selectbox("Condición de Pago", ["Contado", "Crédito", "Cheque"])
             with col_f3:
                 bodega_destino_grc = st.selectbox("🏢 Bodega de Destino:", options=bodegas_grc_opc)
+                condicion_pago = st.selectbox("Condición de Pago", ["Contado", "Crédito", "Cheque"])
             with col_f4:
                 col_imp_esp = next((c for c in df_base.columns if 'impuesto' in str(c).lower() or 'específico' in str(c).lower() or ' ila ' in str(c).lower() or 'iaba' in str(c).lower()), None)
                 st.write("")
-                st.write(f"🔍 Columna de Impuestos: **{'Detectada' if col_imp_esp else 'No detectada'}**")
+                st.write(f"🔍 Impuestos Esp.: **{'Detectados' if col_imp_esp else 'No detectados'}**")
+
+            # Determinar si genera Crédito Fiscal (IVA 19%)
+            es_factura_afecta = (tipo_documento == "Factura Electrónica (Afecta)")
 
             fecha_vencimiento_pago = fecha_compra
             num_serie_cheque = ""
             banco_cheque = ""
-            estado_inicial = "Pagado" if condicion_pago == "Contado" else "Pendiente"
 
             if condicion_pago == "Crédito":
                 fecha_vencimiento_pago = st.date_input("Fecha de Vencimiento del Crédito", value=date.today())
@@ -3501,17 +3544,16 @@ elif menu == "🛒 Registrar Compra (CPP)":
                 col_ch1, col_ch2 = st.columns(2)
                 with col_ch1:
                     fecha_vencimiento_pago = st.date_input("Fecha de Cobro del Cheque", value=date.today())
-                    num_serie_cheque = st.text_input("Número de Serie del Cheque")
+                    num_serie_cheque = st.text_input("N° Serie Cheque")
                 with col_ch2:
                     banco_cheque = st.text_input("Banco Emisor")
 
             st.divider()
-            st.markdown("#### 🔍 Agregar Productos o Insumos de la GRC")
+            st.markdown("#### 🔍 Agregar Productos o Insumos a la GRC")
 
             if 'carrito_factura_compras' not in st.session_state:
                 st.session_state.carrito_factura_compras = []
 
-            prod_seleccionado_item = None
             if not opciones_items_grc:
                 opciones_items_grc = ["-- No hay productos ni insumos registrados --"]
 
@@ -3519,9 +3561,9 @@ elif menu == "🛒 Registrar Compra (CPP)":
 
             col_item1, col_item2, col_item3 = st.columns(3)
             with col_item1:
-                cant_item = st.number_input("Cantidad", min_value=1.0, step=1.0, value=1.0, key="cant_grc")
+                cant_item = st.number_input("Cantidad Recibida", min_value=0.01, step=1.0, value=1.0, key="cant_grc")
             with col_item2:
-                neto_unit_item = st.number_input("Valor Neto Unitario ($)", min_value=0.0, step=1.0, value=0.0, key="neto_grc")
+                neto_unit_item = st.number_input("Valor Neto Unitario ($)", min_value=0.0, step=100.0, value=0.0, key="neto_grc")
             with col_item3:
                 maneja_lote = st.selectbox("¿Maneja Lote y Vencimiento?", ["No", "Sí"], key="lote_grc")
 
@@ -3529,7 +3571,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
             venc_item = str(date.today())
 
             if maneja_lote == "Sí":
-                st.markdown("📌 **Ingrese los datos reales del lote:**")
+                st.markdown("📌 **Ingrese los datos del lote:**")
                 col_l1, col_l2 = st.columns(2)
                 with col_l1:
                     lote_item = st.text_input("N° Lote", value="LOTE-001", key="num_lote_grc")
@@ -3545,7 +3587,6 @@ elif menu == "🛒 Registrar Compra (CPP)":
                 elif maneja_lote == "Sí" and not lote_item:
                     st.warning("⚠️ Debes ingresar el número de lote.")
                 else:
-                    # Detectar si es insumo o producto
                     es_insumo_linea = "[Insumo]" in prod_seleccionado_item
                     limpio_str = prod_seleccionado_item.replace("📦 [Producto] ", "").replace("🍅 [Insumo] ", "")
                     codigo_p = limpio_str.split(" - ")[0]
@@ -3562,13 +3603,15 @@ elif menu == "🛒 Registrar Compra (CPP)":
                             porcentaje_ila = float(numeros[0])
 
                     subtotal_neto = cant_item * neto_unit_item
-                    monto_iva = subtotal_neto * 0.19
+                    monto_iva = subtotal_neto * 0.19 if es_factura_afecta else 0.0
                     monto_ila = subtotal_neto * (porcentaje_ila / 100.0)
                     costo_total_linea = subtotal_neto + monto_iva + monto_ila
                     costo_unitario_final = costo_total_linea / cant_item
 
                     st.session_state.carrito_factura_compras.append({
                         "TipoDoc": "GRC",
+                        "TipoDocumentoTributario": tipo_documento,
+                        "EsFacturaAfecta": es_factura_afecta,
                         "EsInsumo": es_insumo_linea,
                         "Código": codigo_p,
                         "Descripción": descripcion_p,
@@ -3584,7 +3627,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
                         "FechaVencimiento": venc_item if maneja_lote == "Sí" else "N/A",
                         "BodegaDestino": bodega_destino_grc
                     })
-                    st.success(f"✅ ¡Línea agregada a la GRC!")
+                    st.success(f"✅ ¡Línea agregada! [{tipo_documento}]")
                     st.rerun()
 
             if st.session_state.carrito_factura_compras:
@@ -3595,14 +3638,24 @@ elif menu == "🛒 Registrar Compra (CPP)":
                         etiqueta_tipo = "🍅 [Insumo]" if item.get("EsInsumo") else "📦 [Producto]"
                         c_col1, c_col2 = st.columns([8, 1])
                         with c_col1:
-                            st.info(f"{etiqueta_tipo} **{item['Cantidad']}x** {item['Descripción']} | Bodega: {item.get('BodegaDestino', 'Bodega Principal')} | Neto: ${item['NetoUnitario']:,.0f} | **Costo Unit. c/Imp: ${item['CostoUnitarioFinal']:,.0f}** | Total: ${item['CostoTotal']:,.0f}")
+                            st.info(f"{etiqueta_tipo} **{item['Cantidad']}x** {item['Descripción']} | Bodega: {item.get('BodegaDestino', 'Bodega Principal')} | Neto: ${item['SubtotalNeto']:,.0f} | IVA: ${item['IVA']:,.0f} | Total: ${item['CostoTotal']:,.0f}")
                         with c_col2:
                             if st.button("❌", key=f"del_linea_grc_{idx_c}", help="Eliminar esta línea"):
                                 st.session_state.carrito_factura_compras.pop(idx_c)
                                 st.rerun()
 
+                # DESGLOSE DE TOTALES EN METRICAS PARA CONTROL F29
+                neto_total_grc = sum(item["SubtotalNeto"] for item in st.session_state.carrito_factura_compras if item.get("TipoDoc", "GRC") == "GRC")
+                iva_total_grc = sum(item["IVA"] for item in st.session_state.carrito_factura_compras if item.get("TipoDoc", "GRC") == "GRC")
                 monto_total_factura_general = sum(item["CostoTotal"] for item in st.session_state.carrito_factura_compras if item.get("TipoDoc", "GRC") == "GRC")
-                st.markdown(f"### 💰 **Monto Total GRC (con Impuestos): ${monto_total_factura_general:,.2f}**")
+
+                col_m1, col_m2, col_m3 = st.columns(3)
+                with col_m1:
+                    st.metric("Neto Total", f"${neto_total_grc:,.0f}")
+                with col_m2:
+                    st.metric("IVA Crédito Fiscal (19%)", f"${iva_total_grc:,.0f}", delta="A Favor (F29)" if iva_total_grc > 0 else "Sin Crédito IVA", delta_color="normal" if iva_total_grc > 0 else "off")
+                with col_m3:
+                    st.metric("Total General", f"${monto_total_factura_general:,.0f}")
 
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
@@ -3612,89 +3665,92 @@ elif menu == "🛒 Registrar Compra (CPP)":
                 with col_b2:
                     if st.button("💾 Procesar GRC Completa y Actualizar Stock/Finanzas", type="primary", key="btn_procesar_grc"):
                         if not num_factura:
-                            st.warning("⚠️ Ingresa el Número de Factura o Folio GRC antes de procesar.")
+                            st.warning("⚠️ Ingresa el Número de Documento o Folio GRC antes de procesar.")
                         else:
                             prov_final = proveedor_factura if proveedor_factura else "Proveedor General"
-                            try:
-                                archivo_prov_reg = os.path.join(ruta_negocio, "Maestro_Proveedores.xlsx") if 'ruta_negocio' in globals() else "Maestro_Proveedores.xlsx"
-                                if os.path.exists(archivo_prov_reg):
-                                    df_pr_g = pd.read_excel(archivo_prov_reg)
-                                    if prov_final not in df_pr_g['Nombre_Proveedor'].values:
-                                        nuevo_p_df = pd.DataFrame([{'Nombre_Proveedor': prov_final, 'Rut': '', 'Contacto': '', 'Telefono': '', 'Email': ''}])
-                                        pd.concat([df_pr_g, nuevo_p_df], ignore_index=True).to_excel(archivo_prov_reg, index=False)
-                                else:
-                                    pd.DataFrame([{'Nombre_Proveedor': prov_final, 'Rut': '', 'Contacto': '', 'Telefono': '', 'Email': ''}]).to_excel(archivo_prov_reg, index=False)
-                            except Exception:
-                                pass
-
+                            
                             procesados = 0
                             lineas_detalle_grc = ""
                             for item in st.session_state.carrito_factura_compras:
                                 if item.get("TipoDoc", "GRC") == "GRC":
                                     tipo_etiqueta = "Insumo" if item.get("EsInsumo") else "Producto"
-                                    lineas_detalle_grc += f"- [{tipo_etiqueta}] {item['Descripción']} (x{item['Cantidad']}) | Costo Unit: ${item['CostoUnitarioFinal']:,.2f} | Subtotal: ${item['CostoTotal']:,.2f} | Bodega: {item.get('BodegaDestino', 'Bodega Principal')}\n"
+                                    lineas_detalle_grc += f"- [{tipo_etiqueta}] {item['Descripción']} (x{item['Cantidad']}) | Neto: ${item['SubtotalNeto']:,.2f} | IVA: ${item['IVA']:,.2f} | Total: ${item['CostoTotal']:,.2f} | Bodega: {item.get('BodegaDestino', 'Bodega Principal')}\n"
                                     
-                                    # 1. Registro directo en la tabla 'compras' de Supabase con aislamiento por negocio
+                                    # 1. Registro directo en la tabla 'compras' de Supabase con bandera tributaria 'es_afecto'
                                     nuevo_reg_compra_nube = {
                                         "fecha_hora": datetime.now().isoformat(),
+                                        "fecha_emision": str(fecha_compra),
                                         "tipo_recepcion": "GRC",
+                                        "tipo_documento": str(item.get("TipoDocumentoTributario", tipo_documento)),
+                                        "es_afecto": bool(item.get("EsFacturaAfecta", es_factura_afecta)),
                                         "proveedor": str(prov_final),
                                         "factura": str(num_factura),
                                         "codigo": str(item["Código"]),
                                         "descripcion": f"[{tipo_etiqueta}] {str(item['Descripción'])}",
                                         "cantidad": float(item["Cantidad"]),
                                         "neto_unitario": float(item["NetoUnitario"]),
+                                        "monto_neto": float(item["SubtotalNeto"]),
+                                        "monto_iva": float(item["IVA"]),
                                         "costo_total": float(item["CostoTotal"]),
                                         "lote": str(item["Lote"]),
                                         "fecha_vencimiento_lote": str(item["FechaVencimiento"]),
                                         "condicion_pago": str(condicion_pago),
-                                        "id_negocio": str(rut_actual).strip()
+                                        "id_negocio": str(rut_actual).strip(),
+                                        "rut_empresa": str(rut_actual).strip()
                                     }
                                     
                                     try:
                                         supabase.table("compras").insert(nuevo_reg_compra_nube).execute()
                                     except Exception as e:
-                                        print(f"⚠️ Error guardando compra en Supabase: {e}")
+                                        # Fallback si faltan columnas en la tabla Supabase
+                                        reg_simple = {
+                                            "fecha_hora": datetime.now().isoformat(),
+                                            "tipo_recepcion": "GRC",
+                                            "proveedor": str(prov_final),
+                                            "factura": str(num_factura),
+                                            "codigo": str(item["Código"]),
+                                            "descripcion": f"[{tipo_etiqueta}] {str(item['Descripción'])}",
+                                            "cantidad": float(item["Cantidad"]),
+                                            "neto_unitario": float(item["NetoUnitario"]),
+                                            "costo_total": float(item["CostoTotal"]),
+                                            "id_negocio": str(rut_actual).strip()
+                                        }
+                                        supabase.table("compras").insert(reg_simple).execute()
 
-                                    # 2. Actualizar Stock según sea Producto o Insumo en la bodega destino elegida
+                                    # 2. Actualizar Stock y Recalcular CPP en Supabase
                                     bodega_linea = item.get("BodegaDestino", "Bodega Principal")
-                                    if item.get("EsInsumo"):
-                                        try:
-                                            res_stk_ing = supabase.table("ingredientes").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
-                                            if res_stk_ing.data:
-                                                stk_actual_ing = float(res_stk_ing.data[0]["stock"] or 0.0)
-                                                nuevo_stk_ing = stk_actual_ing + float(item["Cantidad"])
-                                                supabase.table("ingredientes").update({"stock": nuevo_stk_ing}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
-                                            else:
-                                                # Si no existe en esa bodega, buscamos el maestro base para copiarlo
-                                                res_ing_gen = supabase.table("ingredientes").select("*").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).limit(1).execute()
-                                                if res_ing_gen.data:
-                                                    ing_nuevo = res_ing_gen.data[0].copy()
-                                                    if 'id' in ing_nuevo: del ing_nuevo['id']
-                                                    ing_nuevo['bodega'] = bodega_linea
-                                                    ing_nuevo['stock'] = float(item["Cantidad"])
-                                                    supabase.table("ingredientes").insert(ing_nuevo).execute()
-                                        except Exception as e:
-                                            print(f"⚠️ Error actualizando stock de ingrediente en Supabase: {e}")
-                                    else:
-                                        try:
-                                            res_stk = supabase.table("productos").select("stock").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
-                                            if res_stk.data:
-                                                stk_actual = float(res_stk.data[0]["stock"] or 0.0)
-                                                nuevo_stk = stk_actual + float(item["Cantidad"])
-                                                supabase.table("productos").update({"stock": nuevo_stk}).eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
-                                            else:
-                                                res_general = supabase.table("productos").select("*").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).limit(1).execute()
-                                                if res_general.data:
-                                                    prod_nuevo = res_general.data[0].copy()
-                                                    if 'id' in prod_nuevo: del prod_nuevo['id']
-                                                    prod_nuevo['bodega'] = bodega_linea
-                                                    prod_nuevo['stock'] = float(item["Cantidad"])
-                                                    supabase.table("productos").insert(prod_nuevo).execute()
-                                        except Exception as e:
-                                            print(f"⚠️ Error actualizando stock en Supabase: {e}")
+                                    tabla_inv = "ingredientes" if item.get("EsInsumo") else "productos"
+                                    cant_compra = float(item["Cantidad"])
+                                    costo_compra = float(item["NetoUnitario"])
 
-                                    # 3. Registrar el lote directamente en la tabla 'lotes' de Supabase (si aplica)
+                                    try:
+                                        res_stk = supabase.table(tabla_inv).select("*").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).eq("bodega", bodega_linea).execute()
+                                        if res_stk.data:
+                                            reg_inv = res_stk.data[0]
+                                            stk_actual = float(reg_inv.get("stock") or 0.0)
+                                            costo_actual = float(reg_inv.get("costo") or 0.0)
+                                            
+                                            # Recálculo Costo Promedio Ponderado (CPP)
+                                            nuevo_cpp = ((stk_actual * costo_actual) + (cant_compra * costo_compra)) / (stk_actual + cant_compra) if (stk_actual + cant_compra) > 0 else costo_compra
+                                            nuevo_stk = stk_actual + cant_compra
+
+                                            supabase.table(tabla_inv).update({
+                                                "stock": nuevo_stk,
+                                                "costo": round(nuevo_cpp, 2)
+                                            }).eq("id", reg_inv["id"]).execute()
+                                        else:
+                                            res_gen = supabase.table(tabla_inv).select("*").eq("rut_empresa", rut_actual).eq("codigo", str(item["Código"])).limit(1).execute()
+                                            if res_gen.data:
+                                                prod_nuevo = res_gen.data[0].copy()
+                                                prod_nuevo.pop('id', None)
+                                                prod_nuevo['bodega'] = bodega_linea
+                                                prod_nuevo['stock'] = cant_compra
+                                                prod_nuevo['costo'] = costo_compra
+                                                supabase.table(tabla_inv).insert(prod_nuevo).execute()
+                                    except Exception as e:
+                                        print(f"⚠️ Error actualizando stock/CPP en {tabla_inv}: {e}")
+
+                                    # 3. Registrar Lote en Supabase
                                     if item.get("ManejaLote") == "Sí" and item.get("Lote") and item.get("Lote") != "N/A":
                                         nuevo_reg_lote_nube = {
                                             "codigo": str(item["Código"]),
@@ -3712,356 +3768,28 @@ elif menu == "🛒 Registrar Compra (CPP)":
 
                                     procesados += 1
 
-                            archivo_gastos = os.path.join(ruta_negocio, "Registro_Gastos.xlsx") if 'ruta_negocio' in globals() else "Registro_Gastos.xlsx"
-                            nuevo_gasto = pd.DataFrame([{
-                                'Fecha_Hora': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                'Descripcion_Gasto': f"GRC Factura/Folio #{num_factura} - {prov_final}",
-                                'Categoria': 'Mercadería',
-                                'Metodo_Pago': condicion_pago,
-                                'Documento': f"GRC {num_factura}",
-                                'Monto': monto_total_factura_general
-                            }])
-                            if os.path.exists(archivo_gastos):
-                                df_gastos_ant = pd.read_excel(archivo_gastos)
-                                pd.concat([df_gastos_ant, nuevo_gasto], ignore_index=True).to_excel(archivo_gastos, index=False)
-                            else:
-                                nuevo_gasto.to_excel(archivo_gastos, index=False)
-
+                            # Cuentas Por Pagar
                             if condicion_pago in ["Crédito", "Cheque"]:
-                                archivo_cuentas = os.path.join(ruta_negocio, "Cuentas_Por_Pagar.xlsx") if 'ruta_negocio' in globals() else "Cuentas_Por_Pagar.xlsx"
-                                nueva_cuenta = pd.DataFrame([{
-                                    'Proveedor': prov_final,
-                                    'Numero_Factura': num_factura,
-                                    'Fecha_Emision': str(fecha_compra),
-                                    'Fecha_Vencimiento': str(fecha_vencimiento_pago),
-                                    'Monto_Total': monto_total_factura_general,
-                                    'Estado': 'PENDIENTE'
-                                }])
-                                if os.path.exists(archivo_cuentas):
-                                    df_cuentas_ant = pd.read_excel(archivo_cuentas)
-                                    pd.concat([df_cuentas_ant, nueva_cuenta], ignore_index=True).to_excel(archivo_cuentas, index=False)
-                                else:
-                                    nueva_cuenta.to_excel(archivo_cuentas, index=False)
-
-                            # 🗂️ ARCHIVADOR AUTOMÁTICO GRC (Subdirectorio)
-                            try:
-                                dir_arch_grc = os.path.join(ruta_negocio, "archivador_compras", "grc")
-                                os.makedirs(dir_arch_grc, exist_ok=True)
-                                doc_grc_txt = f"""========================================
- GUÍA DE RECEPCIÓN DE COMPRA (GRC)
-========================================
-FOLIO / FACTURA: {num_factura}
-PROVEEDOR: {prov_final}
-FECHA: {fecha_compra}
-CONDICIÓN PAGO: {condicion_pago}
-----------------------------------------
-DETALLE:
-{lineas_detalle_grc}----------------------------------------
-TOTAL GRC: ${monto_total_factura_general:,.2f}
-========================================"""
-                                ruta_doc_grc = os.path.join(dir_arch_grc, f"GRC_{num_factura}.txt")
-                                with open(ruta_doc_grc, "w", encoding="utf-8") as f_grc:
-                                    f_grc.write(doc_grc_txt)
-                            except Exception as e:
-                                print(f"Error archivando GRC: {e}")
+                                reg_cpp_sb = {
+                                    "rut_empresa": str(rut_actual).strip(),
+                                    "id_negocio": str(rut_actual).strip(),
+                                    "proveedor": str(prov_final),
+                                    "numero_factura": str(num_factura),
+                                    "fecha_emision": str(fecha_compra),
+                                    "fecha_vencimiento": str(fecha_vencimiento_pago),
+                                    "monto_neto": float(neto_total_grc),
+                                    "monto_iva": float(iva_total_grc),
+                                    "monto_total": float(monto_total_factura_general),
+                                    "estado": "PENDIENTE"
+                                }
+                                try:
+                                    supabase.table("cuentas_por_pagar").insert(reg_cpp_sb).execute()
+                                except Exception as e_cpp:
+                                    print(f"Aviso en cuentas_por_pagar: {e_cpp}")
 
                             st.session_state.carrito_factura_compras = [i for i in st.session_state.carrito_factura_compras if i.get("TipoDoc") != "GRC"]
-                            st.success(f"✅ ¡GRC #{num_factura} procesada con éxito! Inventario (productos/insumos), lotes y finanzas actualizados.")
+                            st.success(f"✅ ¡GRC #{num_factura} ({tipo_documento}) procesada con éxito! IVA Crédito Fiscal: ${iva_total_grc:,.0f}.")
                             st.rerun()
-
-        # --- 2. REGISTRO GRI (Guía de Recepción Interna - Ajustes / Producción / Hallazgos) ---
-        elif accion_producto == "🔄 Recepción Interna / GRI (Ajustes / Producción)":
-            st.markdown("### 🔄 Generar Guía de Recepción Interna (GRI)")
-            st.info("ℹ️ Use este módulo para ingresos de inventario generados internamente (devoluciones, producción propia, hallazgos o ajustes positivos de bodega).")
-
-            # Identificador único de la empresa en Supabase
-            func_tenant = globals().get("get_current_tenant")
-            if callable(func_tenant):
-                tenant_id = func_tenant()
-            else:
-                tenant_id = st.session_state.get("rut_empresa") or st.session_state.get("empresa_activa") or st.session_state.get("negocio")
-            
-            rut_actual = str(tenant_id) if tenant_id else ""
-
-            # Cargar lista de bodegas desde Supabase
-            opciones_bodegas = ["Bodega Principal"]
-            try:
-                res_bodegas = supabase.table("bodegas").select("nombre").eq("id_negocio", rut_actual).execute()
-                if res_bodegas.data:
-                    bodegas_db = [b.get("nombre") for b in res_bodegas.data if b.get("nombre")]
-                    if bodegas_db:
-                        opciones_bodegas = bodegas_db
-            except Exception:
-                pass
-
-            with st.form("form_gri_interno"):
-                col_g1, col_g2 = st.columns(2)
-                with col_g1:
-                    folio_gri = st.text_input("N° Folio GRI interno (ej. GRI-2026-001)")
-                    motivo_gri = st.selectbox("Motivo del Ingreso Interno", ["Producción Propia", "Hallazgo de Inventario / Conteo", "Devolución de Cliente", "Ajuste Positivo de Bodega", "Otro"])
-                    bodega_destino = st.selectbox("Bodega de Destino / Recepción", options=opciones_bodegas)
-                with col_g2:
-                    fecha_gri = st.date_input("Fecha de Recepción Interna", value=date.today())
-                    responsable_gri = st.text_input("Responsable / Autorizado por")
-
-                st.markdown("#### 📦 Seleccionar Producto y Cantidad")
-                opciones_prod_gri = ["-- Selecciona un producto --"] + [f"{row[col_cod]} - {row[col_desc]}" for idx, row in df_base.iterrows()]
-                prod_gri_sel = st.selectbox("Producto a Ingresar Internamente", options=opciones_prod_gri)
-                
-                col_q1, col_q2 = st.columns(2)
-                with col_q1:
-                    cant_gri = st.number_input("Cantidad a Ingresar", min_value=1.0, step=1.0, value=1.0)
-                with col_q2:
-                    costo_estimado_gri = st.number_input("Costo Unitario de Referencia ($)", min_value=0.0, step=1.0, value=0.0)
-
-                maneja_lote_gri = st.selectbox("¿Asignar Lote a este ingreso interno?", ["No", "Sí"])
-                lote_gri = "GRI-LOTE"
-                venc_gri = str(date.today())
-
-                if maneja_lote_gri == "Sí":
-                    col_lg1, col_lg2 = st.columns(2)
-                    with col_lg1:
-                        lote_gri = st.text_input("N° Lote Interno", value="LOTE-INT-01")
-                    with col_lg2:
-                        venc_gri_date = st.date_input("Fecha de Vencimiento Lote Interno", value=date.today())
-                        venc_gri = str(venc_gri_date)
-
-                btn_procesar_gri = st.form_submit_button("💾 Emitir GRI y Actualizar Inventario", type="primary")
-
-                if btn_procesar_gri:
-                    if not folio_gri:
-                        st.warning("⚠️ Debes ingresar un número de folio para la GRI.")
-                    elif prod_gri_sel == "-- Selecciona un producto --":
-                        st.warning("⚠️ Selecciona un producto válido.")
-                    elif cant_gri <= 0:
-                        st.warning("⚠️ La cantidad debe ser mayor a 0.")
-                    else:
-                        codigo_gri = prod_gri_sel.split(" - ")[0].strip()
-                        desc_gri = prod_gri_sel.split(" - ")[1].strip()
-                        
-                        try:
-                            # 1. ACTUALIZAR STOCK EN TABLA 'productos'
-                            res_prod = supabase.table("productos").select("stock").eq("codigo", str(codigo_gri)).execute()
-                            
-                            if res_prod.data:
-                                stock_actual_sb = float(res_prod.data[0].get("stock") or 0.0)
-                                nuevo_stock_sb = stock_actual_sb + float(cant_gri)
-                                supabase.table("productos").update({"stock": nuevo_stock_sb}).eq("codigo", str(codigo_gri)).execute()
-
-                            # 2. REGISTRAR LOTE EN TABLA 'lotes' CON LA BODEGA CORRESPONDIENTE
-                            if maneja_lote_gri == "Sí":
-                                try:
-                                    datos_lote = {
-                                        "id_negocio": rut_actual,
-                                        "codigo": str(codigo_gri),
-                                        "descripcion": desc_gri,
-                                        "lote": lote_gri,
-                                        "cantidad_disponible": float(cant_gri),
-                                        "fecha_vencimiento": str(venc_gri),
-                                        "costo_unitario": float(costo_estimado_gri)
-                                    }
-                                    try:
-                                        datos_lote["bodega"] = bodega_destino
-                                        supabase.table("lotes").insert([datos_lote]).execute()
-                                    except Exception:
-                                        datos_lote.pop("bodega", None)
-                                        supabase.table("lotes").insert([datos_lote]).execute()
-                                except Exception as e_lote:
-                                    print(f"Advertencia al registrar lote: {e_lote}")
-
-                            # 3. REGISTRAR HISTORIAL EN TABLA 'compras'
-                            datos_compra = {
-                                "fecha_hora": datetime.now().isoformat(),
-                                "tipo_recepcion": "GRI",
-                                "proveedor": f"INTERNO ({motivo_gri})",
-                                "factura": str(folio_gri),
-                                "codigo": str(codigo_gri),
-                                "descripcion": desc_gri,
-                                "cantidad": float(cant_gri),
-                                "neto_unitario": float(costo_estimado_gri),
-                                "costo_total": float(cant_gri * costo_estimado_gri),
-                                "lote": lote_gri if maneja_lote_gri == "Sí" else "",
-                                "fecha_vencimiento_lote": str(venc_gri) if maneja_lote_gri == "Sí" else "",
-                                "condicion_pago": "Interno",
-                                "id_negocio": rut_actual,
-                                "usuario": responsable_gri
-                            }
-                            
-                            try:
-                                datos_compra["bodega"] = bodega_destino
-                                supabase.table("compras").insert([datos_compra]).execute()
-                            except Exception:
-                                datos_compra.pop("bodega", None)
-                                supabase.table("compras").insert([datos_compra]).execute()
-
-                            st.success(f"✅ ¡GRI #{folio_gri} guardada en la bodega '{bodega_destino}' y stock actualizado!")
-                            st.rerun()
-
-                        except Exception as e:
-                            st.error(f"❌ Error al comunicar la GRI con Supabase: {e}")
-                            
-        # --- 3. CREAR PRODUCTO NUEVO (MÓDULO DE COMPRAS) ---
-        elif accion_producto == "➕ Crear Producto Nuevo":
-            st.markdown("### 🆕 Ingresar Nuevo Producto a la Base de Datos")
-            
-            # 1. Rescatar bodegas existentes para Compras
-            bodegas_existentes = ["Bodega Principal"]
-            try:
-                res_bod = supabase.table("productos").select("bodega").eq("rut_empresa", rut_actual).execute()
-                if res_bod.data:
-                    for row in res_bod.data:
-                        b = row.get("bodega")
-                        if b and b not in bodegas_existentes:
-                            bodegas_existentes.append(b)
-            except Exception:
-                pass
-            bodegas_existentes.append("➕ Crear Nueva Bodega / Sucursal...")
-
-            codigo_scanned_nuevo = st.text_input("📷 Digita o ingresa el código del producto nuevo:", key="scan_nuevo_prod")
-        
-            with st.form("form_crear_producto_compras", clear_on_submit=True):
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    codigo = st.text_input("Código del Producto (EAN o Interno) *", value=codigo_scanned_nuevo if codigo_scanned_nuevo else "")
-                    dun14 = st.text_input("DUN14 (Opcional)", placeholder="Código de caja")
-                    descripcion = st.text_input("Descripción / Nombre del Producto *", placeholder="Ej: BEBIDA ORANGE CRUSH PET300")
-                    categoria = st.selectbox("Categoría", ["Ninguna", "BEBIDAS", "ABARROTES", "SNACKS", "OTROS"])
-                    
-                with col2:
-                    # 🚨 SELECTOR DE BODEGA EN COMPRAS
-                    bodega_seleccionada = st.selectbox("🏢 Asignar a Bodega / Sucursal:", bodegas_existentes)
-                    nueva_bodega = ""
-                    if bodega_seleccionada == "➕ Crear Nueva Bodega / Sucursal...":
-                        nueva_bodega = st.text_input("✍️ Escribe el nombre de la nueva Bodega:")
-                        
-                    costo = st.number_input("Costo de Compra Neto ($)", min_value=0.0, step=100.0)
-                    stock = st.number_input("Stock Inicial", min_value=0.0, step=1.0)
-                    impuesto_especifico = st.selectbox("Impuesto Específico", ["Ninguno", "IABA 10", "IABA 18", "ILA", "ILA 31.5"])
-                    
-                st.markdown("##### 💡 Configuración Tributaria (Ingresa el Neto o el Bruto)")
-                nombre_empresa_act = str(st.session_state.get("nombre_empresa", "")).upper()
-                tasa_defecto = 22.0 if "URUGUAY" in nombre_empresa_act or str(rut_actual) == "219449970012" else 19.0
-                
-                col_p1, col_p2 = st.columns(2)
-                with col_p1:
-                    precio_neto = st.number_input("Precio Neto ($)", min_value=0.0, step=100.0)
-                    porcentaje_iva = st.number_input("% de IVA", min_value=0.0, value=tasa_defecto, step=1.0)
-                with col_p2:
-                    precio_venta = st.number_input("Precio Bruto/Final ($) *", min_value=0.0, step=100.0)
-                    es_exento = st.selectbox("¿Es Exento de IVA?", ["No", "Si"])
-                    
-                st.markdown("---")
-                col_disp, col_act = st.columns(2)
-                with col_disp:
-                    disponible_venta = st.selectbox("¿Disponible para Venta?", ["Si", "No"])
-                with col_act:
-                    activo = st.selectbox("¿Activo en el sistema?", ["Si", "No"])
-            
-                btn_crear_prod = st.form_submit_button("💾 Agregar Producto a la Base de Datos")
-
-                if btn_crear_prod:
-                    bodega_final = nueva_bodega.strip() if bodega_seleccionada == "➕ Crear Nueva Bodega / Sucursal..." else bodega_seleccionada
-                    
-                    if codigo == "" or descripcion == "" or (precio_venta <= 0 and precio_neto <= 0):
-                        st.warning("⚠️ Por favor, completa Código, Descripción y un Precio (Neto o Bruto mayor a 0).")
-                    elif not bodega_final:
-                        st.warning("⚠️ Debes asignar un nombre a la bodega.")
-                    else:
-                        iva_final = float(porcentaje_iva)
-                        if es_exento == "Si":
-                            iva_final = 0.0
-                            
-                        p_neto_calc = float(precio_neto)
-                        p_bruto_calc = float(precio_venta)
-                        
-                        if p_bruto_calc > 0 and p_neto_calc == 0:
-                            p_neto_calc = p_bruto_calc / (1.0 + (iva_final / 100.0))
-                        elif p_neto_calc > 0:
-                            p_bruto_calc = p_neto_calc * (1.0 + (iva_final / 100.0))
-
-                        nuevo_producto = {
-                            "rut_empresa": rut_actual,
-                            "codigo": codigo.strip(),
-                            "bodega": bodega_final,
-                            "dun14": dun14 if dun14 else None,
-                            "descripcion": descripcion.strip(),
-                            "categoria": categoria if categoria != "Ninguna" else None,
-                            "costo": costo,
-                            "precio_neto": round(p_neto_calc, 2),
-                            "porcentaje_iva": round(iva_final, 2),
-                            "precio_venta": round(p_bruto_calc, 2),
-                            "stock": stock,
-                            "es_exento": es_exento,
-                            "impuesto_especifico": impuesto_especifico if impuesto_especifico != "Ninguno" else None,
-                            "disponible_venta": disponible_venta,
-                            "activo": activo
-                        }
-                        
-                        try:
-                            # 🚨 CHECK MULTI-BODEGA (Actualiza o Crea)
-                            res_check = supabase.table("productos").select("id").eq("rut_empresa", rut_actual).eq("codigo", codigo.strip()).eq("bodega", bodega_final).execute()
-                            if res_check.data:
-                                supabase.table("productos").update(nuevo_producto).eq("id", res_check.data[0]["id"]).execute()
-                                st.success(f"✅ Producto actualizado en '{bodega_final}'.")
-                            else:
-                                supabase.table("productos").insert(nuevo_producto).execute()
-                                st.success(f"✅ ¡Producto '{descripcion}' guardado con éxito en '{bodega_final}'!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error al guardar en la nube: {e}")
-
-        # --- 4. EDITAR PRODUCTO EXISTENTE ---
-        elif accion_producto == "✏️ Editar Producto Existente":
-            st.markdown("### ✏️ Modificar datos de un Producto Existente")
-            # Cargamos las opciones directamente desde el DataFrame que ya bajamos de la nube
-            opciones_editar = ["-- Selecciona producto a editar --"] + [f"{row[col_cod]} - {row[col_desc]}" for idx, row in df_base.iterrows()]
-        
-            with st.form("form_editar_producto_compras"):
-                st.info("💡 Deja en 0 o en blanco los campos que NO deseas modificar.")
-                prod_a_editar = st.selectbox("Selecciona Producto", options=opciones_editar)
-                nuevo_nombre = st.text_input("Nueva Descripción / Nombre")
-                
-                col_e1, col_e2 = st.columns(2)
-                with col_e1:
-                    nuevo_precio_neto = st.number_input("Modificar Precio Neto ($)", min_value=0.0, step=100.0, value=0.0)
-                    nuevo_iva = st.number_input("Modificar % IVA (Ingresa -1 para omitir)", min_value=-1.0, step=1.0, value=-1.0)
-                    nuevo_costo = st.number_input("Modificar Costo Neto ($)", min_value=0.0, step=100.0, value=0.0)
-                with col_e2:
-                    nuevo_precio_bruto = st.number_input("Modificar Precio Bruto ($)", min_value=0.0, step=100.0, value=0.0)
-                    nuevo_stock = st.number_input("Reemplazar Stock Actual", min_value=0.0, step=1.0, value=0.0)
-                
-                btn_editar_prod = st.form_submit_button("💾 Guardar Cambios en la Nube")
-
-                if btn_editar_prod:
-                    if prod_a_editar != "-- Selecciona producto a editar --":
-                        cod_editar = prod_a_editar.split(" - ")[0]
-                        
-                        datos_a_actualizar = {}
-                        if nuevo_nombre.strip() != "":
-                            datos_a_actualizar["descripcion"] = nuevo_nombre.strip()
-                        if nuevo_precio_neto > 0:
-                            datos_a_actualizar["precio_neto"] = nuevo_precio_neto
-                        if nuevo_precio_bruto > 0:
-                            datos_a_actualizar["precio_venta"] = nuevo_precio_bruto
-                        if nuevo_iva != -1.0:
-                            datos_a_actualizar["porcentaje_iva"] = nuevo_iva
-                        if nuevo_costo > 0:
-                            datos_a_actualizar["costo"] = nuevo_costo
-                        if nuevo_stock > 0:
-                            datos_a_actualizar["stock"] = nuevo_stock
-                            
-                        if datos_a_actualizar:
-                            try:
-                                supabase.table("productos").update(datos_a_actualizar).eq("rut_empresa", rut_actual).eq("codigo", str(cod_editar)).execute()
-                                st.success("✅ ¡Producto actualizado correctamente en todos los módulos!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Error al actualizar en Supabase: {e}")
-                        else:
-                            st.warning("⚠️ No ingresaste ningún valor nuevo para actualizar.")
-                    else:
-                        st.warning("⚠️ Selecciona un producto válido para editar.")
 
 # ----------------- SECCIÓN CONFIGURACIÓN GENERAL -----------------
 elif menu == "⚙️ Configuración General":
