@@ -2665,9 +2665,9 @@ elif menu == "📊 Dashboard Ejecutivo":
     total_credito_fiscal = credito_fiscal_compras + credito_fiscal_gastos
 
     # ==============================================================================
-    # 5. INVENTARIO Y MARGENES DESDE SUPABASE (SECCIÓN OPTIMIZADA)
+    # 5. INVENTARIO Y MARGENES DESDE SUPABASE (VALORIZADO A COSTO BRUTO CON IVA)
     # ==============================================================================
-    inversion_inventario_costo = 0.0
+    inversion_inventario_costo_bruto = 0.0
     total_productos = 0
     margen_promedio = 0.0
 
@@ -2691,7 +2691,8 @@ elif menu == "📊 Dashboard Ejecutivo":
                         df_prod['costo_clean'] = pd.to_numeric(df_prod[col_costo], errors='coerce').fillna(0)
                         df_prod['stock_clean'] = pd.to_numeric(df_prod[col_stock], errors='coerce').fillna(0)
                         
-                        inversion_inventario_costo = float((df_prod['costo_clean'] * df_prod['stock_clean']).sum())
+                        # Multiplicación por 1.19 para obtener Costo Bruto (con IVA)
+                        inversion_inventario_costo_bruto = float((df_prod['costo_clean'] * df_prod['stock_clean'] * 1.19).sum())
                         total_productos = len(df_prod)
 
                     if col_precio and col_costo:
@@ -2770,7 +2771,11 @@ elif menu == "📊 Dashboard Ejecutivo":
     st.markdown("### 📈 Inventario, Punto de Equilibrio y Rentabilidad")
     col_b2_1, col_b2_2, col_b2_3 = st.columns(3)
     with col_b2_1:
-        st.metric(label="📦 Inventario Valorizado (al Costo)", value=f"${inversion_inventario_costo:,.0f}", delta=f"{total_productos} productos")
+        st.metric(
+            label="📦 Inventario Valorizado (Costo Bruto c/IVA)", 
+            value=f"${inversion_inventario_costo_bruto:,.0f}", 
+            delta=f"{total_productos} productos"
+        )
     with col_b2_2:
         st.metric(
             label="⚖️ Punto de Equilibrio Mensual", 
