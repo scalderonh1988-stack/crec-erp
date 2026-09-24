@@ -2478,6 +2478,8 @@ elif menu == "📊 Dashboard Ejecutivo":
 
                         if 'iva' in df_ventas_filtrado.columns:
                             total_debito_fiscal = float(df_ventas_filtrado['iva'].sum())
+                        elif 'monto_iva' in df_ventas_filtrado.columns:
+                            total_debito_fiscal = float(df_ventas_filtrado['monto_iva'].sum())
                         else:
                             total_debito_fiscal = float(total_ventas_periodo * (0.19 / 1.19))
     except Exception as e:
@@ -2501,11 +2503,55 @@ elif menu == "📊 Dashboard Ejecutivo":
         print(f"Error cargando tabla costos_fijos desde la nube: {e}")
 
     # ==============================================================================
-    # 3. GASTOS VARIABLES, MERCADERÍA Y CRÉDITO FISCAL (TABLA 'gastos')
+    # 3. COMPRAS Y CRÉDITO FISCAL DE COMPRAS (TABLA 'compras')
+    # ==============================================================================
+    credito_fiscal_compras = 0.0
+    compras_totales_periodo = 0.0
+    df_compras_filtrado = pd.DataFrame()
+
+    try:
+        res_c = supabase.table("compras").select("*").execute()
+        if res_c.data:
+            df_c = pd.DataFrame(res_c.data)
+            if not df_c.empty:
+                if 'rut_empresa' in df_c.columns and tenant_id:
+                    df_c = df_c[df_c['rut_empresa'].astype(str).str.contains(str(tenant_id), case=False, na=False)]
+                
+                if not df_c.empty and 'fecha' in df_c.columns:
+                    df_c['Fecha_Parsed'] = pd.to_datetime(df_c['fecha'], errors='coerce')
+                    
+                    if fecha_limite is not None:
+                        if periodo_seleccionado == "Diaria (Hoy)":
+                            df_compras_filtrado = df_c[df_c['Fecha_Parsed'].dt.date == hoy_dt.date()]
+                        else:
+                            df_compras_filtrado = df_c[df_c['Fecha_Parsed'] >= fecha_limite]
+                    else:
+                        df_compras_filtrado = df_c.copy()
+
+                    if not df_compras_filtrado.empty:
+                        col_monto_c = 'monto_total' if 'monto_total' in df_compras_filtrado.columns else ('monto' if 'monto' in df_compras_filtrado.columns else 'total')
+                        col_iva_c = 'monto_iva' if 'monto_iva' in df_compras_filtrado.columns else 'iva'
+                        
+                        if col_iva_c in df_compras_filtrado.columns:
+                            credito_fiscal_compras = float(pd.to_numeric(df_compras_filtrado[col_iva_c], errors='coerce').fillna(0).sum())
+                        elif col_monto_c in df_compras_filtrado.columns:
+                            if 'es_afecto' in df_compras_filtrado.columns:
+                                df_afectos = df_compras_filtrado[df_compras_filtrado['es_afecto'] == True]
+                                credito_fiscal_compras = float((pd.to_numeric(df_afectos[col_monto_c], errors='coerce').fillna(0) * (0.19 / 1.19)).sum())
+                            else:
+                                credito_fiscal_compras = float((pd.to_numeric(df_compras_filtrado[col_monto_c], errors='coerce').fillna(0) * (0.19 / 1.19)).sum())
+
+                        if col_monto_c in df_compras_filtrado.columns:
+                            compras_totales_periodo = float(pd.to_numeric(df_compras_filtrado[col_monto_c], errors='coerce').fillna(0).sum())
+    except Exception as e:
+        print(f"Error cargando compras desde la nube: {e}")
+
+    # ==============================================================================
+    # 4. GASTOS VARIABLES, MERCADERÍA Y CRÉDITO FISCAL DE GASTOS (TABLA 'gastos')
     # ==============================================================================
     costos_variables = 0.0
     inversion_mercaderia_gastos = 0.0
-    total_credito_fiscal = 0.0
+    credito_fiscal_gastos = 0.0
     df_g_filtrado = pd.DataFrame()
 
     try:
@@ -2529,11 +2575,12 @@ elif menu == "📊 Dashboard Ejecutivo":
 
                     if not df_g_filtrado.empty:
                         col_monto_g = 'monto' if 'monto' in df_g_filtrado.columns else 'total'
+                        col_iva_g = 'monto_iva' if 'monto_iva' in df_g_filtrado.columns else 'iva'
                         
-                        if 'iva' in df_g_filtrado.columns:
-                            total_credito_fiscal = float(df_g_filtrado['iva'].sum())
+                        if col_iva_g in df_g_filtrado.columns:
+                            credito_fiscal_gastos = float(pd.to_numeric(df_g_filtrado[col_iva_g], errors='coerce').fillna(0).sum())
                         else:
-                            total_credito_fiscal = float(df_g_filtrado[col_monto_g].sum() * (0.19 / 1.19))
+                            credito_fiscal_gastos = float(df_g_filtrado[col_monto_g].sum() * (0.19 / 1.19))
 
                         for _, row in df_g_filtrado.iterrows():
                             monto = float(row.get(col_monto_g, 0))
@@ -2549,8 +2596,11 @@ elif menu == "📊 Dashboard Ejecutivo":
     except Exception as e:
         print(f"Error cargando gastos desde la nube: {e}")
 
+    # CRÉDITO FISCAL TOTAL (COMPRAS + GASTOS)
+    total_credito_fiscal = credito_fiscal_compras + credito_fiscal_gastos
+
     # ==============================================================================
-    # 4. INVENTARIO Y MARGENES DESDE SUPABASE
+    # 5. INVENTARIO Y MARGENES DESDE SUPABASE
     # ==============================================================================
     inversion_inventario_costo = 0.0
     total_productos = 0
@@ -2579,9 +2629,15 @@ elif menu == "📊 Dashboard Ejecutivo":
         print(f"Error cargando inventario desde la nube: {e}")
 
     # ==============================================================================
-    # 5. CÁLCULOS FINANCIEROS Y PUNTO DE EQUILIBRIO
+    # 6. CÁLCULOS FINANCIEROS, CAJA Y PUNTO DE EQUILIBRIO
     # ==============================================================================
+    total_inversion_mercaderia_total = inversion_mercaderia_gastos + compras_totales_periodo
     total_egresos_operativos = costos_fijos + costos_variables
+    total_egresos_efectivo = costos_fijos + costos_variables + total_inversion_mercaderia_total
+
+    # Dinero estimado disponible en caja (Ventas - Egresos Totales)
+    dinero_estimado_caja = total_ventas_periodo - total_egresos_efectivo
+
     utilidad_neta_estimada = total_ventas_periodo - total_egresos_operativos
 
     pct_margen_decimal = (margen_promedio / 100.0) if margen_promedio > 0 else 0.40
@@ -2592,7 +2648,7 @@ elif menu == "📊 Dashboard Ejecutivo":
 
     # --- BLOQUE 1: ESTRUCTURA DE COSTOS Y VENTAS ---
     st.markdown("### 💰 Flujo Operacional y Estructura de Costos")
-    col_b1_1, col_b1_2, col_b1_3, col_b1_4 = st.columns(4)
+    col_b1_1, col_b1_2, col_b1_3, col_b1_4, col_b1_5 = st.columns(5)
     with col_b1_1:
         st.metric(label=f"💵 Ventas Totales ({periodo_seleccionado.split()[0]})", value=f"${total_ventas_periodo:,.0f}")
     with col_b1_2:
@@ -2600,7 +2656,16 @@ elif menu == "📊 Dashboard Ejecutivo":
     with col_b1_3:
         st.metric(label="🚚 Costos Variables", value=f"${costos_variables:,.0f}", help="Combustible, comisiones, fletes, insumos directos.")
     with col_b1_4:
-        st.metric(label="🛍️ Inversión en Mercadería", value=f"${inversion_mercaderia_gastos:,.0f}", help="Egresos destinados a compras de stock en el período.")
+        st.metric(label="🛍️ Inv. Mercadería/Compras", value=f"${total_inversion_mercaderia_total:,.0f}", help="Egresos destinados a compras de stock en el período.")
+    with col_b1_5:
+        color_caja = "normal" if dinero_estimado_caja >= 0 else "inverse"
+        st.metric(
+            label="🏦 Dinero Est. en Caja", 
+            value=f"${dinero_estimado_caja:,.0f}", 
+            delta="Superávit de Caja" if dinero_estimado_caja >= 0 else "Déficit de Caja",
+            delta_color=color_caja,
+            help="Dinero estimado que debiese haber en caja: Ventas Totales menos todos los egresos y compras efectivas del período."
+        )
 
     st.divider()
 
