@@ -342,40 +342,52 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
 
     # --- 🗑️ PESTAÑA: ELIMINACIÓN Y ANULACIÓN DE VENTAS EN SUPABASE ---
     with tab_eliminar:
-        st.markdown("#### 🚨 Anulación y Borrado Permanente por Folio")
+        st.markdown("#### 🚨 Anulación y Borrado Permanente por Tipo de Documento y Folio")
         st.warning(
-            "⚠️ **Operación Directa en Base de Datos:** Al eliminar un **Folio**, se borrarán "
-            "**TODAS** las líneas asociadas a ese mismo folio en la tabla `ventas` de Supabase."
+            "⚠️ **Operación Directa en Base de Datos:** Al eliminar un documento, se borrarán "
+            "únicamente las líneas asociadas a la combinación exacta de **Tipo de Documento + Folio** en Supabase."
         )
 
         col_sel_doc, col_sel_folio = st.columns(2)
 
+        # 1. Seleccionar Tipo de Documento
         with col_sel_doc:
             if col_doc:
-                docs_disponibles = ["Todos"] + list(df_ventas[col_doc].dropna().unique())
+                docs_disponibles = list(df_ventas[col_doc].dropna().unique())
                 doc_a_eliminar = st.selectbox(
-                    "📄 Filtrar Tipo de Documento:", options=docs_disponibles, key="sb_doc_eliminar_v3"
+                    "📄 Seleccione Tipo de Documento:", 
+                    options=["-- Seleccionar --"] + docs_disponibles, 
+                    key="sb_doc_eliminar_v3"
                 )
             else:
-                doc_a_eliminar = "Todos"
+                doc_a_eliminar = "-- Seleccionar --"
 
+        # Filtrar el DataFrame según el tipo de documento seleccionado
         df_filtrado_doc = df_ventas.copy()
-        if col_doc and doc_a_eliminar != "Todos":
+        if col_doc and doc_a_eliminar != "-- Seleccionar --":
             df_filtrado_doc = df_filtrado_doc[df_filtrado_doc[col_doc] == doc_a_eliminar]
 
+        # 2. Seleccionar Folio (basado solo en los folios existentes para ese Tipo de Documento)
         with col_sel_folio:
-            folios_unicos = [""] + df_filtrado_doc["folio"].dropna().astype(str).unique().tolist()
-            folio_a_eliminar = st.selectbox(
-                "📌 Seleccione el Folio a eliminar:", options=folios_unicos, key="sb_folio_eliminar_v3"
-            )
+            if doc_a_eliminar != "-- Seleccionar --":
+                folios_unicos = [""] + df_filtrado_doc["folio"].dropna().astype(str).unique().tolist()
+                folio_a_eliminar = st.selectbox(
+                    "📌 Seleccione el Folio a eliminar:", 
+                    options=folios_unicos, 
+                    key="sb_folio_eliminar_v3"
+                )
+            else:
+                st.selectbox("📌 Seleccione el Folio a eliminar:", options=[""], disabled=True, key="sb_folio_eliminar_v3_disabled")
+                folio_a_eliminar = ""
 
-        if folio_a_eliminar:
-            filas_a_eliminar = df_ventas[df_ventas["folio"].astype(str) == str(folio_a_eliminar)]
+        # 3. Procesar eliminación si hay Tipo de Documento y Folio válidos
+        if doc_a_eliminar != "-- Seleccionar --" and folio_a_eliminar:
+            # Filtramos estrictamente por Tipo de Documento Y Folio
+            filas_a_eliminar = df_filtrado_doc[df_filtrado_doc["folio"].astype(str) == str(folio_a_eliminar)]
 
             if not filas_a_eliminar.empty:
                 st.info(
-                    f"🔎 **Se detectaron {len(filas_a_eliminar)} fila(s)/línea(s) asociadas al Folio"
-                    f" `{folio_a_eliminar}`:**"
+                    f"🔎 **Se detectaron {len(filas_a_eliminar)} fila(s)/línea(s) asociadas a `{doc_a_eliminar}` Folio `{folio_a_eliminar}`:**"
                 )
 
                 filas_eliminar_mostrar = (
@@ -391,23 +403,23 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
 
                 st.markdown("---")
                 st.error(
-                    f"❓ **Confirmación:** ¿Desea eliminar definitivamente el Folio `{folio_a_eliminar}` y"
+                    f"❓ **Confirmación:** ¿Desea eliminar definitivamente el documento `{doc_a_eliminar}` Folio `{folio_a_eliminar}` y"
                     f" sus {len(filas_a_eliminar)} línea(s)?"
                 )
 
                 confirmar_pregunta = st.checkbox(
-                    f"Sí, acepto borrar de Supabase todas las {len(filas_a_eliminar)} filas del Folio"
-                    f" {folio_a_eliminar}",
+                    f"Sí, acepto borrar de Supabase todas las {len(filas_a_eliminar)} filas de {doc_a_eliminar} Folio {folio_a_eliminar}",
                     key="cb_confirmar_pregunta_v3",
                 )
 
                 if st.button(
-                    "🔥 Eliminar Folio Completo de Supabase", type="primary", use_container_width=True
+                    f"🔥 Eliminar {doc_a_eliminar} N° {folio_a_eliminar} de Supabase", type="primary", use_container_width=True
                 ):
                     if not confirmar_pregunta:
                         st.warning("⚠️ Debe marcar la casilla de confirmación antes de ejecutar la eliminación.")
                     else:
                         try:
+                            # Reingreso de Stock si aplica
                             if reingresar_stock:
                                 bodega_defecto = st.session_state.get(
                                     "bodega_pos_seleccionada", "Bodega Principal"
@@ -429,6 +441,7 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                                             },
                                         ).execute()
 
+                            # Borrado en Cuentas por Cobrar (filtrando por folio)
                             try:
                                 supabase.table("cuentas_por_cobrar").delete().eq(
                                     "rut_empresa", str(tenant_id)
@@ -436,13 +449,22 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                             except Exception:
                                 pass
 
-                            supabase.table("ventas").delete().eq("rut_empresa", str(tenant_id)).eq(
-                                "folio", str(folio_a_eliminar)
-                            ).execute()
+                            # Borrado exacto en Ventas filtrando por RUT Empresa + Folio + Tipo de Documento
+                            query_del_ventas = (
+                                supabase.table("ventas")
+                                .delete()
+                                .eq("rut_empresa", str(tenant_id))
+                                .eq("folio", str(folio_a_eliminar))
+                            )
+                            
+                            # Aplicar filtro por la columna de tipo de documento
+                            if col_doc:
+                                query_del_ventas = query_del_ventas.eq(col_doc, str(doc_a_eliminar))
+
+                            query_del_ventas.execute()
 
                             st.success(
-                                f"🎉 El Folio **{folio_a_eliminar}** con sus **{len(filas_a_eliminar)}"
-                                " líneas** fue eliminado exitosamente de Supabase."
+                                f"🎉 El documento **{doc_a_eliminar} N° {folio_a_eliminar}** ({len(filas_a_eliminar)} líneas) fue eliminado exitosamente de Supabase."
                             )
                             st.rerun()
 
