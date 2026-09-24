@@ -5169,7 +5169,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
         with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def, placeholder="Ej: 12.345.678-9")
 
    # =========================================================================
-    # --- VISTA 1: PANTALLA DE ÉXITO ---
+    # --- VISTA 1: PANTALLA DE ÉXITO (PDF Y RECIBO TÉRMICO DISPONIBLES) ---
     # =========================================================================
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y procesada con éxito!")
@@ -5190,7 +5190,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
             "comuna": "Santiago"
         }
 
-        # 3. Preparar totales (con respaldo de cálculo dinámico para evitar valores en $0)
+        # 3. Preparar totales (con respaldo de cálculo dinámico)
         tot_general = total_venta if ('total_venta' in locals() and total_venta > 0) else sum(
             float(i.get('Subtotal', 0)) or (float(i.get('Cantidad', 1)) * float(i.get('Precio Unitario', 0))) 
             for i in items_a_mostrar
@@ -5204,7 +5204,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
             "total": tot_general
         }
 
-        # 🟢 Mostrar la vista unificada del documento
+        # 4. Mostrar vista unificada en pantalla
         mostrar_documento_unificado(
             tipo_documento=tipo_documento,
             folio=st.session_state.get("ultimo_folio", "N/A"),
@@ -5214,39 +5214,48 @@ elif menu == "💰 Módulo de Ventas (POS)":
             totales=totales_info
         )
 
-        # 4. Botones de acción (Descargar / Nueva Venta)
-        col_r1, col_r2 = st.columns(2)
-        with col_r1:
-            if tipo_documento in ["Guía de Despacho", "Factura Electrónica"]:
-                try:
-                    pdf_bytes = generar_guia_pdf(
-                        cliente_nombre,
-                        cliente_rut,
-                        items_a_mostrar,
-                        tipo_documento,
-                        fecha_emision_venta,
-                        datos_empresa=datos_emisor
-                    )
-                    
-                    st.download_button(
-                        label=f"📄 Descargar {tipo_documento} (PDF)",
-                        data=pdf_bytes,
-                        file_name=f"{tipo_documento.replace(' ', '_')}_{st.session_state.get('ultimo_folio', 'N/A')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"⚠️ Error al generar el PDF: {e}")
-            else:
+        st.markdown("---")
+
+        # 5. Botones de Acción (PDF + Recibo Térmico + Nueva Venta)
+        col_pdf, col_termico, col_nueva = st.columns(3)
+
+        # --- OPCIÓN 1: GENERAR Y DESCARGAR PDF (PARA CUALQUIER DOCUMENTO) ---
+        with col_pdf:
+            try:
+                pdf_bytes = generar_guia_pdf(
+                    cliente_nombre,
+                    cliente_rut,
+                    items_a_mostrar,
+                    tipo_documento,
+                    fecha_emision_venta,
+                    datos_empresa=datos_emisor
+                )
+                
+                st.download_button(
+                    label=f"📄 Descargar {tipo_documento} (PDF)",
+                    data=pdf_bytes,
+                    file_name=f"{tipo_documento.replace(' ', '_')}_{st.session_state.get('ultimo_folio', 'N/A')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"⚠️ Error al generar PDF: {e}")
+
+        # --- OPCIÓN 2: DESCARGAR RECIBO TÉRMICO (PARA CUALQUIER DOCUMENTO) ---
+        with col_termico:
+            if st.session_state.ultimo_recibo:
                 st.download_button(
                     label="📥 Descargar Recibo Térmico",
                     data=st.session_state.ultimo_recibo,
-                    file_name="Comprobante.txt",
+                    file_name=f"Ticket_{tipo_documento.replace(' ', '_')}_{st.session_state.get('ultimo_folio', 'N/A')}.txt",
                     mime="text/plain",
                     use_container_width=True
                 )
-      
-        with col_r2:
+            else:
+                st.info("Sin formato térmico disponible")
+
+        # --- OPCIÓN 3: REINICIAR Y NUEVA VENTA ---
+        with col_nueva:
             if st.button("➕ Nueva Venta", use_container_width=True, type="primary"):
                 st.session_state.ultimo_recibo = None
                 st.session_state.estado_pago = False
