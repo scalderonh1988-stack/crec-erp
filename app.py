@@ -5,30 +5,23 @@ import base64
 import tempfile
 import requests
 import urllib3
-import streamlit as st
-from datetime import datetime
-from fpdf import FPDF
-from PIL import Image
-from gestor_licencia import guardar_licencia_online, validar_licencia_offline
-
-# Desactivar advertencias de SSL en peticiones HTTP
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-import json
-import os
-import tempfile
 import sys
 import textwrap
 from datetime import date, datetime, timedelta
 
-from fpdf import FPDF
+import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from PIL import Image
 import plotly.express as px
-import requests
+from fpdf import FPDF
 from supabase import Client, create_client
-import streamlit as st
-import streamlit.components.v1 as components
 from werkzeug.security import generate_password_hash
+
+from gestor_licencia import guardar_licencia_online, validar_licencia_offline
+
+# Desactivar advertencias de SSL en peticiones HTTP
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
 # 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN DE ELEMENTOS DE DESARROLLADOR
@@ -172,6 +165,9 @@ def obtener_datos_emisor(supabase, tenant_id):
 
 def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
     """Genera el encabezado visual con datos de la Empresa (Emisor) y del Cliente (Receptor)."""
+    emisor = emisor or {}
+    receptor = receptor or {}
+    
     st.markdown(f"""
     <div style="border: 2px solid #D32F2F; padding: 12px; text-align: center; border-radius: 6px; margin-bottom: 20px;">
         <h3 style="color: #D32F2F; margin: 0;">R.U.T.: {emisor.get('rut_empresa', 'N/A')}</h3>
@@ -207,13 +203,18 @@ def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
 
 def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_receptor, items, totales):
     """Genera la ficha unificada en HTML para previsualización de DTE / Comprobantes."""
+    datos_emisor = datos_emisor or {}
+    datos_receptor = datos_receptor or {}
+    totales = totales or {}
+    items = items or []
+
     filas_items = ""
     subtotal_calculado = 0.0
 
     for item in items:
-        desc = item.get('Descripción') or item.get('Producto') or 'Ítem'
+        desc = item.get('Descripción') or item.get('Producto') or item.get('detalle') or 'Ítem'
         cant = float(item.get('Cantidad', 1))
-        precio = float(item.get('Precio Unitario') or item.get('Precio_Unitario') or 0)
+        precio = float(item.get('Precio Unitario') or item.get('Precio_Unitario') or item.get('precio_unitario') or 0)
         subtotal = float(item.get('Subtotal') or (cant * precio))
         subtotal_calculado += subtotal
         
@@ -224,7 +225,6 @@ def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_recep
 <td style="padding: 8px 4px; text-align: right;">${subtotal:,.0f}</td>
 </tr>"""
 
-    # Recalcula totales automáticamente si vienen en 0 teniendo productos cargados
     if not totales or (totales.get('total', 0) == 0 and subtotal_calculado > 0):
         tasa_iva = 0.19
         neto_calc = round(subtotal_calculado / (1.0 + tasa_iva))
@@ -235,12 +235,13 @@ def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_recep
             'total': subtotal_calculado
         }
 
-    rut_emisor = datos_emisor.get('rut') or datos_emisor.get('rut_empresa', 'N/A')
+    rut_emisor = datos_emisor.get('rut') or datos_emisor.get('rut_empresa') or 'N/A'
+    razon_social_emisor = str(datos_emisor.get('razon_social') or 'EMPRESA').upper()
 
     html_unificado = f"""<div style="border: 2px solid #343a40; border-radius: 12px; padding: 20px; background-color: #12161f; color: #e0e0e0; font-family: 'Courier New', Courier, monospace; margin-bottom: 20px;">
 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed #444; padding-bottom: 15px; margin-bottom: 15px; flex-wrap: wrap; gap: 15px;">
 <div style="flex: 1; min-width: 250px;">
-<h3 style="margin: 0; color: #64b5f6; font-size: 18px;">🏢 {datos_emisor.get('razon_social', 'EMPRESA').upper()}</h3>
+<h3 style="margin: 0; color: #64b5f6; font-size: 18px;">🏢 {razon_social_emisor}</h3>
 <p style="margin: 5px 0 0 0; font-size: 12px; color: #aaa; line-height: 1.4;">
 <b>RUT:</b> {rut_emisor}<br>
 <b>Giro:</b> {datos_emisor.get('giro', 'N/A')}<br>
@@ -249,7 +250,7 @@ def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_recep
 </div>
 <div style="border: 2px solid #ff4b4b; border-radius: 8px; padding: 10px 20px; text-align: center; color: #ff4b4b; background-color: rgba(255, 75, 75, 0.05); min-width: 200px;">
 <div style="font-weight: bold; font-size: 14px;">R.U.T.: {rut_emisor}</div>
-<div style="font-weight: bold; font-size: 15px; margin: 4px 0;">{tipo_documento.upper()}</div>
+<div style="font-weight: bold; font-size: 15px; margin: 4px 0;">{str(tipo_documento).upper()}</div>
 <div style="font-weight: bold; font-size: 16px;">N° {folio}</div>
 </div>
 </div>
@@ -286,6 +287,105 @@ def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_recep
 
     st.markdown(html_unificado, unsafe_allow_html=True)
 
+
+def generar_pdf_nota_venta(datos_emisor, datos_receptor, items, totales, num_documento):
+    """Genera un archivo PDF binario para la Nota de Venta Interna utilizando FPDF."""
+    datos_emisor = datos_emisor or {}
+    datos_receptor = datos_receptor or {}
+    totales = totales or {}
+    items = items or []
+
+    pdf = FPDF(format='letter', unit='mm')
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    def txt(texto):
+        if texto is None:
+            return ""
+        return str(texto).encode('latin-1', 'replace').decode('latin-1')
+
+    rut_emisor = datos_emisor.get('rut') or datos_emisor.get('rut_empresa') or 'N/A'
+    razon_emisor = datos_emisor.get('razon_social') or 'EMPRESA'
+    giro_emisor = datos_emisor.get('giro') or 'N/A'
+    dir_emisor = f"{datos_emisor.get('direccion', 'N/A')}, {datos_emisor.get('comuna', '')}"
+
+    nom_rec = datos_receptor.get('nombre') or datos_receptor.get('razon_social') or 'CLIENTE CONTADO'
+    rut_rec = datos_receptor.get('rut') or '66666666-6'
+    giro_rec = datos_receptor.get('giro') or 'Particular / Consumidor Final'
+    dir_rec = datos_receptor.get('direccion') or 'N/A'
+
+    # Título Principal
+    pdf.set_font("Arial", style='B', size=16)
+    pdf.set_text_color(13, 71, 161)
+    pdf.cell(0, 10, txt=txt(f"NOTA DE VENTA INTERNA N° {num_documento}"), ln=True, align='C')
+    pdf.ln(3)
+
+    # Datos Emisor
+    pdf.set_font("Arial", style='B', size=10)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 5, txt=txt(f"EMISOR: {razon_emisor.upper()}"), ln=True)
+    pdf.set_font("Arial", size=9)
+    pdf.cell(0, 5, txt=txt(f"RUT: {rut_emisor}  |  Giro: {giro_emisor}"), ln=True)
+    pdf.cell(0, 5, txt=txt(f"Dirección: {dir_emisor}"), ln=True)
+    pdf.ln(3)
+
+    # Datos Receptor
+    pdf.set_font("Arial", style='B', size=10)
+    pdf.cell(0, 5, txt=txt(f"RECEPTOR: {nom_rec}"), ln=True)
+    pdf.set_font("Arial", size=9)
+    pdf.cell(0, 5, txt=txt(f"RUT: {rut_rec}  |  Giro: {giro_rec}"), ln=True)
+    pdf.cell(0, 5, txt=txt(f"Dirección: {dir_rec}"), ln=True)
+    pdf.ln(5)
+
+    # Tabla Encabezados
+    pdf.set_fill_color(13, 71, 161)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Arial", style='B', size=9)
+    pdf.cell(100, 7, txt("DESCRIPCIÓN"), border=1, fill=True)
+    pdf.cell(20, 7, txt("CANT"), border=1, align='C', fill=True)
+    pdf.cell(35, 7, txt("P. UNIT"), border=1, align='R', fill=True)
+    pdf.cell(35, 7, txt("TOTAL"), border=1, align='R', fill=True)
+    pdf.ln()
+
+    # Tabla Filas
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", size=9)
+    for item in items:
+        desc = str(item.get('Descripción') or item.get('Producto') or item.get('detalle') or 'Ítem')[:45]
+        cant = float(item.get('Cantidad') or item.get('cantidad') or 1)
+        precio = float(item.get('Precio Unitario') or item.get('Precio_Unitario') or item.get('precio_unitario') or 0)
+        subtotal = float(item.get('Subtotal') or item.get('monto') or (cant * precio))
+
+        pdf.cell(100, 6, txt(desc), border=1)
+        pdf.cell(20, 6, txt(f"{cant:g}"), border=1, align='C')
+        pdf.cell(35, 6, txt(f"${precio:,.0f}"), border=1, align='R')
+        pdf.cell(35, 6, txt(f"${subtotal:,.0f}"), border=1, align='R')
+        pdf.ln()
+
+    pdf.ln(4)
+
+    # Totales
+    neto = float(totales.get('neto', 0))
+    iva = float(totales.get('iva', 0))
+    total = float(totales.get('total', 0))
+
+    pdf.set_font("Arial", size=9)
+    pdf.cell(120, 5, "", border=0)
+    pdf.cell(35, 5, txt("Subtotal Neto:"), border=0, align='R')
+    pdf.cell(35, 5, txt(f"${neto:,.0f}"), border=0, align='R')
+    pdf.ln()
+
+    pdf.cell(120, 5, "", border=0)
+    pdf.cell(35, 5, txt("IVA (19%):"), border=0, align='R')
+    pdf.cell(35, 5, txt(f"${iva:,.0f}"), border=0, align='R')
+    pdf.ln()
+
+    pdf.set_font("Arial", style='B', size=10)
+    pdf.cell(120, 6, "", border=0)
+    pdf.cell(35, 6, txt("TOTAL GENERAL:"), border=0, align='R')
+    pdf.cell(35, 6, txt(f"${total:,.0f}"), border=0, align='R')
+
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 def cargar_maestro_proveedores(ruta_negocio):
     archivo_prov = os.path.join(ruta_negocio, "Maestro_Proveedores.xlsx")
@@ -5025,7 +5125,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     else:
                         st.warning("⚠️ Ingresa un folio válido.")
     st.markdown("---")
-    
+
     # --- 8. SELECCIÓN DE CLIENTES ---
     cliente_nombre, cliente_rut = "", ""
     df_clientes_pos = pd.DataFrame()
