@@ -2813,7 +2813,7 @@ elif menu == "📊 Dashboard Ejecutivo":
                 st.info("ℹ️ No hay facturas de proveedores pendientes de pago.")
         except Exception:
             st.info("ℹ️ Módulo de cuentas por pagar sin registros activos en la nube.")
-            
+
 # ----------------- SECCIÓN INVENTARIO GENERAL -----------------
 elif menu == "📦 Inventario y Productos":
     mostrar_encabezado_con_home("📦 Administración de Inventario")
@@ -3783,7 +3783,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                     try:
                                         supabase.table("compras").insert(nuevo_reg_compra_nube).execute()
                                     except Exception as e:
-                                        # Fallback si faltan columnas en la tabla Supabase
+                                        # Fallback garantizado con Neto, IVA y RUT de Empresa
                                         reg_simple = {
                                             "fecha_hora": datetime.now().isoformat(),
                                             "tipo_recepcion": "GRC",
@@ -3793,8 +3793,12 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                             "descripcion": f"[{tipo_etiqueta}] {str(item['Descripción'])}",
                                             "cantidad": float(item["Cantidad"]),
                                             "neto_unitario": float(item["NetoUnitario"]),
+                                            "monto_neto": float(item["SubtotalNeto"]),
+                                            "monto_iva": float(item["IVA"]),
                                             "costo_total": float(item["CostoTotal"]),
-                                            "id_negocio": str(rut_actual).strip()
+                                            "es_afecto": bool(item.get("EsFacturaAfecta", es_factura_afecta)),
+                                            "id_negocio": str(rut_actual).strip(),
+                                            "rut_empresa": str(rut_actual).strip()
                                         }
                                         supabase.table("compras").insert(reg_simple).execute()
 
