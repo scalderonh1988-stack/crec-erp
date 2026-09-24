@@ -2678,10 +2678,10 @@ elif menu == "📊 Dashboard Ejecutivo":
     except Exception as e:
         print(f"Error cargando inventario desde la nube: {e}")
 
+# ==============================================================================
+    # 6. CÁLCULOS FINANCIEROS Y FLUJO BRUTO REAL DE CAJA (FÓRMULA EXACTA)
     # ==============================================================================
-    # 6. CÁLCULOS FINANCIEROS Y FLUJO BRUTO REAL DE CAJA
-    # ==============================================================================
-    # A) INGRESOS Y EGRESOS HISTÓRICOS TOTALES (PARA EL DINERO REAL EN CAJA)
+    # A) INGRESOS HISTÓRICOS TOTALES
     total_ventas_historico = 0.0
     if 'df_v' in locals() and not df_v.empty:
         col_monto_v = 'monto' if 'monto' in df_v.columns else 'total'
@@ -2690,6 +2690,9 @@ elif menu == "📊 Dashboard Ejecutivo":
         else:
             total_ventas_historico = float(df_v[col_monto_v].sum())
 
+    total_entradas = total_ventas_historico + total_inversion_inicial
+
+    # B) EGRESOS HISTÓRICOS TOTALES (CON REDONDEO A ENTERO)
     total_compras_historico = 0.0
     if 'df_c' in locals() and not df_c.empty:
         col_monto_c = 'monto_total' if 'monto_total' in df_c.columns else ('monto' if 'monto' in df_c.columns else 'total')
@@ -2702,13 +2705,16 @@ elif menu == "📊 Dashboard Ejecutivo":
         if col_monto_g in df_g.columns:
             total_gastos_historico = float(pd.to_numeric(df_g[col_monto_g], errors='coerce').fillna(0).sum())
 
-    # Egresos Históricos Acumulados
+    # Redondeo de egresos para cerrar sin decimales
+    total_compras_historico = round(total_compras_historico)
+    total_gastos_historico = round(total_gastos_historico)
+
     total_egresos_historico = total_compras_historico + total_gastos_historico
 
-    # 🏦 DINERO ESTIMADO EN CAJA (Histórico Real)
-    dinero_estimado_caja = (total_ventas_historico + total_inversion_inicial) - total_egresos_historico
+    # C) DINERO ESTIMADO EN CAJA REAL
+    dinero_estimado_caja = round(total_entradas - total_egresos_historico)
 
-    # B) MÉTRICAS DEL PERÍODO SELECCIONADO (Para evaluar el mes/período actual)
+    # D) MÉTRICAS PARA EVALUACIÓN DEL PERÍODO
     total_inversion_mercaderia_total = inversion_mercaderia_gastos + compras_totales_periodo
     total_egresos_operativos = costos_fijos + costos_variables
     utilidad_neta_estimada = total_ventas_periodo - total_egresos_operativos
