@@ -3734,6 +3734,21 @@ elif menu == "🛒 Registrar Compra (CPP)":
         if accion_producto == "📥 Registrar Compra / GRC (Factura con Lotes)":
             st.markdown("### 📋 Cabecera de la Recepción de Compra (GRC)")
 
+            # --- PREGUNTA PREVIA: ORIGEN DE FACTURA ---
+            grc_viene_factura = st.radio(
+                "📄 ¿Esta Recepción de Compra (GRC) proviene de una Factura de Compra?",
+                options=["Sí, proviene de Factura", "No, es Guía de Despacho / Recepción sin Factura"],
+                horizontal=True,
+                key="radio_grc_viene_factura"
+            )
+            es_factura_origen = (grc_viene_factura == "Sí, proviene de Factura")
+
+            # Filtro dinámico de tipos de documento según la respuesta
+            if es_factura_origen:
+                opciones_tipo_doc = ["Factura Electrónica (Afecta)", "Factura Electrónica Exenta"]
+            else:
+                opciones_tipo_doc = ["Guía de Despacho", "Boleta de Compra", "Sin Documento / Exento"]
+
             # --- CARGA DE PROVEEDORES DIRECTO DESDE LA NUBE (SUPABASE) ---
             lista_proveedores = ["Proveedor General"]
             try:
@@ -3788,12 +3803,10 @@ elif menu == "🛒 Registrar Compra (CPP)":
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             with col_f1:
                 proveedor_factura = st.selectbox("Nombre del Proveedor", options=lista_proveedores)
-                tipo_documento = st.selectbox(
-                    "Tipo de Documento Tributario", 
-                    ["Factura Electrónica (Afecta)", "Guía de Despacho", "Boleta de Compra", "Sin Documento / Exento"]
-                )
+                tipo_documento = st.selectbox("Tipo de Documento Tributario", options=opciones_tipo_doc)
             with col_f2:
-                num_factura = st.text_input("Número de Documento / Folio GRC", value="FAC-001")
+                label_folio = "Número de Factura" if es_factura_origen else "Número de Documento / Folio GRC"
+                num_factura = st.text_input(label_folio, value="FAC-001" if es_factura_origen else "GDC-001")
                 fecha_compra = st.date_input("Fecha de Recepción GRC", value=date.today())
             with col_f3:
                 bodega_destino_grc = st.selectbox("🏢 Bodega de Destino:", options=bodegas_grc_opc)
@@ -3882,6 +3895,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
 
                     st.session_state.carrito_factura_compras.append({
                         "TipoDoc": "GRC",
+                        "VieneDeFactura": es_factura_origen,
                         "TipoDocumentoTributario": tipo_documento,
                         "EsFacturaAfecta": es_factura_afecta,
                         "EsInsumo": es_insumo_linea,
@@ -3943,12 +3957,14 @@ elif menu == "🛒 Registrar Compra (CPP)":
                             
                             procesados = 0
                             lineas_detalle_grc = ""
+                            errores_guardado = []
+
                             for item in st.session_state.carrito_factura_compras:
                                 if item.get("TipoDoc", "GRC") == "GRC":
                                     tipo_etiqueta = "Insumo" if item.get("EsInsumo") else "Producto"
                                     lineas_detalle_grc += f"- [{tipo_etiqueta}] {item['Descripción']} (x{item['Cantidad']}) | Neto: ${item['SubtotalNeto']:,.2f} | IVA: ${item['IVA']:,.2f} | Total: ${item['CostoTotal']:,.2f} | Bodega: {item.get('BodegaDestino', 'Bodega Principal')}\n"
                                     
-                                    # 1. Registro directo en la tabla 'compras' de Supabase con bandera tributaria 'es_afecto'
+                                    # 1. Registro directo en la tabla 'compras' de Supabase
                                     nuevo_reg_compra_nube = {
                                         "fecha_hora": datetime.now().isoformat(),
                                         "fecha_emision": str(fecha_compra),
@@ -3973,8 +3989,8 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                     
                                     try:
                                         supabase.table("compras").insert(nuevo_reg_compra_nube).execute()
-                                    except Exception as e:
-                                        # Fallback garantizado con Neto, IVA y RUT de Empresa
+                                    except Exception as e_full:
+                                        # Fallback con captura limpia de excepción
                                         reg_simple = {
                                             "fecha_hora": datetime.now().isoformat(),
                                             "tipo_recepcion": "GRC",
@@ -3991,7 +4007,10 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                             "id_negocio": str(rut_actual).strip(),
                                             "rut_empresa": str(rut_actual).strip()
                                         }
-                                        supabase.table("compras").insert(reg_simple).execute()
+                                        try:
+                                            supabase.table("compras").insert(reg_simple).execute()
+                                        except Exception as e_simple:
+                                            errores_guardado.append(f"Error guardando {item['Descripción']}: {e_simple}")
 
                                     # 2. Actualizar Stock y Recalcular CPP en Supabase
                                     bodega_linea = item.get("BodegaDestino", "Bodega Principal")
@@ -4044,7 +4063,7 @@ elif menu == "🛒 Registrar Compra (CPP)":
 
                                     procesados += 1
 
-                            # Cuentas Por Pagar
+                            # Cuentas Por Pagar (solo si aplica crédito o cheque)
                             if condicion_pago in ["Crédito", "Cheque"]:
                                 reg_cpp_sb = {
                                     "rut_empresa": str(rut_actual).strip(),
@@ -4063,9 +4082,12 @@ elif menu == "🛒 Registrar Compra (CPP)":
                                 except Exception as e_cpp:
                                     print(f"Aviso en cuentas_por_pagar: {e_cpp}")
 
-                            st.session_state.carrito_factura_compras = [i for i in st.session_state.carrito_factura_compras if i.get("TipoDoc") != "GRC"]
-                            st.success(f"✅ ¡GRC #{num_factura} ({tipo_documento}) procesada con éxito! IVA Crédito Fiscal: ${iva_total_grc:,.0f}.")
-                            st.rerun()
+                            if errores_guardado:
+                                st.error(f"❌ Se presentaron problemas al procesar en Supabase:\n" + "\n".join(errores_guardado))
+                            else:
+                                st.session_state.carrito_factura_compras = [i for i in st.session_state.carrito_factura_compras if i.get("TipoDoc") != "GRC"]
+                                st.success(f"✅ ¡GRC #{num_factura} ({tipo_documento}) procesada con éxito! IVA Crédito Fiscal: ${iva_total_grc:,.0f}.")
+                                st.rerun()
 
 # ----------------- SECCIÓN CONFIGURACIÓN GENERAL -----------------
 elif menu == "⚙️ Configuración General":
