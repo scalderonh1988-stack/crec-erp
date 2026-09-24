@@ -5057,21 +5057,35 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.error("⚠️ La base de datos de productos no está cargada en la memoria local.")
         st.session_state.input_scanner = ""
 
-    # --- 6. CABECERA Y SELECCIÓN DE DOCUMENTO ---
-    col_doc1, col_doc2, col_doc3 = st.columns(3)
-    with col_doc1:
-        tipo_documento = st.selectbox("📄 Selecciona el documento:", ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"])
-    with col_doc2:
-        fecha_emision_venta = st.date_input("📅 Fecha de Emisión del Documento")
-    with col_doc3:
-        modo_operacion = st.radio(
-            "⚙️ Tipo de Emisión:",
-            ["Control Interno (Libre)", "Oficial (SII)"],
-            horizontal=True,
-            key="radio_modo_emision"
-        )
-    
-    modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
+    # --- 6. CABECERA Y SELECCIÓN DE DOCUMENTO Y MODO DE STOCK ---
+col_doc1, col_doc2, col_doc3, col_doc4 = st.columns(4)
+
+with col_doc1:
+    tipo_documento = st.selectbox(
+        "📄 Selecciona el documento:", 
+        ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"]
+    )
+
+with col_doc2:
+    fecha_emision_venta = st.date_input("📅 Fecha de Emisión del Documento")
+
+with col_doc3:
+    modo_operacion = st.radio(
+        "⚙️ Tipo de Emisión:",
+        ["Control Interno (Libre)", "Oficial (SII)"],
+        horizontal=True,
+        key="radio_modo_emision"
+    )
+
+with col_doc4:
+    modo_inventario = st.radio(
+        "📦 Modo Inventario:",
+        ["Estricto (Validar Stock)", "Venta Libre (Permisivo)"],
+        horizontal=True,
+        key="radio_modo_inventario"
+    )
+
+modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
 
     # --- 7. LÓGICA: FACTURAR DESDE UNA GUÍA PREVIA ---
     if tipo_documento == "Factura Electrónica":
