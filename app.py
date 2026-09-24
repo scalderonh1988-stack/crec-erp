@@ -4985,51 +4985,37 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 if st.button("📥 Cargar Guía", use_container_width=True):
                     if folio_guia_a_facturar and modo_online:
                         try:
-                            # 1. Obtener registros con ese folio
+                            # Consulta directa filtrando por la columna 'documento' y 'folio'
                             res_guia = supabase.table("ventas") \
                                 .select("*") \
                                 .eq("rut_empresa", str(rut_actual)) \
-                                .eq("folio", folio_guia_a_facturar.strip()) \
+                                .eq("folio", str(folio_guia_a_facturar).strip()) \
+                                .ilike("documento", "%gu%a%") \
                                 .execute()
 
                             if res_guia.data:
-                                # 2. Filtrar estrictamente solo las filas que sean Guía de Despacho
-                                lineas_guia = []
+                                st.session_state.carrito_ventas = []
+                                st.session_state.folio_guia_origen = str(folio_guia_a_facturar).strip()
+                                
+                                cliente_de_guia = res_guia.data[0].get("cliente", "")
+                                if cliente_de_guia and cliente_de_guia != "Cliente General":
+                                    st.session_state.cliente_preseleccionado = cliente_de_guia
+
                                 for item in res_guia.data:
-                                    # Verifica si la palabra 'gui' está en algún campo del registro
-                                    es_guia = any(
-                                        "gui" in str(val).lower() 
-                                        for key, val in item.items() 
-                                        if key not in ["detalle", "descripcion", "codigo_producto"]
-                                    )
-                                    if es_guia:
-                                        lineas_guia.append(item)
-
-                                if lineas_guia:
-                                    st.session_state.carrito_ventas = []
-                                    st.session_state.folio_guia_origen = folio_guia_a_facturar.strip()
+                                    cant = float(item.get("cantidad", 1))
+                                    monto_total = float(item.get("monto", 0))
+                                    precio_unitario = monto_total / cant if cant > 0 else 0
                                     
-                                    cliente_de_guia = lineas_guia[0].get("cliente", "")
-                                    if cliente_de_guia and cliente_de_guia != "Cliente General":
-                                        st.session_state.cliente_preseleccionado = cliente_de_guia
-
-                                    for item in lineas_guia:
-                                        cant = float(item.get("cantidad", 1))
-                                        monto_total = float(item.get("monto", 0))
-                                        precio_unitario = monto_total / cant if cant > 0 else 0
-                                        
-                                        st.session_state.carrito_ventas.append({
-                                            "Código": item.get("codigo_producto", ""),
-                                            "Descripción": f"{item.get('detalle', 'Producto')} (📄 de Guía)",
-                                            "Cantidad": cant,
-                                            "Precio Unitario": precio_unitario,
-                                            "Subtotal": monto_total,
-                                            "es_guia_previa": True 
-                                        })
-                                    st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente.")
-                                    st.rerun()
-                                else:
-                                    st.warning(f"⚠️ El folio {folio_guia_a_facturar} existe, pero no corresponde a una Guía de Despacho.")
+                                    st.session_state.carrito_ventas.append({
+                                        "Código": item.get("codigo_producto", ""),
+                                        "Descripción": f"{item.get('detalle', 'Producto')} (📄 de Guía)",
+                                        "Cantidad": cant,
+                                        "Precio Unitario": precio_unitario,
+                                        "Subtotal": monto_total,
+                                        "es_guia_previa": True 
+                                    })
+                                st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente.")
+                                st.rerun()
                             else:
                                 st.warning("⚠️ No se encontró ninguna guía con ese folio.")
                         except Exception as e:
@@ -5039,7 +5025,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     else:
                         st.warning("⚠️ Ingresa un folio válido.")
     st.markdown("---")
-
+    
     # --- 8. SELECCIÓN DE CLIENTES ---
     cliente_nombre, cliente_rut = "", ""
     df_clientes_pos = pd.DataFrame()
