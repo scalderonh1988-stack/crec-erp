@@ -3355,7 +3355,7 @@ elif menu == "📈 Informes y Movimientos (Kardex)":
     with tab_inf2:
         st.markdown("### 🛒 Registro de Entradas y Compras (Nube)")
         try:
-            res_compras_nube = supabase.table("compras").select("*").eq("id_negocio", rut_actual).execute()
+            res_compras_nube = supabase.table("compras").select("*").execute()
             if res_compras_nube.data:
                 df_c = pd.DataFrame(res_compras_nube.data)
                 st.dataframe(df_c, use_container_width=True)
