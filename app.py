@@ -2421,7 +2421,29 @@ elif menu == "📊 Dashboard Ejecutivo":
     mostrar_encabezado_con_home("⚡ Resumen Ejecutivo en Tiempo Real")
     tenant_id = st.session_state.get("negocio_seleccionado") or get_current_tenant()
    
-    # 🕒 Selector de Período Temporal e Inversión Inicial
+    # Función auxiliar para limpiar RUTs en comparaciones
+    def limpiar_rut_str(rut):
+        return str(rut).replace(".", "").replace("-", "").strip().lower() if pd.notna(rut) else ""
+
+    tenant_clean = limpiar_rut_str(tenant_id)
+
+    # ==============================================================================
+    # 0. INVERSIÓN INICIAL / INYECCIONES DE CAPITAL DESDE SUPABASE
+    # ==============================================================================
+    total_inversion_inicial = 0.0
+    try:
+        res_iny = supabase.table("inyecciones_capital").select("*").execute()
+        if res_iny.data:
+            df_iny = pd.DataFrame(res_iny.data)
+            if not df_iny.empty:
+                if 'rut_empresa' in df_iny.columns and tenant_clean:
+                    df_iny = df_iny[df_iny['rut_empresa'].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
+                if not df_iny.empty and 'monto' in df_iny.columns:
+                    total_inversion_inicial = float(pd.to_numeric(df_iny['monto'], errors='coerce').fillna(0).sum())
+    except Exception as e:
+        print(f"Aviso al cargar inyecciones_capital desde Supabase: {e}")
+
+    # 🕒 Selector de Período Temporal e Inyección de Capital
     st.markdown("### 🎛️ Configuración Financiera y Filtro Temporal")
     col_f1, col_f2 = st.columns([2, 2])
     with col_f1:
@@ -2432,14 +2454,33 @@ elif menu == "📊 Dashboard Ejecutivo":
         )
 
     with col_f2:
-        inversion_inicial = st.number_input(
-            "💵 Fondo / Inversión Inicial en Caja ($)",
-            min_value=0.0,
-            value=float(st.session_state.get("inversion_inicial", 0.0)),
-            step=50000.0,
-            help="Digita el saldo inicial o capital con el que comenzó la caja para calcular el efectivo disponible real."
-        )
-        st.session_state["inversion_inicial"] = inversion_inicial
+        st.write("💵 **Fondo / Capital Inyectado en Caja:**")
+        col_caja1, col_caja2 = st.columns([2, 1])
+        with col_caja1:
+            st.metric(label="Inversión / Capital Acumulado", value=f"${total_inversion_inicial:,.0f}")
+        with col_caja2:
+            st.write("")
+            with st.popover("➕ Registrar Abono"):
+                st.markdown("##### 📥 Registrar Inyección / Fondo de Caja")
+                monto_iny = st.number_input("Monto del Abono ($)", min_value=1000.0, step=10000.0, value=100000.0, key="monto_iny_input")
+                concepto_iny = st.text_input("Concepto / Detalle", value="Inyección de Capital / Fondo Inicial", key="concepto_iny_input")
+                fecha_iny = st.date_input("Fecha de Abono", value=date.today(), key="fecha_iny_input")
+                
+                if st.button("💾 Guardar Abono en Nube", type="primary", key="btn_guardar_iny"):
+                    nueva_iny = {
+                        "rut_empresa": str(tenant_id).strip(),
+                        "id_negocio": str(tenant_id).strip(),
+                        "monto": float(monto_iny),
+                        "concepto": str(concepto_iny),
+                        "fecha": str(fecha_iny),
+                        "fecha_hora": datetime.now().isoformat()
+                    }
+                    try:
+                        supabase.table("inyecciones_capital").insert(nueva_iny).execute()
+                        st.success("✅ Inyección de capital registrada con éxito.")
+                        st.rerun()
+                    except Exception as e_iny:
+                        st.error(f"⚠️ Error al guardar abono: {e_iny}")
 
     hoy_dt = pd.to_datetime(date.today())
     if periodo_seleccionado == "Diaria (Hoy)":
@@ -2452,12 +2493,6 @@ elif menu == "📊 Dashboard Ejecutivo":
         fecha_limite = hoy_dt - pd.Timedelta(days=30)
     else:
         fecha_limite = None
-
-    # Función auxiliar para limpiar RUTs en comparaciones
-    def limpiar_rut_str(rut):
-        return str(rut).replace(".", "").replace("-", "").strip().lower() if pd.notna(rut) else ""
-
-    tenant_clean = limpiar_rut_str(tenant_id)
 
     # ==============================================================================
     # 1. VENTAS Y DÉBITO FISCAL DESDE SUPABASE
@@ -2534,7 +2569,6 @@ elif menu == "📊 Dashboard Ejecutivo":
                     df_c = df_c[df_c['rut_empresa'].apply(lambda x: tenant_clean in limpiar_rut_str(x))]
                 
                 if not df_c.empty:
-                    # Si tiene columna fecha se filtra por período, de lo contrario se usa todo
                     if 'fecha' in df_c.columns:
                         df_c['Fecha_Parsed'] = pd.to_datetime(df_c['fecha'], errors='coerce')
                         
@@ -2612,7 +2646,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     except Exception as e:
         print(f"Error cargando gastos desde la nube: {e}")
 
-    # CRÉDITO FISCAL TOTAL (COMPRAS + GASTOS)
+    # CRÉDITO FISCAL TOTAL (COMPRAS + GASTOS QUE FACTURAN)
     total_credito_fiscal = credito_fiscal_compras + credito_fiscal_gastos
 
     # ==============================================================================
@@ -2645,14 +2679,15 @@ elif menu == "📊 Dashboard Ejecutivo":
         print(f"Error cargando inventario desde la nube: {e}")
 
     # ==============================================================================
-    # 6. CÁLCULOS FINANCIEROS, CAJA Y PUNTO DE EQUILIBRIO
+    # 6. CÁLCULOS FINANCIEROS Y FLUJO BRUTO REAL DE CAJA
     # ==============================================================================
     total_inversion_mercaderia_total = inversion_mercaderia_gastos + compras_totales_periodo
     total_egresos_operativos = costos_fijos + costos_variables
     total_egresos_efectivo = costos_fijos + costos_variables + total_inversion_mercaderia_total
 
-    # Dinero estimado disponible en caja = Inversión Inicial + Ventas - Egresos
-    dinero_estimado_caja = inversion_inicial + total_ventas_periodo - total_egresos_efectivo
+    # Dinero estimado disponible en caja con la fórmula solicitada:
+    # (Ventas Totales + Inversión Inicial/Abonos) - (Gastos Totales + Costos Fijos + Compras de Mercadería)
+    dinero_estimado_caja = (total_ventas_periodo + total_inversion_inicial) - total_egresos_efectivo
 
     utilidad_neta_estimada = total_ventas_periodo - total_egresos_operativos
 
@@ -2670,9 +2705,9 @@ elif menu == "📊 Dashboard Ejecutivo":
     with col_b1_2:
         st.metric(label="🏢 Costos Fijos", value=f"${costos_fijos:,.0f}", help="Sueldos, arriendos, servicios básicos y patentes activas.")
     with col_b1_3:
-        st.metric(label="🚚 Costos Variables", value=f"${costos_variables:,.0f}", help="Combustible, comisiones, fletes, insumos directos.")
+        st.metric(label="🚚 Gastos Totales / Variables", value=f"${costos_variables:,.0f}", help="Todos los egresos y gastos variables registrados en el período.")
     with col_b1_4:
-        st.metric(label="🛍️ Inv. Mercadería/Compras", value=f"${total_inversion_mercaderia_total:,.0f}", help="Egresos destinados a compras de stock en el período.")
+        st.metric(label="🛍️ Compras de Mercadería", value=f"${total_inversion_mercaderia_total:,.0f}", help="Egresos destinados a compras de stock en el período.")
     with col_b1_5:
         color_caja = "normal" if dinero_estimado_caja >= 0 else "inverse"
         st.metric(
@@ -2680,7 +2715,7 @@ elif menu == "📊 Dashboard Ejecutivo":
             value=f"${dinero_estimado_caja:,.0f}", 
             delta="Superávit de Caja" if dinero_estimado_caja >= 0 else "Déficit de Caja",
             delta_color=color_caja,
-            help="Cálculo: (Fondo Inicial + Ventas Totales) - (Costos Fijos + Costos Variables + Compras del Período)."
+            help="Fórmula: (Ventas Totales + Fondo/Inyección Inicial) - (Gastos Totales + Costos Fijos + Compras de Mercadería)."
         )
 
     st.divider()
@@ -2713,7 +2748,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     with col_b3_1:
         st.metric(label="📈 Débito Fiscal (IVA Ventas)", value=f"${total_debito_fiscal:,.0f}", help="IVA recaudado en tus ventas del período.")
     with col_b3_2:
-        st.metric(label="📉 Crédito Fiscal (IVA Compras/Gastos)", value=f"${total_credito_fiscal:,.0f}", help="IVA pagado en tus compras y gastos facturados.")
+        st.metric(label="📉 Crédito Fiscal (IVA Compras/Gastos)", value=f"${total_credito_fiscal:,.0f}", help="IVA pagado únicamente en tus compras y gastos con Factura Afecta.")
     with col_b3_3:
         label_f29 = "🏛️ Estimado a Pagar (F29)" if estimado_f29_pagar >= 0 else "🏛️ Remanente a Favor"
         st.metric(
