@@ -4,8 +4,8 @@ from datetime import datetime
 from modulos.servicios.data_manager import supabase, get_current_tenant
 
 def mostrar_modulo_compras(ruta_negocio):
-    st.markdown("### 🛒 Módulo de Recepción de Compras (GRC) y Control de Lotes")
-    st.markdown("Registra las facturas o guías de tus proveedores. El sistema sumará el stock, recalculará el Costo Promedio Ponderado (CPP) y creará el registro de compras.")
+    st.markdown("### 🛒 Módulo de Recepción de Compras (GRC/DTE) y Control de Lotes")
+    st.markdown("Registra facturas o guías de proveedores. El sistema sumará el stock, recalculará el Costo Promedio Ponderado (CPP), actualizará el **IVA Crédito Fiscal (F29)** y registrará la compra.")
 
     tenant_id = get_current_tenant()
     if not tenant_id:
@@ -15,18 +15,16 @@ def mostrar_modulo_compras(ruta_negocio):
     tenant_clean = str(tenant_id).strip().lower()
 
     # --- 1. LECTURA Y ASOCIACIÓN DE PROVEEDORES DESDE SUPABASE ---
-    dict_proveedores = {}  # Mapea Nombre -> Datos completos del Proveedor (RUT, ID, etc.)
+    dict_proveedores = {}
     lista_proveedores = ["Proveedor General"]
     bodegas_existentes = ["Bodega Principal"]
     opciones_productos = []
 
     try:
-        # Cargar todos los proveedores registrados en la base de datos sin filtrar por id_negocio
         res_prov = supabase.table("proveedores").select("*").execute()
 
         if res_prov.data:
             for p in res_prov.data:
-                # Capturar la razón social / nombre bajo cualquier varianza de columna en Supabase
                 nom_p = (
                     p.get("nombre") or 
                     p.get("razon_social") or 
@@ -42,7 +40,6 @@ def mostrar_modulo_compras(ruta_negocio):
 
             lista_proveedores = list(dict.fromkeys(lista_proveedores))
 
-        # Cargar Bodegas pertenecientes al tenant o generales
         res_bodegas = supabase.table("bodegas").select("*").execute()
         if res_bodegas.data:
             for b in res_bodegas.data:
@@ -53,7 +50,6 @@ def mostrar_modulo_compras(ruta_negocio):
                         bodegas_existentes.append(str(nom_b).strip())
             bodegas_existentes = list(dict.fromkeys(bodegas_existentes))
 
-        # Cargar Productos e Ingredientes para el selector unificado
         res_prod = supabase.table("productos").select("codigo, descripcion").execute()
         df_prod = pd.DataFrame(res_prod.data) if res_prod.data else pd.DataFrame()
 
@@ -79,14 +75,20 @@ def mostrar_modulo_compras(ruta_negocio):
     col_h1, col_h2, col_h3 = st.columns(3)
     with col_h1:
         proveedor_factura = st.selectbox("Nombre del Proveedor", options=lista_proveedores)
-        tipo_recepcion = st.selectbox("Tipo de Recepción", ["Factura Electrónica", "Guía de Despacho", "Boleta", "Otro"])
+        tipo_recepcion = st.selectbox(
+            "Tipo de Documento Tributario", 
+            ["Factura Electrónica", "Guía de Despacho", "Boleta de Compra", "Otro / Sin Documento"]
+        )
     with col_h2:
-        num_factura = st.text_input("Número de Documento (Factura/Guía)", value="FAC-001")
-        fecha_emision = st.date_input("Fecha de Emisión / Compra", value=datetime.today())
+        num_factura = st.text_input("Número de Documento (N° Folio/Factura)", value="FAC-001")
+        fecha_emision = st.date_input("Fecha de Emisión del DTE", value=datetime.today())
     with col_h3:
         bodega_destino = st.selectbox("🏢 Bodega / Sucursal de Recepción:", options=bodegas_existentes)
         condicion_pago = st.selectbox("Condición de Pago", ["Contado", "Crédito", "Cheque"])
         fecha_vencimiento_factura = st.date_input("Vencimiento del Pago (si es Crédito)", value=datetime.today())
+
+    # Determinar si el documento genera Crédito Fiscal (19% IVA)
+    es_afecto_iva = (tipo_recepcion == "Factura Electrónica")
 
     st.divider()
     st.markdown("#### 📦 2. Agregar Productos o Insumos al Documento")
@@ -119,7 +121,7 @@ def mostrar_modulo_compras(ruta_negocio):
                     'descripcion': desc_p,
                     'cantidad': float(cant_comprada),
                     'neto_unitario': float(neto_unit),
-                    'subtotal': float(cant_comprada) * float(neto_unit),
+                    'subtotal_neto': float(cant_comprada) * float(neto_unit),
                     'lote': lote,
                     'vencimiento_lote': venc_lote
                 })
@@ -131,10 +133,20 @@ def mostrar_modulo_compras(ruta_negocio):
     if st.session_state.items_compra_actual:
         st.markdown(f"##### Ítems en el Documento N° {num_factura} (Destino: {bodega_destino}):")
         df_temp = pd.DataFrame(st.session_state.items_compra_actual)
-        st.dataframe(df_temp[['tipo', 'codigo', 'descripcion', 'lote', 'cantidad', 'neto_unitario', 'subtotal']], use_container_width=True)
+        st.dataframe(df_temp[['tipo', 'codigo', 'descripcion', 'lote', 'cantidad', 'neto_unitario', 'subtotal_neto']], use_container_width=True)
        
-        monto_total_factura = df_temp['subtotal'].sum()
-        st.markdown(f"### 💰 **Total Neto de este Documento: ${monto_total_factura:,.2f}**")
+        # CÁLCULOS TRIBUTARIOS
+        monto_neto_total = float(df_temp['subtotal_neto'].sum())
+        monto_iva_total = float(monto_neto_total * 0.19) if es_afecto_iva else 0.0
+        monto_bruto_total = float(monto_neto_total + monto_iva_total)
+
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("Neto Total", f"${monto_neto_total:,.0f}")
+        with col_m2:
+            st.metric("IVA Crédito Fiscal (19%)", f"${monto_iva_total:,.0f}", delta="F29 A Favor" if es_afecto_iva else "Sin Crédito Fiscal", delta_color="normal" if es_afecto_iva else "off")
+        with col_m3:
+            st.metric("Total Bruto a Pagar", f"${monto_bruto_total:,.0f}")
 
         col_acc1, col_acc2 = st.columns(2)
         with col_acc1:
@@ -146,7 +158,6 @@ def mostrar_modulo_compras(ruta_negocio):
                 try:
                     fecha_registro = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-                    # Obtener metadatos del proveedor seleccionado para la asociación en DB
                     datos_prov = dict_proveedores.get(proveedor_factura, {})
                     rut_proveedor = datos_prov.get("rut") or datos_prov.get("rut_proveedor") or ""
                     id_proveedor = datos_prov.get("id") or datos_prov.get("id_proveedor") or ""
@@ -154,6 +165,9 @@ def mostrar_modulo_compras(ruta_negocio):
                     for item in st.session_state.items_compra_actual:
                         cant_n = float(item['cantidad'])
                         costo_n = float(item['neto_unitario'])
+                        subtotal_linea_neto = float(item['subtotal_neto'])
+                        iva_linea = subtotal_linea_neto * 0.19 if es_afecto_iva else 0.0
+                        total_linea_bruto = subtotal_linea_neto + iva_linea
                         
                         # Actualización de Inventario y Cálculo de CPP
                         tabla_inv = "productos" if item['tipo'] == "Producto" else "ingredientes"
@@ -179,20 +193,26 @@ def mostrar_modulo_compras(ruta_negocio):
                                 prod_nuevo['costo'] = costo_n
                                 supabase.table(tabla_inv).insert(prod_nuevo).execute()
 
-                        # Insertar registro de la compra
+                        # Insertar registro completo de la compra con desglose de IVA para Salud Fiscal
                         registro_compra = {
                             'fecha_hora': fecha_registro,
+                            'fecha_emision': str(fecha_emision),
                             'tipo_recepcion': tipo_recepcion,
+                            'es_afecto': es_afecto_iva,
                             'proveedor': proveedor_factura,
                             'nombre_proveedor': proveedor_factura,
                             'rut_proveedor': str(rut_proveedor),
                             'id_proveedor': str(id_proveedor),
                             'factura': num_factura,
+                            'numero_documento': num_factura,
                             'codigo': item['codigo'],
                             'descripcion': f"[{item['tipo']}] {item['descripcion']}",
                             'cantidad': cant_n,
                             'neto_unitario': costo_n,
-                            'costo_total': item['subtotal'],
+                            'costo_total': subtotal_linea_neto,
+                            'monto_neto': subtotal_linea_neto,
+                            'monto_iva': round(iva_linea, 2),
+                            'monto_bruto': round(total_linea_bruto, 2),
                             'lote': item['lote'],
                             'fecha_vencimiento_lote': item['vencimiento_lote'],
                             'condicion_pago': condicion_pago,
@@ -204,21 +224,26 @@ def mostrar_modulo_compras(ruta_negocio):
                         try:
                             supabase.table("compras").insert(registro_compra).execute()
                         except Exception:
+                            # Fallback si algunas columnas no existen aún en la tabla de Supabase
                             registro_restringido = {
                                 'fecha_hora': fecha_registro,
+                                'fecha_emision': str(fecha_emision),
                                 'proveedor': proveedor_factura,
                                 'factura': num_factura,
+                                'tipo_recepcion': tipo_recepcion,
                                 'codigo': item['codigo'],
                                 'descripcion': f"[{item['tipo']}] {item['descripcion']}",
                                 'cantidad': cant_n,
                                 'neto_unitario': costo_n,
-                                'costo_total': item['subtotal'],
+                                'costo_total': subtotal_linea_neto,
+                                'monto_neto': subtotal_linea_neto,
+                                'monto_iva': round(iva_linea, 2),
                                 'id_negocio': str(tenant_id),
                                 'rut_empresa': str(tenant_id)
                             }
                             supabase.table("compras").insert(registro_restringido).execute()
 
-                    # Registro en cuentas por pagar si aplica crédito
+                    # Registro en cuentas por pagar si aplica crédito (Guarda el Total BRUTO con IVA)
                     if condicion_pago in ["Crédito", "Cheque"]:
                         nueva_cuenta = {
                             'rut_empresa': str(tenant_id),
@@ -228,7 +253,9 @@ def mostrar_modulo_compras(ruta_negocio):
                             'numero_factura': num_factura,
                             'fecha_emision': str(fecha_emision),
                             'fecha_vencimiento': str(fecha_vencimiento_factura),
-                            'monto_total': float(monto_total_factura),
+                            'monto_neto': float(monto_neto_total),
+                            'monto_iva': float(monto_iva_total),
+                            'monto_total': float(monto_bruto_total),
                             'estado': 'PENDIENTE'
                         }
                         try:
@@ -237,7 +264,7 @@ def mostrar_modulo_compras(ruta_negocio):
                             print(f"Aviso en Cuentas por Pagar: {e_cpp}")
 
                     st.session_state.items_compra_actual = []
-                    st.success(f"🎉 ¡Recepción exitosa! Compra asociada correctamente a {proveedor_factura} en '{bodega_destino}'.")
+                    st.success(f"🎉 ¡Recepción exitosa! Compra registrada con **${monto_iva_total:,.0f}** en Crédito Fiscal.")
                     st.rerun()
 
                 except Exception as e:
