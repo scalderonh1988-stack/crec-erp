@@ -5058,34 +5058,34 @@ elif menu == "💰 Módulo de Ventas (POS)":
         st.session_state.input_scanner = ""
 
     # --- 6. CABECERA Y SELECCIÓN DE DOCUMENTO Y MODO DE STOCK ---
-col_doc1, col_doc2, col_doc3, col_doc4 = st.columns(4)
+    col_doc1, col_doc2, col_doc3, col_doc4 = st.columns(4)
 
-with col_doc1:
-    tipo_documento = st.selectbox(
-        "📄 Selecciona el documento:", 
-        ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"]
-    )
+    with col_doc1:
+        tipo_documento = st.selectbox(
+            "📄 Selecciona el documento:", 
+            ["Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"]
+        )
 
-with col_doc2:
-    fecha_emision_venta = st.date_input("📅 Fecha de Emisión del Documento")
+    with col_doc2:
+        fecha_emision_venta = st.date_input("📅 Fecha de Emisión del Documento")
 
-with col_doc3:
-    modo_operacion = st.radio(
-        "⚙️ Tipo de Emisión:",
-        ["Control Interno (Libre)", "Oficial (SII)"],
-        horizontal=True,
-        key="radio_modo_emision"
-    )
+    with col_doc3:
+        modo_operacion = st.radio(
+            "⚙️ Tipo de Emisión:",
+            ["Control Interno (Libre)", "Oficial (SII)"],
+            horizontal=True,
+            key="radio_modo_emision"
+        )
 
-with col_doc4:
-    modo_inventario = st.radio(
-        "📦 Modo Inventario:",
-        ["Estricto (Validar Stock)", "Venta Libre (Permisivo)"],
-        horizontal=True,
-        key="radio_modo_inventario"
-    )
+    with col_doc4:
+        modo_inventario = st.radio(
+            "📦 Modo Inventario:",
+            ["Estricto (Validar Stock)", "Venta Libre (Permisivo)"],
+            horizontal=True,
+            key="radio_modo_inventario"
+        )
 
-modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
+    modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
 
     # --- 7. LÓGICA: FACTURAR DESDE UNA GUÍA PREVIA ---
     if tipo_documento == "Factura Electrónica":
@@ -5099,7 +5099,6 @@ modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
                 if st.button("📥 Cargar Guía", use_container_width=True):
                     if folio_guia_a_facturar and modo_online:
                         try:
-                            # Consulta directa filtrando por la columna 'documento' y 'folio'
                             res_guia = supabase.table("ventas") \
                                 .select("*") \
                                 .eq("rut_empresa", str(rut_actual)) \
@@ -5119,10 +5118,11 @@ modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
                                     cant = float(item.get("cantidad", 1))
                                     monto_total = float(item.get("monto", 0))
                                     precio_unitario = monto_total / cant if cant > 0 else 0
-                                    
+                                    desc_raw = str(item.get('detalle', 'Producto')).replace("(📄 de Guía)", "").strip()
+
                                     st.session_state.carrito_ventas.append({
                                         "Código": item.get("codigo_producto", ""),
-                                        "Descripción": f"{item.get('detalle', 'Producto')} (📄 de Guía)",
+                                        "Descripción": desc_raw,
                                         "Cantidad": cant,
                                         "Precio Unitario": precio_unitario,
                                         "Subtotal": monto_total,
