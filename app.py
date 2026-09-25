@@ -5307,13 +5307,16 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                         "direccion": val_dir.strip(),
                                         "comuna": val_comuna.strip()
                                     }
-                                    # Actualizar en Supabase tanto por 'rut' como por 'rut_cliente'
-                                    supabase.table("clientes").update(update_payload).or_(f"rut.eq.{cliente_rut},rut_cliente.eq.{cliente_rut}").execute()
+                                    # Intentar actualización en Supabase
+                                    supabase.table("clientes")\
+                                        .update(update_payload)\
+                                        .or_(f"rut.eq.{cliente_rut},rut_cliente.eq.{cliente_rut}")\
+                                        .execute()
                                     
-                                    st.success("✅ ¡Datos del cliente guardados exitosamente en la base de datos!")
+                                    st.success("✅ ¡Datos del cliente guardados exitosamente en Supabase!")
                                     st.rerun()
                                 except Exception as err_upd:
-                                    st.error(f"Error al actualizar el cliente en Supabase: {err_upd}")
+                                    st.error(f"⚠️ Error al actualizar en Supabase: {err_upd}")
     else:
         col_f1, col_f2 = st.columns(2)
         with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def, placeholder="Ej: Distribuidora Los Andes SpA")
