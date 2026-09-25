@@ -5,6 +5,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from modulos.servicios.data_manager import get_current_tenant, supabase
+from modulos.servicios.dte_manager import emitir_dte_openfactura
 
 
 def mostrar_modulo_historial_ventas(ruta_negocio):
@@ -75,7 +76,7 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
         df_ventas["fecha_corta"] = df_ventas["fecha_dt"].dt.date
         df_ventas = df_ventas.sort_values(by="fecha_dt", ascending=False)
 
-    # Columnas solicitadas para tablas
+    # Columnas solicitadas para tablas incluyendo trazabilidad DTE
     columnas_solicitadas = [
         "id",
         "folio",
@@ -87,6 +88,9 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
         "iva",
         "monto",
         "documento",
+        "modo_emision",
+        "estado_dte",
+        "pdf_url",
     ]
     cols_visibles = [c for c in columnas_solicitadas if c in df_ventas.columns]
 
@@ -99,7 +103,7 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
         "📂 Vista General",
         "📄 Por Tipo de Documento",
         "💳 Método de Pago",
-        "🖨️ Descargar Comprobante",
+        "🖨️ Descargar Comprobante / DTE",
         "🗑️ Eliminar / Anular Venta",
     ])
 
@@ -109,7 +113,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
     with tab_dash:
         st.markdown("#### 📊 Dashboard de Ventas & Inteligencia de Negocio")
 
-        # Filtro de rango de fechas para el Dashboard
         if "fecha_corta" in df_ventas.columns and not df_ventas["fecha_corta"].dropna().empty:
             min_fecha = df_ventas["fecha_corta"].min()
             max_fecha = df_ventas["fecha_corta"].max()
@@ -120,7 +123,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             with col_f2:
                 f_fin = st.date_input("📅 Fecha Hasta:", value=max_fecha)
 
-            # Filtrar DataFrame por rango de fechas elegido
             mask_dash = (df_ventas["fecha_corta"] >= f_inicio) & (df_ventas["fecha_corta"] <= f_fin)
             df_dash = df_ventas[mask_dash].copy()
         else:
@@ -129,7 +131,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
         if df_dash.empty:
             st.warning("⚠️ No se encontraron ventas en el rango de fechas seleccionado.")
         else:
-            # --- 📈 TARJETAS KPI ---
             total_ventas = df_dash["monto"].sum() if "monto" in df_dash.columns else 0.0
             total_unidades = df_dash["cantidad"].sum() if "cantidad" in df_dash.columns else 0
             total_folios = df_dash[col_folio].nunique() if col_folio in df_dash.columns else len(df_dash)
@@ -143,7 +144,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
 
             st.markdown("---")
 
-            # --- 📊 FILA DE GRÁFICOS 1: EVOLUCIÓN TEMPORAL Y DOCUMENTOS ---
             col_g1, col_g2 = st.columns([3, 2])
 
             with col_g1:
@@ -175,7 +175,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                     fig_pie.update_layout(margin=dict(l=20, r=20, t=30, b=20), height=320)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
-            # --- 📊 FILA DE GRÁFICOS 2: TOP PRODUCTOS Y TOP CLIENTES ---
             col_g3, col_g4 = st.columns(2)
 
             with col_g3:
@@ -183,7 +182,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                 col_prod = "detalle" if "detalle" in df_dash.columns else ("producto" if "producto" in df_dash.columns else None)
 
                 if col_prod and "cantidad" in df_dash.columns and "monto" in df_dash.columns:
-                    # 1. Selector para alternar entre Unidades y Monto
                     opcion_metrica = st.radio(
                         "Seleccionar métrica:",
                         options=["Unidades", "Monto ($)"],
@@ -195,7 +193,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                     col_metrica = "cantidad" if opcion_metrica == "Unidades" else "monto"
                     label_metrica = "Unidades Vendidas" if opcion_metrica == "Unidades" else "Monto Total"
 
-                    # 2. Totales globales e indicador del Top 10
                     total_global = df_dash[col_metrica].sum()
 
                     top_10 = (
@@ -209,13 +206,11 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                     suma_top_10 = top_10[col_metrica].sum()
                     pct_cobertura = (suma_top_10 / total_global * 100) if total_global > 0 else 0.0
 
-                    # 3. Etiqueta informativa de cobertura sobre el total histórico/filtrado
                     st.info(
                         f"📌 Este Top 10 representa el **{pct_cobertura:.1f}%** del total de "
                         f"{'unidades vendidas' if opcion_metrica == 'Unidades' else 'ventas totales ($)'} históricamente."
                     )
 
-                    # 4. Gráfico de Dona Top 10
                     fig_prod = px.pie(
                         top_10,
                         names=col_prod,
@@ -224,7 +219,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                         color_discrete_sequence=px.colors.qualitative.Pastel,
                     )
 
-                    # Formato del Tooltip según la métrica
                     hover_fmt = "%{value:,.0f}" if opcion_metrica == "Unidades" else "$%{value:,.2f}"
 
                     fig_prod.update_traces(
@@ -284,7 +278,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             format="%d",
         )
 
-    # Filtrado base por texto libre
     df_filtrado = df_ventas.copy()
     if busqueda_libre:
         mask = (
@@ -333,8 +326,11 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             st.info("ℹ️ No se detectó la columna 'metodo_pago'.")
             st.dataframe(df_mostrar.head(limite_filas), use_container_width=True)
 
+    # ---------------------------------------------------------
+    # 🖨️ PESTAÑA: COMPROBANTE Y CONTINGENCIA DTE (OPENFACTURA)
+    # ---------------------------------------------------------
     with tab_comprobante:
-        st.markdown("#### 🖨️ Búsqueda y Descarga de Comprobante Individual")
+        st.markdown("#### 🖨️ Búsqueda, Descarga y Contingencia DTE")
 
         lista_ids = df_ventas[col_folio].dropna().astype(str).unique().tolist()
         id_elegido = st.selectbox("Seleccione el Folio", options=lista_ids, key="sb_folio_comprobante")
@@ -344,10 +340,92 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
 
             if not fila_venta.empty:
                 st.success("✅ ¡Transacción encontrada con éxito!")
+                primera_fila = fila_venta.iloc[0]
+
+                # Mostrar detalles generales
+                modo_e = str(primera_fila.get("modo_emision", "INTERNO")).upper()
+                estado_d = str(primera_fila.get("estado_dte", "EMITIDO")).upper()
+                pdf_url_val = primera_fila.get("pdf_url")
+                xml_url_val = primera_fila.get("xml_url")
+                error_d_val = primera_fila.get("error_dte")
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Modo Emisión", modo_e)
+                c2.metric("Estado DTE", estado_d)
+                c3.metric("Tipo Documento", str(primera_fila.get("documento", "N/A")))
+
+                if error_d_val:
+                    st.error(f"⚠️ Registro de Error DTE: {error_d_val}")
+
                 fila_venta_mostrar = fila_venta[cols_visibles] if cols_visibles else fila_venta
                 st.dataframe(fila_venta_mostrar, use_container_width=True)
 
-                primera_fila = fila_venta.iloc[0]
+                st.markdown("---")
+                col_actions1, col_actions2, col_actions3 = st.columns(3)
+
+                # Acciones para Documento DTE Oficial
+                with col_actions1:
+                    if pdf_url_val and str(pdf_url_val).startswith("http"):
+                        st.link_button("📄 Ver DTE Oficial (PDF)", str(pdf_url_val), use_container_width=True)
+                    else:
+                        st.info("Sin PDF oficial adjunto")
+
+                with col_actions2:
+                    if xml_url_val and str(xml_url_val).startswith("http"):
+                        st.link_button("📜 Descargar XML SII", str(xml_url_val), use_container_width=True)
+                    else:
+                        st.info("Sin XML oficial adjunto")
+
+                # Botonera de Contingencia: Re-intentar Timbrado si falló
+                with col_actions3:
+                    if modo_e == "OFICIAL" and (not pdf_url_val or estado_d == "ERROR_DTE"):
+                        if st.button("⚡ Re-intentar Timbrado SII", type="primary", use_container_width=True):
+                            st.toast("⚡ Re-enviando solicitud a OpenFactura...", icon="📡")
+                            
+                            items_retry = []
+                            for _, item in fila_venta.iterrows():
+                                items_retry.append({
+                                    "nombre": str(item.get("detalle", "Producto")),
+                                    "cantidad": float(item.get("cantidad", 1)),
+                                    "precio_unitario": float(item.get("monto", 0)) / float(item.get("cantidad", 1)) if float(item.get("cantidad", 1)) > 0 else 0,
+                                    "es_exento": False
+                                })
+
+                            res_retry = emitir_dte_openfactura(
+                                rut_emisor=tenant_id,
+                                tipo_documento=str(primera_fila.get("documento", "Boleta Electrónica")),
+                                items=items_retry,
+                                rut_receptor=str(primera_fila.get("rut_cliente", "66666666-6")),
+                                razon_social_receptor=str(primera_fila.get("cliente", "Cliente General"))
+                            )
+
+                            if res_retry.get("exito"):
+                                nuevo_folio = res_retry.get("folio")
+                                nuevo_pdf = res_retry.get("pdf_url")
+                                nuevo_xml = res_retry.get("xml_url")
+
+                                try:
+                                    supabase.table("ventas").update({
+                                        "folio": str(nuevo_folio),
+                                        "pdf_url": nuevo_pdf,
+                                        "xml_url": nuevo_xml,
+                                        "estado_dte": "EMITIDO",
+                                        "error_dte": None
+                                    }).eq("rut_empresa", str(tenant_id)).eq("folio", str(id_elegido)).execute()
+
+                                    st.success(f"🎉 Timbrado Exitoso. Nuevo Folio SII: {nuevo_folio}")
+                                    st.rerun()
+                                except Exception as err_upd:
+                                    st.error(f"❌ Error actualizando base de datos: {err_upd}")
+                            else:
+                                err_msg = res_retry.get("error", "Error en timbrado")
+                                supabase.table("ventas").update({
+                                    "estado_dte": "ERROR_DTE",
+                                    "error_dte": err_msg
+                                }).eq("rut_empresa", str(tenant_id)).eq("folio", str(id_elegido)).execute()
+                                st.error(f"🚨 Falló el timbrado: {err_msg}")
+
+                # Generar Recibo de Texto Interno
                 detalle_texto = "=== COMPROBANTE DE VENTA ===\n\n"
                 detalle_texto += f"FOLIO: {id_elegido}\n"
                 detalle_texto += f"FECHA: {primera_fila.get('fecha', 'N/A')}\n"
@@ -376,7 +454,7 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                 detalle_texto += "========================================\n"
 
                 st.download_button(
-                    label=f"📥 Descargar Comprobante ({id_elegido})",
+                    label=f"📥 Descargar Ticket Texto ({id_elegido})",
                     data=detalle_texto,
                     file_name=f"Comprobante_{id_elegido}.txt",
                     mime="text/plain",
@@ -392,7 +470,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
 
         col_sel_doc, col_sel_folio = st.columns(2)
 
-        # 1. Seleccionar Tipo de Documento
         with col_sel_doc:
             if col_doc:
                 docs_disponibles = list(df_ventas[col_doc].dropna().unique())
@@ -404,12 +481,10 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             else:
                 doc_a_eliminar = "-- Seleccionar --"
 
-        # Filtrar el DataFrame según el tipo de documento seleccionado
         df_filtrado_doc = df_ventas.copy()
         if col_doc and doc_a_eliminar != "-- Seleccionar --":
             df_filtrado_doc = df_filtrado_doc[df_filtrado_doc[col_doc] == doc_a_eliminar]
 
-        # 2. Seleccionar Folio (basado solo en los folios existentes para ese Tipo de Documento)
         with col_sel_folio:
             if doc_a_eliminar != "-- Seleccionar --":
                 folios_unicos = [""] + df_filtrado_doc["folio"].dropna().astype(str).unique().tolist()
@@ -422,9 +497,7 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                 st.selectbox("📌 Seleccione el Folio a eliminar:", options=[""], disabled=True, key="sb_folio_eliminar_v3_disabled")
                 folio_a_eliminar = ""
 
-        # 3. Procesar eliminación si hay Tipo de Documento y Folio válidos
         if doc_a_eliminar != "-- Seleccionar --" and folio_a_eliminar:
-            # Filtramos estrictamente por Tipo de Documento Y Folio
             filas_a_eliminar = df_filtrado_doc[df_filtrado_doc["folio"].astype(str) == str(folio_a_eliminar)]
 
             if not filas_a_eliminar.empty:
@@ -461,7 +534,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                         st.warning("⚠️ Debe marcar la casilla de confirmación antes de ejecutar la eliminación.")
                     else:
                         try:
-                            # Reingreso de Stock si aplica
                             if reingresar_stock:
                                 bodega_defecto = st.session_state.get(
                                     "bodega_pos_seleccionada", "Bodega Principal"
@@ -483,7 +555,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                                             },
                                         ).execute()
 
-                            # Borrado en Cuentas por Cobrar (filtrando por folio)
                             try:
                                 supabase.table("cuentas_por_cobrar").delete().eq(
                                     "rut_empresa", str(tenant_id)
@@ -491,7 +562,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                             except Exception:
                                 pass
 
-                            # Borrado exacto en Ventas filtrando por RUT Empresa + Folio + Tipo de Documento
                             query_del_ventas = (
                                 supabase.table("ventas")
                                 .delete()
@@ -499,7 +569,6 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
                                 .eq("folio", str(folio_a_eliminar))
                             )
                             
-                            # Aplicar filtro por la columna de tipo de documento
                             if col_doc:
                                 query_del_ventas = query_del_ventas.eq(col_doc, str(doc_a_eliminar))
 
