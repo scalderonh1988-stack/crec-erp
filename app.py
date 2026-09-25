@@ -5210,12 +5210,37 @@ elif menu == "💰 Módulo de Ventas (POS)":
     giro_receptor, dir_receptor, comuna_receptor = "Sin Giro", "Santiago", "Santiago"
     df_clientes_pos = pd.DataFrame()
 
+    rut_limpio = str(rut_actual).replace(".", "").strip()
+
     if modo_online:
         try:
-            res_clientes = supabase.table("clientes").select("rut, nombre, giro, direccion, comuna").eq("id_negocio", str(rut_actual)).execute()
-            df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
-        except Exception:
-            pass
+            # Búsqueda flexible por id_negocio O rut_empresa (con y sin formato)
+            res_clientes = supabase.table("clientes") \
+                .select("*") \
+                .or_(f"id_negocio.eq.{rut_actual},rut_empresa.eq.{rut_actual},id_negocio.eq.{rut_limpio},rut_empresa.eq.{rut_limpio}") \
+                .execute()
+
+            if res_clientes.data:
+                registros_normalizados = []
+                for row in res_clientes.data:
+                    c_nombre = row.get("nombre") or row.get("razon_social")
+                    c_rut = row.get("rut") or row.get("rut_cliente")
+                    c_giro = row.get("giro") or "Sin Giro"
+                    c_dir = row.get("direccion") or "Sin Dirección"
+                    c_comuna = row.get("comuna") or "Santiago"
+
+                    if c_nombre and c_rut:
+                        registros_normalizados.append({
+                            "nombre": str(c_nombre).strip(),
+                            "rut": str(c_rut).strip(),
+                            "giro": str(c_giro).strip(),
+                            "direccion": str(c_dir).strip(),
+                            "comuna": str(c_comuna).strip()
+                        })
+
+                df_clientes_pos = pd.DataFrame(registros_normalizados)
+        except Exception as e:
+            st.error(f"⚠️ Error al consultar clientes en Supabase: {e}")
 
     c_nombre_def = st.session_state.get("cliente_preseleccionado", "")
     c_rut_def = ""
@@ -5240,12 +5265,11 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 break
 
     cliente_elegido = st.selectbox("👤 Selecciona o asigna un cliente:", lista_clientes, index=idx_cliente)
-  
+
     if cliente_elegido and cliente_elegido != "-- Selecciona un cliente (Opcional / Requerido para Crédito y Factura) --" and " (" in cliente_elegido:
         cliente_nombre = cliente_elegido.split(" (")[0]
         cliente_rut = cliente_elegido.split(" (")[1].replace(")", "")
         
-        # Extraer datos tributarios si existen en la BD
         match_c = df_clientes_pos[df_clientes_pos["rut"] == cliente_rut]
         if not match_c.empty:
             giro_receptor = str(match_c.iloc[0].get("giro") or "Giro Comercial")
@@ -5255,7 +5279,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
         col_f1, col_f2 = st.columns(2)
         with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def, placeholder="Ej: Distribuidora Los Andes SpA")
         with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def, placeholder="Ej: 76.543.210-K")
-
     # Si se selecciona Factura u Oficial (SII), solicitar campos obligatorios tributarios
     if (tipo_documento == "Factura Electrónica" or modo_operacion == "Oficial (SII)") and (not cliente_elegido or cliente_elegido.startswith("--")):
         with st.expander("🏛️ Datos Tributarios del Receptor (Obligatorios para Facturas SII)", expanded=(tipo_documento == "Factura Electrónica")):
