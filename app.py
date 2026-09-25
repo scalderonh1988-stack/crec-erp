@@ -4828,6 +4828,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
     import sqlite3
     import json
     import socket
+    from datetime import datetime, timedelta
+    import streamlit.components.v1 as components
     from modulos.servicios.dte_manager import emitir_dte_openfactura, validar_rut
 
     DB_LOCAL_NAME = "pos_local_cache.db"
@@ -4870,13 +4872,13 @@ elif menu == "💰 Módulo de Ventas (POS)":
         except Exception as e:
             print(f"Error inicializando SQLite local: {e}")
 
-    def hay_conexion_activa(host="8.8.8.8", port=53, timeout=1.0):
-        """Verifica si hay conexión a internet disponible."""
+    def hay_conexion_activa(host="www.google.com", port=80, timeout=1.5):
+        """Verifica disponibilidad de red vía HTTP/HTTPS (Compatible con Streamlit Cloud)."""
         try:
             socket.setdefaulttimeout(timeout)
-            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+            socket.create_connection((host, port))
             return True
-        except OSError:
+        except Exception:
             return False
 
     def respaldar_catalogo_local(df_prod, rut, bodega):
@@ -5309,7 +5311,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
         col_pdf, col_termico, col_nueva = st.columns(3)
 
         with col_pdf:
-            # Si hay un PDF oficial retornado por Haulmer, ofrecer su descarga directa
+            # Si hay un PDF oficial retornado por OpenFactura, ofrecer su descarga directa
             if st.session_state.get("url_pdf_oficial"):
                 st.link_button("📄 Descargar DTE Oficial (OpenFactura)", st.session_state.url_pdf_oficial, use_container_width=True)
             else:
@@ -5415,45 +5417,50 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         pdf_url_dte = None
                         xml_url_dte = None
 
-                        if modo_str == "OFICIAL" and not es_offline_para_cobro:
-                            st.toast("⚡ Timbrando documento con el SII...", icon="📡")
-                            
-                            datos_empresa_emision = obtener_datos_emisor(supabase, rut_actual) if modo_online else {}
-                            
-                            # Formatear items para el conector DTE
-                            items_payload_dte = [
-                                {
-                                    "nombre": str(i["Descripción"]),
-                                    "cantidad": float(i["Cantidad"]),
-                                    "precio_unitario": float(i["Precio Unitario"]),
-                                    "es_exento": bool(i.get("Es Exento", False))
-                                }
-                                for i in st.session_state.carrito_ventas
-                            ]
-
-                            resultado_dte = emitir_dte_openfactura(
-                                rut_emisor=rut_actual,
-                                tipo_documento=tipo_documento,
-                                items=items_payload_dte,
-                                rut_receptor=cliente_rut if cliente_rut else "66666666-6",
-                                razon_social_receptor=cliente_nombre if cliente_nombre else "Cliente General",
-                                giro_receptor=giro_receptor,
-                                direccion_receptor=dir_receptor,
-                                comuna_receptor=comuna_receptor,
-                                datos_empresa=datos_empresa_emision
-                            )
-
-                            if resultado_dte and resultado_dte.get("exito"):
-                                numero_folio_actual = str(resultado_dte["folio"])
-                                pdf_url_dte = resultado_dte.get("pdf_url")
-                                xml_url_dte = resultado_dte.get("xml_url")
-                                st.session_state.url_pdf_oficial = pdf_url_dte
-                                st.toast(f"✅ DTE Timbrado Exitosamente. Folio SII: N° {numero_folio_actual}", icon="📜")
-                            else:
-                                error_msg = resultado_dte.get("error", "Error desconocido en timbrado DTE") if resultado_dte else "Fallo conexión DTE"
-                                st.error(f"🚨 Error de Timbrado SII: {error_msg}")
+                        if modo_str == "OFICIAL":
+                            if es_offline_para_cobro:
+                                st.error("🚨 No es posible emitir DTE Oficial sin conexión a Internet (SII / Supabase). Revisa la red.")
                                 st.session_state.procesando_emision_dte = False
                                 st.stop()
+                            else:
+                                st.toast("⚡ Timbrando documento con el SII mediante OpenFactura...", icon="📡")
+                                
+                                datos_empresa_emision = obtener_datos_emisor(supabase, rut_actual) if modo_online else {}
+                                
+                                # Formatear items para el conector DTE
+                                items_payload_dte = [
+                                    {
+                                        "nombre": str(i["Descripción"]),
+                                        "cantidad": float(i["Cantidad"]),
+                                        "precio_unitario": float(i["Precio Unitario"]),
+                                        "es_exento": bool(i.get("Es Exento", False))
+                                    }
+                                    for i in st.session_state.carrito_ventas
+                                ]
+
+                                resultado_dte = emitir_dte_openfactura(
+                                    rut_emisor=rut_actual,
+                                    tipo_documento=tipo_documento,
+                                    items=items_payload_dte,
+                                    rut_receptor=cliente_rut if cliente_rut else "66666666-6",
+                                    razon_social_receptor=cliente_nombre if cliente_nombre else "Cliente General",
+                                    giro_receptor=giro_receptor,
+                                    direccion_receptor=dir_receptor,
+                                    comuna_receptor=comuna_receptor,
+                                    datos_empresa=datos_empresa_emision
+                                )
+
+                                if resultado_dte and resultado_dte.get("exito"):
+                                    numero_folio_actual = str(resultado_dte["folio"])
+                                    pdf_url_dte = resultado_dte.get("pdf_url")
+                                    xml_url_dte = resultado_dte.get("xml_url")
+                                    st.session_state.url_pdf_oficial = pdf_url_dte
+                                    st.toast(f"✅ DTE Timbrado Exitosamente. Folio SII: N° {numero_folio_actual}", icon="📜")
+                                else:
+                                    error_msg = resultado_dte.get("error", "Error desconocido en timbrado DTE") if resultado_dte else "Fallo conexión DTE"
+                                    st.error(f"🚨 Error de Timbrado SII: {error_msg}")
+                                    st.session_state.procesando_emision_dte = False
+                                    st.stop()
 
                         # --- 2. ASIGNACIÓN DE FOLIO INTERNO (SI NO ES DTE OFICIAL) ---
                         if not numero_folio_actual:
