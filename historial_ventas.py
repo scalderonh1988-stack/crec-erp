@@ -179,51 +179,66 @@ def mostrar_modulo_historial_ventas(ruta_negocio):
             col_g3, col_g4 = st.columns(2)
 
             with col_g3:
-                st.markdown("##### 🍩 Top 10 Productos Más Vendidos (Unidades)")
+                st.markdown("##### 🍩 Top 10 Productos Más Vendidos")
                 col_prod = "detalle" if "detalle" in df_dash.columns else ("producto" if "producto" in df_dash.columns else None)
-                if col_prod and "cantidad" in df_dash.columns:
-                    # 1. Total global de unidades vendidas en el periodo/histórico
-                    total_unidades_global = df_dash["cantidad"].sum()
 
-                    # 2. Agrupar los 10 productos más vendidos
-                    top_prod = (
-                        df_dash.groupby(col_prod)["cantidad"]
+                if col_prod and "cantidad" in df_dash.columns and "monto" in df_dash.columns:
+                    # 1. Selector para alternar entre Unidades y Monto
+                    opcion_metrica = st.radio(
+                        "Seleccionar métrica:",
+                        options=["Unidades", "Monto ($)"],
+                        horizontal=True,
+                        key="radio_top_productos",
+                        label_visibility="collapsed"
+                    )
+
+                    col_metrica = "cantidad" if opcion_metrica == "Unidades" else "monto"
+                    label_metrica = "Unidades Vendidas" if opcion_metrica == "Unidades" else "Monto Total"
+
+                    # 2. Totales globales e indicador del Top 10
+                    total_global = df_dash[col_metrica].sum()
+
+                    top_10 = (
+                        df_dash.groupby(col_prod)[col_metrica]
                         .sum()
                         .reset_index()
-                        .sort_values(by="cantidad", ascending=False)
+                        .sort_values(by=col_metrica, ascending=False)
                         .head(10)
                     )
 
-                    # 3. Calcular el % real sobre el total histórico/filtrado
-                    top_prod["pct_global"] = (
-                        (top_prod["cantidad"] / total_unidades_global) * 100
-                        if total_unidades_global > 0
-                        else 0.0
+                    suma_top_10 = top_10[col_metrica].sum()
+                    pct_cobertura = (suma_top_10 / total_global * 100) if total_global > 0 else 0.0
+
+                    # 3. Etiqueta informativa de cobertura sobre el total histórico/filtrado
+                    st.info(
+                        f"📌 Este Top 10 representa el **{pct_cobertura:.1f}%** del total de "
+                        f"{'unidades vendidas' if opcion_metrica == 'Unidades' else 'ventas totales ($)'} históricamente."
                     )
 
-                    # 4. Generar gráfico pasando el % global en custom_data
+                    # 4. Gráfico de Dona Top 10
                     fig_prod = px.pie(
-                        top_prod,
+                        top_10,
                         names=col_prod,
-                        values="cantidad",
+                        values=col_metrica,
                         hole=0.4,
                         color_discrete_sequence=px.colors.qualitative.Pastel,
-                        custom_data=["pct_global"],
                     )
 
-                    # 5. Formatear la etiqueta y el hover para mostrar el % del total general
+                    # Formato del Tooltip según la métrica
+                    hover_fmt = "%{value:,.0f}" if opcion_metrica == "Unidades" else "$%{value:,.2f}"
+
                     fig_prod.update_traces(
                         textposition="inside",
-                        texttemplate="<b>%{label}</b><br>%{customdata[0]:.1f}%",
+                        texttemplate="<b>%{label}</b><br>%{percent:.1%}",
                         hovertemplate=(
-                            "<b>%{label}</b><br>"
-                            "Unidades Vendidas: %{value:,.0f}<br>"
-                            "Participación del Total General: <b>%{customdata[0]:.2f}%</b><extra></extra>"
+                            f"<b>%{{label}}</b><br>"
+                            f"{label_metrica}: <b>{hover_fmt}</b><br>"
+                            f"% dentro del Top 10: <b>%{{percent:.1%}}</b><extra></extra>"
                         ),
                     )
                     fig_prod.update_layout(
-                        margin=dict(l=20, r=20, t=30, b=20),
-                        height=350,
+                        margin=dict(l=20, r=20, t=10, b=20),
+                        height=330,
                         showlegend=False,
                     )
                     st.plotly_chart(fig_prod, use_container_width=True)
