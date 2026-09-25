@@ -863,7 +863,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             if es_multimoneda:
                 dolar_hoy = obtener_dolar_hoy()
                 
-                # Por defecto selecciona USD ($)
                 moneda_pago = st.radio(
                     "Seleccione la moneda del pago:",
                     ["Dólares (USD $)", "Pesos Chilenos (CLP $)"],
@@ -894,12 +893,10 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                             key=f"tc_{folio_seleccionado}"
                         )
 
-                    # Convierte CLP a USD dividiendo por el tipo de cambio
                     monto_abono = monto_clp / tipo_cambio if tipo_cambio > 0 else 0.0
                     st.success(f"💰 Equivalente a abonar a la deuda: **${monto_abono:,.2f} USD**")
 
                 else:
-                    # Pago directo en USD (Default)
                     monto_abono = st.number_input(
                         f"💵 Monto a abonar en USD (Máximo ${saldo_actual:,.2f} USD):",
                         min_value=0.0,
@@ -916,6 +913,40 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                     step=100.0,
                     key=f"clp_{folio_seleccionado}"
                 )
+
+            # --- BOTÓN DE CONFIRMACIÓN DE ABONO EN DINERO ---
+            if st.button("💵 Confirmar y Registrar Abono", type="primary", use_container_width=True, key=f"btn_confirmar_abono_{folio_seleccionado}"):
+                if monto_abono <= 0:
+                    st.warning("⚠️ Ingresa un monto mayor a 0 para registrar el abono.")
+                else:
+                    try:
+                        nuevo_saldo = max(0.0, saldo_actual - float(monto_abono))
+                        
+                        if nuevo_saldo <= 0:
+                            # 1. Si se salda por completo, actualiza saldo a 0 y estado Pagado
+                            supabase.table("cuentas_por_cobrar").update({
+                                "saldo_pendiente": 0.0,
+                                "estado": "Pagado"
+                            }).eq("id", id_deuda).execute()
+
+                            # 2. Actualiza el estado en la tabla ventas
+                            supabase.table("ventas").update({
+                                "estado": "Pagado"
+                            }).eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).execute()
+
+                            st.success(f"🎉 ¡Abono registrado! La deuda del Folio **{folio_seleccionado}** ha sido pagada por completo.")
+                        else:
+                            # Actualización parcial del saldo
+                            supabase.table("cuentas_por_cobrar").update({
+                                "saldo_pendiente": nuevo_saldo,
+                                "estado": "Pendiente"
+                            }).eq("id", id_deuda).execute()
+
+                            st.success(f"✅ ¡Abono de **${monto_abono:,.2f}** registrado con éxito! Nuevo saldo pendiente: **${nuevo_saldo:,.2f}**")
+
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al registrar el abono en Supabase: {e}")
 
             # --- REGISTRO DE REINGRESO / DEVOLUCIÓN (SÓLO SI ES CONSIGNACIÓN) ---
             if es_consignacion and items_venta:
@@ -979,17 +1010,25 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                                         ).execute()
 
                                 # 2. Rebaja el saldo pendiente en Cuentas por Cobrar
-                                nuevo_saldo = saldo_actual - total_rebaja_calculada
+                                nuevo_saldo = max(0.0, saldo_actual - total_rebaja_calculada)
 
                                 if nuevo_saldo <= 0:
-                                    supabase.table("cuentas_por_cobrar").delete().eq("id", id_deuda).execute()
-                                    supabase.table("ventas").update({"estado": "Pagado"}).eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).execute()
+                                    supabase.table("cuentas_por_cobrar").update({
+                                        "saldo_pendiente": 0.0,
+                                        "estado": "Pagado"
+                                    }).eq("id", id_deuda).execute()
+                                    
+                                    supabase.table("ventas").update({
+                                        "estado": "Pagado"
+                                    }).eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).execute()
+                                    
                                     st.success(f"🎉 ¡Mercadería devuelta y deuda saldada por completo para el folio {folio_seleccionado}!")
                                 else:
                                     supabase.table("cuentas_por_cobrar").update({
                                         "saldo_pendiente": nuevo_saldo,
                                         "estado": "Pendiente"
                                     }).eq("id", id_deuda).execute()
+                                    
                                     st.success(f"✅ Reingreso exitoso. Stock devuelto a bodega y saldo rebajado en ${total_rebaja_calculada:,.2f}. Nuevo saldo:${nuevo_saldo:,.2f}")
 
                                 st.rerun()
