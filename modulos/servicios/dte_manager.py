@@ -4,19 +4,60 @@ import requests
 import streamlit as st
 from datetime import datetime
 
-# URL Sandbox de OpenFactura (Haulmer)
-OPENFACTURA_SANDBOX_URL = "https://dev-api.haulmer.com/v2/dte/issue"
+# Endpoints oficiales de Haulmer / OpenFactura
+URL_PRODUCTION = "https://api.haulmer.com/v2/dte/issue"
+URL_SANDBOX = "https://dev-api.haulmer.com/v2/dte/issue"
 
-def _obtener_api_key_openfactura() -> str:
-    """Obtiene la clave API de OpenFactura desde .streamlit/secrets.toml o variables de entorno."""
+
+def validar_rut(rut: str) -> bool:
+    """Valida formato y Dígito Verificador (Módulo 11) para RUTs chilenos."""
+    rut_clean = str(rut).replace(".", "").replace("-", "").strip().upper()
+    if len(rut_clean) < 2:
+        return False
+    
+    cuerpo, dv = rut_clean[:-1], rut_clean[-1]
+    if not cuerpo.isdigit():
+        return False
+
+    suma = 0
+    multiplicador = 2
+    for c in reversed(cuerpo):
+        suma += int(c) * multiplicador
+        multiplicador = 2 if multiplicador == 7 else multiplicador + 1
+
+    resto = suma % 11
+    dv_esperado = 11 - resto
+    
+    if dv_esperado == 11:
+        dv_calc = "0"
+    elif dv_esperado == 10:
+        dv_calc = "K"
+    else:
+        dv_calc = str(dv_esperado)
+
+    return dv == dv_calc
+
+
+def _obtener_config_openfactura() -> tuple[str, str]:
+    """Recupera la API Key y selecciona la URL según el entorno (Production/Sandbox)."""
+    api_key = ""
+    entorno = "production"
+
     try:
-        if "OPENFACTURA_API_KEY" in st.secrets:
-            return str(st.secrets["OPENFACTURA_API_KEY"]).strip()
-        if "openfactura" in st.secrets and "api_key" in st.secrets["openfactura"]:
-            return str(st.secrets["openfactura"]["api_key"]).strip()
+        if "openfactura" in st.secrets:
+            api_key = str(st.secrets["openfactura"].get("api_key", "")).strip()
+            entorno = str(st.secrets["openfactura"].get("environment", "production")).lower().strip()
+        elif "OPENFACTURA_API_KEY" in st.secrets:
+            api_key = str(st.secrets["OPENFACTURA_API_KEY"]).strip()
     except Exception:
         pass
-    return os.getenv("OPENFACTURA_API_KEY", "").strip()
+
+    if not api_key:
+        api_key = os.getenv("OPENFACTURA_API_KEY", "").strip()
+        entorno = os.getenv("OPENFACTURA_ENV", "production").lower().strip()
+
+    target_url = URL_SANDBOX if entorno in ["sandbox", "dev", "development"] else URL_PRODUCTION
+    return api_key, target_url
 
 
 def emitir_dte_openfactura(
@@ -32,23 +73,17 @@ def emitir_dte_openfactura(
     api_key: str = None,
     **kwargs
 ) -> dict:
-    if items is None:
-        items = []
-
+    items = items or []
     datos_empresa = datos_empresa or {}
 
-    # 1. API Key Segura (Prioridad: parámetro directo > dict empresa > secrets.toml / Env)
-    key_final = (
-        api_key 
-        or datos_empresa.get("api_key") 
-        or datos_empresa.get("openfactura_api_key") 
-        or _obtener_api_key_openfactura()
-    )
+    # 1. Obtener API Key y Endpoint objetivo
+    key_config, url_endpoint = _obtener_config_openfactura()
+    key_final = api_key or datos_empresa.get("api_key") or datos_empresa.get("openfactura_api_key") or key_config
 
     if not key_final:
         return {
             "exito": False,
-            "error": "No se encontró la clave API de OpenFactura/Haulmer. Configura 'OPENFACTURA_API_KEY' en .streamlit/secrets.toml"
+            "error": "No se encontró la clave API de OpenFactura/Haulmer. Configura 'openfactura.api_key' en .streamlit/secrets.toml"
         }
 
     # 2. Mapeo de código SII
@@ -59,39 +94,84 @@ def emitir_dte_openfactura(
     }
     codigo_sii = mapa_sii.get(tipo_documento, 39)
 
-    # 3. RUT Emisor
-    rut_emisor_final = (
-        rut_emisor 
-        or datos_empresa.get("rut") 
-        or datos_empresa.get("rut_empresa") 
-        or ""
-    )
+    # 3. Validar y Limpiar RUT Emisor
+    rut_emisor_final = rut_emisor or datos_empresa.get("rut") or datos_empresa.get("rut_empresa") or ""
     rut_emisor_clean = str(rut_emisor_final).replace(".", "").strip().upper()
 
-    if not rut_emisor_clean or "SIN" in rut_emisor_clean:
+    if not rut_emisor_clean or not validar_rut(rut_emisor_clean):
         return {
             "exito": False,
-            "error": "El RUT del emisor es inválido o no está registrado ('Sin RUT'). Revisa la configuración de la empresa."
+            "error": f"El RUT del emisor ('{rut_emisor_clean}') es inválido o no está registrado. Revisa la configuración del negocio."
         }
 
-    # 4. Detalle de Ítems
+    # 4. Validar Receptor según el tipo de documento
+    rut_recep_clean = str(rut_receptor).replace(".", "").strip().upper()
+    if not validar_rut(rut_recep_clean):
+        return {
+            "exito": False,
+            "error": f"El RUT del receptor ('{rut_recep_clean}') es inválido (Falló validación Módulo 11)."
+        }
+
+    if codigo_sii == 33:  # Factura Electrónica: Datos estrictos requeridos por el SII
+        if not razon_social_receptor or razon_social_receptor.strip() == "Cliente General":
+            return {"exito": False, "error": "Para Factura Electrónica se requiere una Razón Social válida."}
+        if not giro_receptor or giro_receptor.strip() == "Sin Giro":
+            return {"exito": False, "error": "Para Factura Electrónica se requiere especificar el Giro Comercial del cliente."}
+        if not direccion_receptor or direccion_receptor.strip() == "Sin Dirección":
+            return {"exito": False, "error": "Para Factura Electrónica se requiere la Dirección del cliente."}
+
+    # 5. Procesamiento de Ítems y Cálculo Tributario
     detalles = []
-    for item in items:
+    monto_neto_total = 0
+    monto_exento_total = 0
+
+    for idx, item in enumerate(items, start=1):
         cant = float(item.get("cantidad", 1))
-        precio = float(item.get("precio_unitario", 0))
-        
-        qty_val = int(cant) if cant.is_integer() else round(cant, 3)
-        prc_val = int(precio) if precio.is_integer() else round(precio, 2)
+        precio_bruto_o_neto = float(item.get("precio_unitario", 0))
+        es_exento = item.get("es_exento", False)
 
-        detalles.append({
+        cant_val = int(cant) if cant.is_integer() else round(cant, 3)
+        precio_val = int(round(precio_bruto_o_neto))
+        subtotal_item = int(round(cant_val * precio_val))
+
+        detalle_item = {
+            "NroLinDet": idx,
             "NmbItem": str(item.get("nombre", "Producto")).strip()[:80],
-            "QtyItem": qty_val,
-            "PrcItem": prc_val
-        })
+            "QtyItem": cant_val,
+            "PrcItem": precio_val
+        }
 
+        if es_exento:
+            detalle_item["IndExe"] = 1
+            monto_exento_total += subtotal_item
+        else:
+            monto_neto_total += subtotal_item
+
+        detalles.append(detalle_item)
+
+    # 6. Cálculo de Totales Tributarios según Tipo DTE
+    if codigo_sii == 39:
+        # En Boleta Electrónica los precios ingresados incluyen IVA
+        total_bruto = monto_neto_total
+        neto_calculado = int(round(total_bruto / 1.19))
+        iva_calculado = total_bruto - neto_calculado
+        monto_total_final = total_bruto + monto_exento_total
+    else:
+        # En Factura Electrónica el acumulado es Neto
+        neto_calculado = monto_neto_total
+        iva_calculado = int(round(neto_calculado * 0.19))
+        monto_total_final = neto_calculado + iva_calculado + monto_exento_total
+
+    totales_payload = {
+        "MntNeto": neto_calculado,
+        "MntExe": monto_exento_total,
+        "IVA": iva_calculado,
+        "MntTotal": monto_total_final
+    }
+
+    # 7. Construcción del Payload Oficial
     fecha_emision = datetime.now().strftime("%Y-%m-%d")
 
-    # 5. Encabezado completo según requerimiento de OpenFactura / SII
     emisor_payload = {
         "RUTEmisor": rut_emisor_clean,
         "RznSoc": str(datos_empresa.get("razon_social") or datos_empresa.get("nombre_negocio") or "MI EMPRESA")[:100],
@@ -102,7 +182,7 @@ def emitir_dte_openfactura(
     }
 
     receptor_payload = {
-        "RUTRecep": str(rut_receptor).replace(".", "").strip().upper(),
+        "RUTRecep": rut_recep_clean,
         "RznSocRecep": str(razon_social_receptor).strip()[:100],
         "GiroRecep": str(giro_receptor or "Sin Giro").strip()[:40],
         "DirRecep": str(direccion_receptor or "Sin Dirección").strip()[:70],
@@ -118,7 +198,8 @@ def emitir_dte_openfactura(
                     "FchEmis": fecha_emision
                 },
                 "Emisor": emisor_payload,
-                "Receptor": receptor_payload
+                "Receptor": receptor_payload,
+                "Totales": totales_payload
             },
             "Detalle": detalles
         }
@@ -129,12 +210,13 @@ def emitir_dte_openfactura(
         "Content-Type": "application/json"
     }
 
+    # 8. Petición HTTP a OpenFactura
     try:
         response = requests.post(
-            OPENFACTURA_SANDBOX_URL, 
+            url_endpoint, 
             data=json.dumps(payload), 
             headers=headers,
-            timeout=12
+            timeout=15
         )
         
         if response.status_code in [200, 201]:
@@ -146,6 +228,7 @@ def emitir_dte_openfactura(
                 "exito": True,
                 "folio": str(folio_obtenido),
                 "pdf_url": pdf_url,
+                "xml_url": data.get("xml"),
                 "timbre": data.get("timbre"),
                 "raw_response": data
             }
