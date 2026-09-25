@@ -5214,7 +5214,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     if modo_online:
         try:
-            # Búsqueda flexible por id_negocio O rut_empresa (con y sin formato)
             res_clientes = supabase.table("clientes") \
                 .select("*") \
                 .or_(f"id_negocio.eq.{rut_actual},rut_empresa.eq.{rut_actual},id_negocio.eq.{rut_limpio},rut_empresa.eq.{rut_limpio}") \
@@ -5223,11 +5222,11 @@ elif menu == "💰 Módulo de Ventas (POS)":
             if res_clientes.data:
                 registros_normalizados = []
                 for row in res_clientes.data:
-                    c_nombre = row.get("nombre") or row.get("razon_social")
-                    c_rut = row.get("rut") or row.get("rut_cliente")
-                    c_giro = row.get("giro") or "Sin Giro"
-                    c_dir = row.get("direccion") or "Sin Dirección"
-                    c_comuna = row.get("comuna") or "Santiago"
+                    c_nombre = row.get("nombre") or row.get("razon_social") or ""
+                    c_rut = row.get("rut") or row.get("rut_cliente") or ""
+                    c_giro = row.get("giro") or ""
+                    c_dir = row.get("direccion") or ""
+                    c_comuna = row.get("comuna") or ""
 
                     if c_nombre and c_rut:
                         registros_normalizados.append({
@@ -5272,9 +5271,49 @@ elif menu == "💰 Módulo de Ventas (POS)":
         
         match_c = df_clientes_pos[df_clientes_pos["rut"] == cliente_rut]
         if not match_c.empty:
-            giro_receptor = str(match_c.iloc[0].get("giro") or "Giro Comercial")
-            dir_receptor = str(match_c.iloc[0].get("direccion") or "Dirección Cliente")
-            comuna_receptor = str(match_c.iloc[0].get("comuna") or "Santiago")
+            cliente_row = match_c.iloc[0]
+            giro_receptor = str(cliente_row.get("giro") or "").strip()
+            dir_receptor = str(cliente_row.get("direccion") or "").strip()
+            comuna_receptor = str(cliente_row.get("comuna") or "").strip()
+
+            # --- DETECCIÓN DE DATOS TRIBUTARIOS FALTANTES ---
+            giro_invalido = not giro_receptor or giro_receptor.lower() in ["sin giro", "null", "none", ""]
+            dir_invalida = not dir_receptor or dir_receptor.lower() in ["sin dirección", "sin direccion", "null", "none", ""]
+            comuna_invalida = not comuna_receptor or comuna_receptor.lower() in ["null", "none", ""]
+
+            # Si faltan datos tributarios se muestra la alerta y el formulario en caliente
+            if giro_invalido or dir_invalida or comuna_invalida:
+                st.warning("⚠️ **Cliente con Datos Tributarios Incompletos:** Este cliente no tiene Giro, Dirección o Comuna registrados para emitir Factura o Guía.")
+                
+                with st.expander("✏️ Completar Datos Tributarios Ahora (Se guardará automáticamente en Supabase)", expanded=True):
+                    with st.form(key=f"form_quick_update_cliente_{cliente_rut}"):
+                        col_u1, col_u2, col_u3 = st.columns(3)
+                        with col_u1:
+                            val_giro = st.text_input("Giro Comercial", value="" if giro_invalido else giro_receptor, placeholder="Ej: Venta de Insumos")
+                        with col_u2:
+                            val_dir = st.text_input("Dirección", value="" if dir_invalida else dir_receptor, placeholder="Ej: Av. Bernardo O'Higgins 123")
+                        with col_u3:
+                            val_comuna = st.text_input("Comuna", value="" if comuna_invalida else comuna_receptor, placeholder="Ej: San Felipe")
+                        
+                        btn_actualizar_cliente = st.form_submit_button("💾 Guardar en Base de Datos y Actualizar POS")
+                        
+                        if btn_actualizar_cliente:
+                            if not val_giro.strip() or not val_dir.strip() or not val_comuna.strip():
+                                st.error("Debe ingresar Giro, Dirección y Comuna para guardar.")
+                            else:
+                                try:
+                                    update_payload = {
+                                        "giro": val_giro.strip(),
+                                        "direccion": val_dir.strip(),
+                                        "comuna": val_comuna.strip()
+                                    }
+                                    # Actualizar en Supabase tanto por 'rut' como por 'rut_cliente'
+                                    supabase.table("clientes").update(update_payload).or_(f"rut.eq.{cliente_rut},rut_cliente.eq.{cliente_rut}").execute()
+                                    
+                                    st.success("✅ ¡Datos del cliente guardados exitosamente en la base de datos!")
+                                    st.rerun()
+                                except Exception as err_upd:
+                                    st.error(f"Error al actualizar el cliente en Supabase: {err_upd}")
     else:
         col_f1, col_f2 = st.columns(2)
         with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def, placeholder="Ej: Distribuidora Los Andes SpA")
