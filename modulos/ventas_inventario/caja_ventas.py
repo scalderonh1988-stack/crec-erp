@@ -101,10 +101,7 @@ def obtener_tasa_especifica(valor_impuesto) -> float:
 
 
 def calcular_desglose_impuestos(precio_bruto: float, impuesto_especifico_val=0.0) -> dict:
-    """
-    Calcula el desglose tributario (Neto, Impuesto Específico, IVA) desde el precio BRUTO
-    según el encadenamiento oficial del SII de Chile (DL 825, Art. 42).
-    """
+    """Calcula el desglose tributario (Neto, Impuesto Específico, IVA) desde el precio BRUTO."""
     tasa_iva = 0.19
     tasa_esp = obtener_tasa_especifica(impuesto_especifico_val)
 
@@ -132,7 +129,7 @@ def calcular_desglose_impuestos(precio_bruto: float, impuesto_especifico_val=0.0
 
 
 def obtener_siguiente_folio_pos(tenant_id):
-    """Genera el correlativo numerico consecutivo de venta interna para el negocio."""
+    """Genera el correlativo numérico consecutivo de venta interna para el negocio."""
     tenant_str = str(tenant_id)
 
     try:
@@ -222,50 +219,66 @@ def mostrar_modulo_ventas(ruta_negocio):
         )
     controlar_stock = "Estricto" in modo_inventario
 
-    # --- LÓGICA DE SELECCIÓN DE CLIENTE ---
+    # --- LÓGICA DE SELECCIÓN DE CLIENTE (ADAPTADA A LA ESTRUCTURA REAL DE SUPABASE) ---
     st.markdown("#### 👤 Datos del Cliente / Receptor")
+    clientes_list_clean = []
     try:
-        res_clientes = supabase.table("clientes").select("rut, nombre, direccion, giro, comuna").eq("id_negocio", rut_actual).execute()
-        df_clientes_pos = pd.DataFrame(res_clientes.data) if res_clientes.data else pd.DataFrame()
-    except Exception:
-        df_clientes_pos = pd.DataFrame()
+        res_clientes = supabase.table("clientes").select("*").execute()
+        if res_clientes.data:
+            df_clientes_raw = pd.DataFrame(res_clientes.data)
+            
+            # Filtro flexible por negocio
+            col_tenant = next((c for c in df_clientes_raw.columns if c in ["id_negocio", "rut_empresa", "rut_negocio"]), None)
+            if col_tenant and rut_actual:
+                df_clientes_raw = df_clientes_raw[df_clientes_raw[col_tenant].astype(str) == str(rut_actual)]
+            
+            for _, r in df_clientes_raw.iterrows():
+                rut_val = str(r.get("rut") or r.get("rut_cliente") or "").strip()
+                nom_val = str(r.get("Nombre_Cliente") or r.get("razon_social") or r.get("nombre") or "").strip()
+                dir_val = str(r.get("Direccion") or r.get("direccion") or "Sin Dirección").strip()
+                giro_val = str(r.get("giro") or r.get("giro_comercial") or "Sin Giro").strip()
+                comuna_val = str(r.get("comuna") or r.get("ciudad") or "Santiago").strip()
 
-    if not df_clientes_pos.empty and "nombre" in df_clientes_pos.columns:
-        df_clientes_pos["etiqueta"] = df_clientes_pos["nombre"].astype(str) + " (" + df_clientes_pos["rut"].astype(str) + ")"
-        lista_clientes = ["-- Cliente General --"] + df_clientes_pos["etiqueta"].tolist() + ["+ Ingresar Cliente Manualmente"]
-        cliente_elegido = st.selectbox("Selecciona o busca un cliente registrado:", lista_clientes)
+                if rut_val and nom_val and rut_val.lower() != "none":
+                    clientes_list_clean.append({
+                        "rut": rut_val,
+                        "nombre": nom_val,
+                        "direccion": dir_val if dir_val != "None" else "Sin Dirección",
+                        "giro": giro_val if giro_val != "None" else "Sin Giro",
+                        "comuna": comuna_val if comuna_val != "None" else "Santiago",
+                        "etiqueta": f"{nom_val} ({rut_val})"
+                    })
+    except Exception as e:
+        print(f"Error consultando clientes: {e}")
 
-        if cliente_elegido == "+ Ingresar Cliente Manualmente":
-            col_f1, col_f2 = st.columns(2)
-            with col_f1: st.session_state.cliente_nombre = st.text_input("Razón Social / Nombre", key="input_cli_nom")
-            with col_f2: st.session_state.cliente_rut = st.text_input("RUT Cliente", key="input_cli_rut")
-            col_f3, col_f4, col_f5 = st.columns(3)
-            with col_f3: st.session_state.cliente_giro = st.text_input("Giro Comercial", value="Sin Giro", key="input_cli_giro")
-            with col_f4: st.session_state.cliente_direccion = st.text_input("Dirección", value="Sin Dirección", key="input_cli_dir")
-            with col_f5: st.session_state.cliente_comuna = st.text_input("Comuna", value="Santiago", key="input_cli_comuna")
-        elif cliente_elegido != "-- Cliente General --":
-            r_sel = cliente_elegido.split(" (")[1].replace(")", "").strip()
-            match_cli = df_clientes_pos[df_clientes_pos["rut"].astype(str) == r_sel]
-            if not match_cli.empty:
-                st.session_state.cliente_nombre = str(match_cli.iloc[0]["nombre"])
-                st.session_state.cliente_rut = str(match_cli.iloc[0]["rut"])
-                st.session_state.cliente_direccion = str(match_cli.iloc[0].get("direccion") or "Sin Dirección")
-                st.session_state.cliente_giro = str(match_cli.iloc[0].get("giro") or "Sin Giro")
-                st.session_state.cliente_comuna = str(match_cli.iloc[0].get("comuna") or "Santiago")
-        else:
-            st.session_state.cliente_nombre = "Cliente General"
-            st.session_state.cliente_rut = "66666666-6"
-            st.session_state.cliente_direccion = "Sin Dirección"
-            st.session_state.cliente_giro = "Sin Giro"
-            st.session_state.cliente_comuna = "Santiago"
-    else:
+    opciones_select = ["-- Cliente General (66666666-6) --"] + [c["etiqueta"] for c in clientes_list_clean] + ["+ Ingresar Cliente Manualmente"]
+    cliente_elegido = st.selectbox("🔍 Selecciona o busca un cliente registrado:", opciones_select)
+
+    if cliente_elegido == "+ Ingresar Cliente Manualmente":
         col_f1, col_f2 = st.columns(2)
-        with col_f1: st.session_state.cliente_nombre = st.text_input("Razón Social / Nombre", value=st.session_state.cliente_nombre, key="input_c1")
-        with col_f2: st.session_state.cliente_rut = st.text_input("RUT Cliente", value=st.session_state.cliente_rut, key="input_c2")
+        with col_f1: st.session_state.cliente_nombre = st.text_input("Razón Social / Nombre", value=st.session_state.get("cliente_nombre_man", ""), key="cliente_nombre_man")
+        with col_f2: st.session_state.cliente_rut = st.text_input("RUT Cliente", value=st.session_state.get("cliente_rut_man", ""), key="cliente_rut_man")
         col_f3, col_f4, col_f5 = st.columns(3)
-        with col_f3: st.session_state.cliente_giro = st.text_input("Giro Comercial", value=st.session_state.cliente_giro, key="input_c3")
-        with col_f4: st.session_state.cliente_direccion = st.text_input("Dirección", value=st.session_state.cliente_direccion, key="input_c4")
-        with col_f5: st.session_state.cliente_comuna = st.text_input("Comuna", value=st.session_state.cliente_comuna, key="input_c5")
+        with col_f3: st.session_state.cliente_giro = st.text_input("Giro Comercial", value=st.session_state.get("cliente_giro_man", "Sin Giro"), key="cliente_giro_man")
+        with col_f4: st.session_state.cliente_direccion = st.text_input("Dirección", value=st.session_state.get("cliente_direccion_man", "Sin Dirección"), key="cliente_direccion_man")
+        with col_f5: st.session_state.cliente_comuna = st.text_input("Comuna", value=st.session_state.get("cliente_comuna_man", "Santiago"), key="cliente_comuna_man")
+
+    elif cliente_elegido != "-- Cliente General (66666666-6) --":
+        match_cli = next((c for c in clientes_list_clean if c["etiqueta"] == cliente_elegido), None)
+        if match_cli:
+            st.session_state.cliente_nombre = match_cli["nombre"]
+            st.session_state.cliente_rut = match_cli["rut"]
+            st.session_state.cliente_direccion = match_cli["direccion"]
+            st.session_state.cliente_giro = match_cli["giro"]
+            st.session_state.cliente_comuna = match_cli["comuna"]
+            
+            st.info(f"📌 **Cliente Creado/Seleccionado:** {match_cli['nombre']} | **RUT:** {match_cli['rut']} | **Giro:** {match_cli['giro']} | **Dirección:** {match_cli['direccion']}, {match_cli['comuna']}")
+    else:
+        st.session_state.cliente_nombre = "Cliente General"
+        st.session_state.cliente_rut = "66666666-6"
+        st.session_state.cliente_direccion = "Sin Dirección"
+        st.session_state.cliente_giro = "Sin Giro"
+        st.session_state.cliente_comuna = "Santiago"
 
     st.divider()
 
@@ -397,7 +410,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                         )
                         st.session_state.nombre_archivo_descarga = nombre_archivo_doc
 
-                        # --- CÁLCULOS TRIBUTARIOS DESGLOSADOS POR ÍTEM (SII ENCADENADO) ---
                         monto_neto = 0
                         monto_especifico = 0
                         monto_iva = 0
@@ -487,7 +499,6 @@ def mostrar_modulo_ventas(ruta_negocio):
 
                                 line_imp_esp_txt = f"IMP. ESPECÍFICO:   ${monto_especifico:,.2f}\n" if monto_especifico > 0 else ""
 
-                                # FORMATO HTML COMPROBANTE
                                 html_recibo = f"""
                                 <div style="font-family: Arial, sans-serif; max-width: 650px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fff; color: #000;">
                                     {logo_html}
@@ -557,7 +568,6 @@ def mostrar_modulo_ventas(ruta_negocio):
                                 </div>
                                 """
 
-                                # FORMATO TEXTO PLANO
                                 texto_recibo = f"""========================================
        {nombre_emp}
        RUT: {rut_emp}
