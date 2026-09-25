@@ -2270,6 +2270,9 @@ elif menu == "📦 Inventario y Productos":
     
     tab_inv1, tab_inv2, tab_inv3, tab_inv4 = st.tabs(["📦 Productos", "👥 Clientes", "🚚 Proveedores", "🏢 Bodegas y Sucursales"])
     
+    # ---------------------------------------------------------
+    # TAB 1: PRODUCTOS
+    # ---------------------------------------------------------
     with tab_inv1:
         st.markdown("#### ➕ Registrar o Gestionar Productos")
         rut_actual = st.session_state.get("negocio_seleccionado")
@@ -2388,11 +2391,20 @@ elif menu == "📦 Inventario y Productos":
         except Exception as e:
             st.error(f"⚠️ Error al conectar con Supabase: {e}")
 
+    # ---------------------------------------------------------
+    # TAB 2: CLIENTES (CON DATOS TRIBUTARIOS Y BÚSQUEDA ROBUSTA)
+    # ---------------------------------------------------------
     with tab_inv2:
         st.markdown("#### 👥 Maestro de Clientes")
         df_clientes = pd.DataFrame()
+        rut_act_str = str(rut_actual).strip()
+        rut_act_limpio = rut_act_str.replace(".", "")
+
         try:
-            res_cli = supabase.table("clientes").select("*").eq("id_negocio", rut_actual).execute()
+            res_cli = supabase.table("clientes").select("*")\
+                .or_(f"id_negocio.eq.{rut_act_str},rut_empresa.eq.{rut_act_str},id_negocio.eq.{rut_act_limpio},rut_empresa.eq.{rut_act_limpio}")\
+                .execute()
+
             if res_cli.data:
                 df_clientes = pd.DataFrame(res_cli.data)
                 renames = {}
@@ -2405,41 +2417,81 @@ elif menu == "📦 Inventario y Productos":
         except Exception as e:
             st.error(f"⚠️ Error cargando clientes desde la nube: {e}")
 
-        st.dataframe(df_clientes, use_container_width=True)
+        if not df_clientes.empty:
+            st.dataframe(df_clientes, use_container_width=True)
+        else:
+            st.info("ℹ️ No hay clientes registrados para este negocio aún.")
         
         with st.form("form_nuevo_cliente_local", clear_on_submit=True):
             st.markdown("##### Registrar Cliente Nuevo")
-            cl_nom = st.text_input("Nombre / Razón Social")
-            cl_rut = st.text_input("RUT / Identificación")
-            cl_tel = st.text_input("Teléfono")
-            cl_mail = st.text_input("Correo Electrónico")
-            cl_dir = st.text_input("Dirección")
+            col_c1, col_c2 = st.columns(2)
+            
+            with col_c1:
+                cl_nom = st.text_input("Nombre / Razón Social *")
+                cl_rut = st.text_input("RUT / Identificación Tributaria *")
+                cl_giro = st.text_input("Giro Comercial", placeholder="Ej: Venta de Insumos / Minimarket")
+                cl_tel = st.text_input("Teléfono")
+                
+            with col_c2:
+                cl_dir = st.text_input("Dirección")
+                cl_comuna = st.text_input("Comuna", placeholder="Ej: San Felipe")
+                cl_mail = st.text_input("Correo Electrónico")
             
             btn_g_cliente = st.form_submit_button("💾 Guardar Cliente")
+            
             if btn_g_cliente:
                 if not cl_nom or not cl_rut:
-                    st.warning("⚠️ Debes ingresar al menos el nombre y el RUT del cliente.")
+                    st.warning("⚠️ Debes ingresar al menos el Nombre/Razón Social y el RUT del cliente.")
                 else:
+                    rut_cli_clean = str(cl_rut).strip()
+                    nom_cli_clean = str(cl_nom).strip()
+
                     nuevo_cliente_nube = {
-                        "rut": str(cl_rut).strip(),
-                        "nombre": str(cl_nom).strip(),
+                        "rut": rut_cli_clean,
+                        "rut_cliente": rut_cli_clean,
+                        "nombre": nom_cli_clean,
+                        "razon_social": nom_cli_clean,
                         "telefono": str(cl_tel).strip(),
                         "correo": str(cl_mail).strip(),
+                        "email": str(cl_mail).strip(),
                         "direccion": str(cl_dir).strip(),
-                        "id_negocio": str(rut_actual).strip()
+                        "comuna": str(cl_comuna).strip(),
+                        "giro": str(cl_giro).strip(),
+                        "id_negocio": rut_act_str,
+                        "rut_empresa": rut_act_str
                     }
+
                     try:
-                        supabase.table("clientes").upsert(nuevo_cliente_nube, on_conflict="rut").execute()
-                        st.success("✅ ¡Cliente guardado con éxito en la nube!")
+                        # Verificación segura sin depender de upsert/constraints
+                        res_exist = supabase.table("clientes").select("id")\
+                            .or_(f"and(id_negocio.eq.{rut_act_str},rut.eq.{rut_cli_clean}),and(rut_empresa.eq.{rut_act_str},rut_cliente.eq.{rut_cli_clean})")\
+                            .execute()
+
+                        if res_exist.data:
+                            id_exist = res_exist.data[0]["id"]
+                            supabase.table("clientes").update(nuevo_cliente_nube).eq("id", id_exist).execute()
+                            st.success(f"✅ ¡Cliente '{nom_cli_clean}' actualizado exitosamente!")
+                        else:
+                            supabase.table("clientes").insert(nuevo_cliente_nube).execute()
+                            st.success(f"✅ ¡Cliente '{nom_cli_clean}' guardado con éxito en la nube!")
+
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en Supabase: {e}")
+                        st.error(f"❌ Error al guardar cliente en Supabase: {e}")
 
+    # ---------------------------------------------------------
+    # TAB 3: PROVEEDORES
+    # ---------------------------------------------------------
     with tab_inv3:
         st.markdown("#### 🚚 Directorio de Proveedores")
         df_proveedores = pd.DataFrame()
+        rut_act_str = str(rut_actual).strip()
+
         try:
-            res_prov = supabase.table("proveedores").select("*").eq("id_negocio", rut_actual).execute()
+            res_prov = supabase.table("proveedores").select("*")\
+                .or_(f"id_negocio.eq.{rut_act_str},rut_empresa.eq.{rut_act_str}")\
+                .execute()
+
             if res_prov.data:
                 df_proveedores = pd.DataFrame(res_prov.data)
                 renames_prov = {}
@@ -2458,7 +2510,10 @@ elif menu == "📦 Inventario y Productos":
         except Exception as e:
             st.error(f"⚠️ Error cargando proveedores desde la nube: {e}")
 
-        st.dataframe(df_proveedores, use_container_width=True)
+        if not df_proveedores.empty:
+            st.dataframe(df_proveedores, use_container_width=True)
+        else:
+            st.info("ℹ️ No hay proveedores registrados para este negocio aún.")
         
         with st.form("form_nuevo_proveedor_nube", clear_on_submit=True):
             st.markdown("##### Registrar Proveedor Nuevo")
@@ -2479,7 +2534,9 @@ elif menu == "📦 Inventario y Productos":
                         "contacto": str(pr_cont).strip(),
                         "telefono": str(pr_tel).strip(),
                         "correo": str(pr_mail).strip(),
-                        "id_negocio": str(rut_actual).strip()
+                        "email": str(pr_mail).strip(),
+                        "id_negocio": rut_act_str,
+                        "rut_empresa": rut_act_str
                     }
                     try:
                         supabase.table("proveedores").insert(nuevo_proveedor_nube).execute()
@@ -2488,16 +2545,22 @@ elif menu == "📦 Inventario y Productos":
                     except Exception as e:
                         st.error(f"❌ Error al guardar en Supabase: {e}")
 
+    # ---------------------------------------------------------
+    # TAB 4: BODEGAS Y SUCURSALES
+    # ---------------------------------------------------------
     with tab_inv4:
         st.markdown("### 🏢 Administración de Bodegas y Sucursales")
         st.info("💡 Crea diferentes ubicaciones físicas para controlar el stock separado.")
         
         df_bodegas = pd.DataFrame()
+        rut_act_str = str(rut_actual).strip()
+
         try:
-            res_bodegas = supabase.table("bodegas").select("*").eq("rut_empresa", rut_actual).execute()
+            res_bodegas = supabase.table("bodegas").select("*").eq("rut_empresa", rut_act_str).execute()
             if res_bodegas.data:
                 df_bodegas = pd.DataFrame(res_bodegas.data)
-                st.dataframe(df_bodegas[["nombre", "direccion"]], use_container_width=True)
+                cols_mostrar = [c for c in ["nombre", "direccion"] if c in df_bodegas.columns]
+                st.dataframe(df_bodegas[cols_mostrar] if cols_mostrar else df_bodegas, use_container_width=True)
             else:
                 st.warning("⚠️ No tienes bodegas creadas. El sistema asume una 'Bodega Principal' por defecto.")
         except Exception as e:
@@ -2518,7 +2581,7 @@ elif menu == "📦 Inventario y Productos":
                     st.warning("⚠️ El nombre de la bodega es obligatorio.")
                 else:
                     nueva_bodega = {
-                        "rut_empresa": rut_actual,
+                        "rut_empresa": rut_act_str,
                         "nombre": nombre_bodega.strip(),
                         "direccion": direccion_bodega.strip()
                     }
@@ -2527,7 +2590,7 @@ elif menu == "📦 Inventario y Productos":
                         st.success(f"✅ ¡Bodega '{nombre_bodega}' creada con éxito!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en Supabase: {e}")       
+                        st.error(f"❌ Error al guardar en Supabase: {e}")     
 
 elif menu == "📚 Historial de Ventas":
     mostrar_modulo_historial_ventas(ruta_negocio)                    
