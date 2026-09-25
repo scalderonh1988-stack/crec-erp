@@ -923,16 +923,11 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                         nuevo_saldo = max(0.0, saldo_actual - float(monto_abono))
                         
                         if nuevo_saldo <= 0:
-                            # 1. Si se salda por completo, actualiza saldo a 0 y estado Pagado
+                            # Se salda en cuentas_por_cobrar
                             supabase.table("cuentas_por_cobrar").update({
                                 "saldo_pendiente": 0.0,
                                 "estado": "Pagado"
                             }).eq("id", id_deuda).execute()
-
-                            # 2. Actualiza el estado en la tabla ventas
-                            supabase.table("ventas").update({
-                                "estado": "Pagado"
-                            }).eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).execute()
 
                             st.success(f"🎉 ¡Abono registrado! La deuda del Folio **{folio_seleccionado}** ha sido pagada por completo.")
                         else:
@@ -1017,10 +1012,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                                         "saldo_pendiente": 0.0,
                                         "estado": "Pagado"
                                     }).eq("id", id_deuda).execute()
-                                    
-                                    supabase.table("ventas").update({
-                                        "estado": "Pagado"
-                                    }).eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).execute()
                                     
                                     st.success(f"🎉 ¡Mercadería devuelta y deuda saldada por completo para el folio {folio_seleccionado}!")
                                 else:
