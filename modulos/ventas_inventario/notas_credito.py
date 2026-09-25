@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-# Importamos la conexión a tu base de datos y la seguridad de negocio
 from modulos.servicios.data_manager import supabase, get_current_tenant
+from modulos.servicios.dte_manager import emitir_dte_openfactura, validar_rut
+
 
 def mostrar_modulo_notas_credito(ruta_negocio):
     # --- 1. BOTÓN DE VOLVER AL HOME ---
@@ -13,196 +14,304 @@ def mostrar_modulo_notas_credito(ruta_negocio):
     st.markdown("---")
 
     # --- 2. TÍTULOS ---
-    st.markdown("### 🔄 Emisión de Notas de Crédito y Devoluciones")
-    st.markdown("📌 **Gestión Rápida:** Anula ventas, devuelve stock al inventario y ajusta la cuadratura de caja de forma directa.")
+    st.markdown("### 🔄 Emisión de Notas de Crédito y Devoluciones (DTE 61)")
+    st.markdown(
+        "📌 **Gestión Tributaria & Operativa:** Genera Notas de Crédito Electrónicas (DTE Tipo 61) "
+        "ante el SII, anula o corrige documentos, reingresa stock a bodega y ajusta saldos."
+    )
 
     # --- 3. LECTURA DIRECTA DESDE SUPABASE ---
     tenant_id = get_current_tenant()
-    
+
     try:
-        respuesta = supabase.table("ventas").select("*").execute()
-        
+        respuesta = (
+            supabase.table("ventas")
+            .select("*")
+            .eq("rut_empresa", str(tenant_id))
+            .order("fecha", desc=True)
+            .limit(1000)
+            .execute()
+        )
+
         if not respuesta.data:
             st.info("ℹ️ No hay ventas registradas en la base de datos para procesar devoluciones.")
             return
-            
+
         df_ventas = pd.DataFrame(respuesta.data)
-        
-        # Filtro estricto: Solo mostramos las ventas de ESTE negocio
-        if tenant_id and not df_ventas.empty:
-            col_tenant = next((c for c in df_ventas.columns if c in ["rut_empresa", "id_negocio", "rut_negocio", "negocio_id"]), None)
-            if col_tenant:
-                df_ventas = df_ventas[df_ventas[col_tenant].astype(str) == str(tenant_id)]
-        
+
         if df_ventas.empty:
-            st.info("ℹ️ No hay ventas registradas para este negocio en particular.")
+            st.info("ℹ️ No hay ventas registradas para este negocio.")
             return
 
     except Exception as e:
-        st.error(f"❌ Error al leer las ventas desde Supabase: {e}")
+        st.error(f"❌ Error al consultar ventas en Supabase: {e}")
         return
 
-    col_id = next((c for c in df_ventas.columns if 'transaccion' in c.lower() or 'folio' in c.lower() or 'id' in c.lower()), None)
-    col_tipo = next((c for c in df_ventas.columns if 'tipo' in c.lower() or 'documento' in c.lower()), None)
-    
-    if not col_id:
-        st.error("❌ No se encontró una columna de Folio/ID de transacción en la tabla de ventas.")
-        return
+    col_id = next((c for c in df_ventas.columns if c in ["folio", "id", "transaccion"]), "folio")
+    col_tipo = next((c for c in df_ventas.columns if c in ["documento", "tipo_documento"]), "documento")
 
-    # --- PREPARAR LA LISTA DESPLEGABLE DESDE EL MÁS RECIENTE ---
+    # --- PREPARAR BUSCADOR DE FOLIOS ---
     lista_folios = df_ventas[col_id].dropna().astype(str).unique().tolist()
-    lista_folios.reverse()
-    opciones_folios = ["Seleccione un folio..."] + lista_folios
+    opciones_folios = ["-- Seleccionar Folio --"] + lista_folios
 
     st.markdown("---")
     st.markdown("#### 🔍 1. Buscar Documento Original")
-    
+
     col1, col2 = st.columns(2)
     with col1:
-        tipo_doc_busqueda = st.selectbox("Tipo de Documento:", ["Todos", "Boleta", "Factura"])
+        tipo_doc_busqueda = st.selectbox("Tipo de Documento a Buscar:", ["Todos", "Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"])
     with col2:
         folio_busqueda = st.selectbox(
-            "Seleccione o escriba el Número de Folio:", 
+            "Seleccione el Número de Folio:",
             options=opciones_folios,
-            help="💡 Los documentos están conectados en tiempo real a Supabase."
+            help="💡 Selecciona el folio del documento a anular o modificar."
         )
 
     # --- 4. BÚSQUEDA Y SELECCIÓN ---
     if st.button("🔍 Buscar Documento", type="primary"):
-        if folio_busqueda == "Seleccione un folio...":
-            st.warning("⚠️ Por favor, seleccione un número de folio.")
+        if folio_busqueda == "-- Seleccionar Folio --":
+            st.warning("⚠️ Selecciona un número de folio válido.")
         else:
             df_filtrado = df_ventas.copy()
             df_filtrado[col_id] = df_filtrado[col_id].astype(str)
             folio_limpio = str(folio_busqueda).strip()
-            
+
             df_filtrado = df_filtrado[df_filtrado[col_id] == folio_limpio]
-            
-            if col_tipo and tipo_doc_busqueda != "Todos":
-                df_filtrado[col_tipo] = df_filtrado[col_tipo].astype(str)
+
+            if tipo_doc_busqueda != "Todos" and col_tipo in df_filtrado.columns:
                 df_filtrado = df_filtrado[df_filtrado[col_tipo].str.contains(tipo_doc_busqueda, case=False, na=False)]
 
             if df_filtrado.empty:
-                st.error(f"❌ No se encontró el folio '{folio_limpio}'.")
+                st.error(f"❌ No se encontró el folio '{folio_limpio}' para el documento seleccionado.")
             else:
-                st.success("✅ Documento localizado. Mostrando detalles abajo.")
+                st.success("✅ Documento localizado exitosamente.")
                 st.session_state["venta_encontrada_nc"] = df_filtrado
 
-    # --- 5. SECCIÓN DE DEVOLUCIÓN ---
+    # --- 5. SECCIÓN DE EMISIÓN DE NOTA DE CRÉDITO ---
     if "venta_encontrada_nc" in st.session_state and st.session_state["venta_encontrada_nc"] is not None:
         df_resultado = st.session_state["venta_encontrada_nc"]
-        
-        # Mostramos la tabla limpia
-        cols_mostrar = [c for c in df_resultado.columns if c not in ["rut_empresa", "id"]]
+        primera_fila = df_resultado.iloc[0]
+
+        # Datos clave del documento original
+        doc_origen = str(primera_fila.get("documento", "Boleta Electrónica"))
+        folio_origen = str(primera_fila.get("folio", ""))
+        fecha_origen = str(primera_fila.get("fecha", ""))[:10]
+        modo_origen = str(primera_fila.get("modo_emision", "INTERNO")).upper()
+        cliente_origen = str(primera_fila.get("cliente", "Cliente General"))
+        rut_cliente_origen = str(primera_fila.get("rut_cliente", "66666666-6"))
+
+        # Mostrar encabezado de resumen
+        c_meta1, c_meta2, c_meta3, c_meta4 = st.columns(4)
+        c_meta1.metric("Folio Origen", folio_origen)
+        c_meta2.metric("Documento", doc_origen)
+        c_meta3.metric("Modo Emisión", modo_origen)
+        c_meta4.metric("Cliente", cliente_origen[:20])
+
+        cols_mostrar = [c for c in ["folio", "fecha", "codigo_producto", "detalle", "cantidad", "neto", "iva", "monto", "metodo_pago"] if c in df_resultado.columns]
         st.dataframe(df_resultado[cols_mostrar], use_container_width=True)
 
-        st.markdown("#### 📦 2. Tipo de Devolución")
-        tipo_devolucion = st.radio("Seleccione el alcance de la Nota de Crédito:", ["Devolución Total (Anulación Completa)", "Devolución Parcial (Editar cantidades)"])
+        st.markdown("#### 📦 2. Tipo y Alcance de la Devolución")
+        tipo_devolucion = st.radio(
+            "Seleccione el alcance de la Nota de Crédito:",
+            ["Devolución Total (Anulación Completa)", "Devolución Parcial (Editar cantidades)"],
+            key="radio_tipo_nc"
+        )
 
-        col_detalle = next((c for c in df_resultado.columns if c.lower() in ['detalle', 'productos', 'carrito', 'items', 'articulos']), None)
+        motivo_nc = st.text_input("📝 Motivo de la Nota de Crédito / Anulación:", value="Anulación por devolución de productos / error en venta")
 
         # PREPARAR DATOS PARA DEVOLUCIÓN PARCIAL
         datos_parciales = []
-        if tipo_devolucion == "Devolución Parcial (Editar cantidades)" and col_detalle:
+        if tipo_devolucion == "Devolución Parcial (Editar cantidades)":
             st.markdown("##### 📝 Ajuste de Cantidades a Devolver")
-            st.write("Indica en la columna **'Cantidad a Devolver'** cuántas unidades regresarán a la bodega:")
-            
+            st.write("Indica en la columna **'Cantidad a Devolver'** cuántas unidades regresarán a inventario:")
+
             lista_items = []
             for _, row in df_resultado.iterrows():
-                detalle_texto = str(row.get(col_detalle, ""))
-                monto_linea = float(row.get('monto', 0))
-                
-                # Desarmamos el string de tu caja para entender qué producto es
-                if " (Cant: " in detalle_texto:
-                    desc_prod = detalle_texto.split(" (Cant: ")[0]
-                    cant_orig = float(detalle_texto.split(" (Cant: ")[1].replace(")", ""))
-                    precio_uni = monto_linea / cant_orig if cant_orig > 0 else 0
-                    
-                    lista_items.append({
-                        "Producto": desc_prod,
-                        "Cant. Original": cant_orig,
-                        "Cantidad a Devolver": 0.0, # El usuario editará esto
-                        "Precio Unitario": precio_uni
-                    })
-            
+                cant_orig = float(row.get("cantidad", 1))
+                monto_total_linea = float(row.get("monto", 0))
+                precio_uni = monto_total_linea / cant_orig if cant_orig > 0 else 0
+
+                lista_items.append({
+                    "Código": str(row.get("codigo_producto", "")),
+                    "Producto": str(row.get("detalle", "Producto")),
+                    "Cant. Original": cant_orig,
+                    "Cantidad a Devolver": 0.0,
+                    "Precio Unitario": precio_uni
+                })
+
             if lista_items:
                 df_parcial = pd.DataFrame(lista_items)
-                datos_parciales_df = st.data_editor(df_parcial, disabled=["Producto", "Cant. Original", "Precio Unitario"], use_container_width=True)
-                datos_parciales = datos_parciales_df.to_dict('records')
+                datos_parciales_df = st.data_editor(
+                    df_parcial,
+                    disabled=["Código", "Producto", "Cant. Original", "Precio Unitario"],
+                    use_container_width=True,
+                    key="editor_nc_parcial"
+                )
+                datos_parciales = datos_parciales_df.to_dict("records")
 
-        # --- 🚀 BOTÓN FINAL: LA MAGIA EN SUPABASE ---
-        if st.button("🚀 Emitir Nota de Crédito y Actualizar Inventario", use_container_width=True):
+        st.markdown("---")
+
+        # --- 🚀 BOTÓN DE EMISIÓN E INTEGRACIÓN DTE ---
+        if st.button("🚀 Emitir Nota de Crédito y Procesar Devolución", type="primary", use_container_width=True):
             try:
-                folio_original = str(df_resultado.iloc[0][col_id])
-                nuevo_folio_nc = f"NC-{folio_original}"
-                fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                fecha_hoy = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                es_oficial = (modo_origen == "OFICIAL")
                 
-                # LOGICA: DEVOLUCIÓN TOTAL
+                # 1. Armar detalle de ítems y montos a devolver
+                items_a_procesar = []
+                monto_total_devolucion = 0.0
+
                 if tipo_devolucion == "Devolución Total (Anulación Completa)":
                     for _, row in df_resultado.iterrows():
-                        detalle_texto = str(row.get(col_detalle, ""))
-                        monto_linea = float(row.get('monto', 0))
-                        
-                        # 1. Devolver Stock
-                        if " (Cant: " in detalle_texto:
-                            desc_prod = detalle_texto.split(" (Cant: ")[0]
-                            cant_devolver = float(detalle_texto.split(" (Cant: ")[1].replace(")", ""))
-                            
-                            res_prod = supabase.table("productos").select("codigo, stock").eq("rut_empresa", str(tenant_id)).eq("descripcion", desc_prod).execute()
-                            if res_prod.data:
-                                p_data = res_prod.data[0]
-                                supabase.table("productos").update({"stock": float(p_data["stock"]) + cant_devolver}).eq("rut_empresa", str(tenant_id)).eq("codigo", p_data["codigo"]).execute()
-                        
-                        # 2. Registrar el impacto negativo en Caja
-                        registro_nc = {
-                            "folio": nuevo_folio_nc,
-                            "rut_empresa": str(tenant_id),
-                            "fecha": fecha_hoy,
-                            "detalle": f"DEVOLUCIÓN: {detalle_texto}",
-                            "monto": -abs(monto_linea), # Salida de dinero
-                            "metodo_pago": row.get('metodo_pago', 'Efectivo'),
-                            "documento": "Nota de Crédito"
-                        }
-                        supabase.table("ventas").insert(registro_nc).execute()
+                        cant_dev = float(row.get("cantidad", 1))
+                        monto_lin = float(row.get("monto", 0))
+                        p_unit = monto_lin / cant_dev if cant_dev > 0 else 0
+                        monto_total_devolucion += monto_lin
 
-                    st.success("✨ ¡Anulación Total exitosa! El dinero se descontó de la caja y el stock volvió a la bodega.")
-
-                # LOGICA: DEVOLUCIÓN PARCIAL
-                else: 
-                    hubo_devolucion = False
+                        items_a_procesar.append({
+                            "codigo": str(row.get("codigo_producto", "")),
+                            "nombre": str(row.get("detalle", "Producto")),
+                            "cantidad": cant_dev,
+                            "precio_unitario": p_unit,
+                            "monto": monto_lin
+                        })
+                else:
                     for item in datos_parciales:
-                        cant_devolver = float(item["Cantidad a Devolver"])
-                        if cant_devolver > 0:
-                            hubo_devolucion = True
-                            desc_prod = item["Producto"]
-                            monto_devolver = cant_devolver * item["Precio Unitario"]
-                            
-                            # 1. Devolver Stock
-                            res_prod = supabase.table("productos").select("codigo, stock").eq("rut_empresa", str(tenant_id)).eq("descripcion", desc_prod).execute()
-                            if res_prod.data:
-                                p_data = res_prod.data[0]
-                                supabase.table("productos").update({"stock": float(p_data["stock"]) + cant_devolver}).eq("rut_empresa", str(tenant_id)).eq("codigo", p_data["codigo"]).execute()
-                            
-                            # 2. Registrar el impacto negativo en Caja
-                            registro_nc = {
-                                "folio": nuevo_folio_nc,
-                                "rut_empresa": str(tenant_id),
-                                "fecha": fecha_hoy,
-                                "detalle": f"DEVOLUCIÓN PARCIAL: {desc_prod} (Cant: {cant_devolver})",
-                                "monto": -abs(monto_devolver),
-                                "metodo_pago": "Efectivo",
-                                "documento": "Nota de Crédito"
-                            }
-                            supabase.table("ventas").insert(registro_nc).execute()
-                            
-                    if hubo_devolucion:
-                        st.success("✨ ¡Devolución Parcial exitosa! Inventario y caja actualizados.")
-                    else:
-                        st.warning("⚠️ No ingresaste ninguna cantidad para devolver. La operación se canceló.")
+                        cant_dev = float(item["Cantidad a Devolver"])
+                        if cant_dev > 0:
+                            p_unit = float(item["Precio Unitario"])
+                            monto_lin = cant_dev * p_unit
+                            monto_total_devolucion += monto_lin
 
-                # Limpiamos la pantalla
+                            items_a_procesar.append({
+                                "codigo": str(item["Código"]),
+                                "nombre": str(item["Producto"]),
+                                "cantidad": cant_dev,
+                                "precio_unitario": p_unit,
+                                "monto": monto_lin
+                            })
+
+                if not items_a_procesar:
+                    st.warning("⚠️ No has seleccionado cantidades válidas para devolver.")
+                    st.stop()
+
+                # 2. Timbrado ante el SII si el documento original fue OFICIAL
+                folio_nc_final = f"NC-{folio_origen}"
+                pdf_url_nc = None
+                xml_url_nc = None
+
+                if es_oficial:
+                    st.toast("⚡ Generando Nota de Crédito Electrónica (DTE 61) con el SII...", icon="📡")
+                    
+                    items_dte_payload = [
+                        {
+                            "nombre": i["nombre"],
+                            "cantidad": i["cantidad"],
+                            "precio_unitario": i["precio_unitario"],
+                            "es_exento": False
+                        }
+                        for i in items_a_procesar
+                    ]
+
+                    mapa_tipo_origen = {
+                        "Boleta Electrónica": 39,
+                        "Factura Electrónica": 33,
+                        "Guía de Despacho": 52
+                    }
+                    codigo_doc_origen = mapa_tipo_origen.get(doc_origen, 39)
+
+                    referencias_sii = [{
+                        "NroLinRef": 1,
+                        "TpoDocRef": codigo_doc_origen,
+                        "FolioRef": str(folio_origen),
+                        "FchRef": fecha_origen,
+                        "CodRef": 1 if "Total" in tipo_devolucion else 3,
+                        "RazonRef": motivo_nc[:90]
+                    }]
+
+                    res_dte_nc = emitir_dte_openfactura(
+                        rut_emisor=tenant_id,
+                        tipo_documento="Nota de Crédito Electrónica",
+                        items=items_dte_payload,
+                        rut_receptor=rut_cliente_origen if rut_cliente_origen else "66666666-6",
+                        razon_social_receptor=cliente_origen if cliente_origen else "Cliente General",
+                        referencias=referencias_sii
+                    )
+
+                    if res_dte_nc.get("exito"):
+                        folio_nc_final = str(res_dte_nc.get("folio"))
+                        pdf_url_nc = res_dte_nc.get("pdf_url")
+                        xml_url_nc = res_dte_nc.get("xml_url")
+                        st.toast(f"✅ Nota de Crédito N° {folio_nc_final} Timbrada Exitosamente", icon="📜")
+                    else:
+                        err_dte = res_dte_nc.get("error", "Fallo al emitir DTE 61")
+                        st.error(f"🚨 Error de Timbrado SII: {err_dte}")
+                        st.stop()
+
+                # 3. Reingresar Stock y Registrar en Base de Datos (Supabase)
+                bodega_target = st.session_state.get("bodega_pos_seleccionada", "Bodega Principal")
+                registros_nc_batch = []
+
+                for item in items_a_procesar:
+                    if item["codigo"] and item["cantidad"] > 0:
+                        try:
+                            supabase.rpc("actualizar_stock_atomico", {
+                                "p_rut_empresa": str(tenant_id),
+                                "p_codigo": str(item["codigo"]),
+                                "p_bodega": str(bodega_target),
+                                "p_cantidad": float(item["cantidad"]),
+                                "p_operacion": "ENTRADA"
+                            }).execute()
+                        except Exception as err_stk:
+                            print(f"Error reingresando stock: {err_stk}")
+
+                    neto_nc = round(item["monto"] / 1.19, 2)
+                    iva_nc = round(item["monto"] - neto_nc, 2)
+
+                    registros_nc_batch.append({
+                        "folio": folio_nc_final,
+                        "rut_empresa": str(tenant_id),
+                        "fecha": fecha_hoy,
+                        "caja": "Caja Principal",
+                        "documento": "Nota de Crédito",
+                        "cliente": cliente_origen,
+                        "rut_cliente": rut_cliente_origen,
+                        "codigo_producto": item["codigo"],
+                        "detalle": f"NC ({motivo_nc}): {item['nombre']}",
+                        "cantidad": -abs(item["cantidad"]),
+                        "monto": -abs(item["monto"]),
+                        "neto": -abs(neto_nc),
+                        "iva": -abs(iva_nc),
+                        "metodo_pago": primera_fila.get("metodo_pago", "Efectivo"),
+                        "modo_emision": modo_origen,
+                        "estado_dte": "EMITIDO",
+                        "pdf_url": pdf_url_nc,
+                        "xml_url": xml_url_nc
+                    })
+
+                supabase.table("ventas").insert(registros_nc_batch).execute()
+
+                # 4. Ajustar Cuentas por Cobrar si corresponde
+                try:
+                    res_cxc = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", str(tenant_id)).eq("folio_venta", str(folio_origen)).execute()
+                    if res_cxc.data:
+                        for cxc in res_cxc.data:
+                            saldo_act = float(cxc.get("saldo_pendiente", 0))
+                            nuevo_saldo = max(0.0, saldo_act - monto_total_devolucion)
+                            est = "Pagado" if nuevo_saldo == 0 else "Pendiente"
+                            supabase.table("cuentas_por_cobrar").update({
+                                "saldo_pendiente": nuevo_saldo,
+                                "estado": est
+                            }).eq("id", cxc["id"]).execute()
+                except Exception as err_cxc:
+                    print(f"Error ajustando CxC: {err_cxc}")
+
+                st.success(f"🎉 ¡Nota de Crédito {folio_nc_final} emitida exitosamente! Inventario y caja actualizados.")
+                if pdf_url_nc:
+                    st.link_button("📄 Descargar DTE Nota de Crédito (PDF)", pdf_url_nc, use_container_width=True)
+
                 del st.session_state["venta_encontrada_nc"]
                 st.rerun()
-                
+
             except Exception as e:
-                st.error(f"❌ Error crítico al procesar la devolución en la base de datos: {e}")
+                st.error(f"❌ Error crítico procesando la Nota de Crédito: {e}")
