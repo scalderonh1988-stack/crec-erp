@@ -987,45 +987,59 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                             st.warning("⚠️ Ingresa al menos 1 unidad para devolver.")
                         else:
                             try:
-                                bodega_actual = st.session_state.get("bodega_pos_seleccionada", "Bodega Principal")
-                                
-                                # 1. Devuelve las unidades al inventario mediante RPC
+                                unidades_devueltas_exito = 0
+
                                 for cod_prod, datos in devoluciones.items():
                                     cant = datos["cant_devuelta"]
                                     if cant > 0:
-                                        supabase.rpc(
-                                            'actualizar_stock_atomico',
-                                            {
-                                                'p_rut_empresa': str(rut_actual),
-                                                'p_codigo': str(cod_prod),
-                                                'p_bodega': str(bodega_actual),
-                                                'p_cantidad': cant,
-                                                'p_operacion': 'ENTRADA'
-                                            }
-                                        ).execute()
+                                        # 1. Devuelve stock al inventario en 'productos' o 'ingredientes'
+                                        res_p = supabase.table("productos").select("id, stock").eq("rut_empresa", rut_actual).eq("codigo", str(cod_prod)).execute()
+                                        if res_p.data:
+                                            stk_actual = float(res_p.data[0].get("stock") or 0.0)
+                                            supabase.table("productos").update({"stock": stk_actual + cant}).eq("id", res_p.data[0]["id"]).execute()
+                                            unidades_devueltas_exito += cant
+                                        else:
+                                            res_i = supabase.table("ingredientes").select("id, stock").eq("rut_empresa", rut_actual).eq("codigo", str(cod_prod)).execute()
+                                            if res_i.data:
+                                                stk_actual = float(res_i.data[0].get("stock") or 0.0)
+                                                supabase.table("ingredientes").update({"stock": stk_actual + cant}).eq("id", res_i.data[0]["id"]).execute()
+                                                unidades_devueltas_exito += cant
 
-                                # 2. Rebaja el saldo pendiente en Cuentas por Cobrar
+                                        # 2. Descuenta la venta en la tabla 'ventas' para restar de Caja y Ventas Totales
+                                        res_v = supabase.table("ventas").select("*").eq("rut_empresa", rut_actual).eq("folio", str(folio_seleccionado)).eq("codigo_producto", str(cod_prod)).execute()
+                                        if res_v.data:
+                                            for row_v in res_v.data:
+                                                cant_v_orig = float(row_v.get("cantidad", 0))
+                                                monto_v_orig = float(row_v.get("monto", row_v.get("subtotal", 0)))
+                                                pu = monto_v_orig / cant_v_orig if cant_v_orig > 0 else 0
+
+                                                nueva_cant_v = max(0.0, cant_v_orig - cant)
+                                                nuevo_monto_v = nueva_cant_v * pu
+
+                                                if nueva_cant_v <= 0:
+                                                    # Si se devolvió la totalidad, se remueve el registro de venta
+                                                    supabase.table("ventas").delete().eq("id", row_v["id"]).execute()
+                                                else:
+                                                    # Si fue devolución parcial, se ajusta al monto y cantidad real
+                                                    supabase.table("ventas").update({
+                                                        "cantidad": nueva_cant_v,
+                                                        "monto": nuevo_monto_v
+                                                    }).eq("id", row_v["id"]).execute()
+
+                                # 3. Ajusta el saldo pendiente en Cuentas por Cobrar
                                 nuevo_saldo = max(0.0, saldo_actual - total_rebaja_calculada)
+                                estado_final = "DEVUELTO" if nuevo_saldo <= 0 else "Pendiente"
 
-                                if nuevo_saldo <= 0:
-                                    supabase.table("cuentas_por_cobrar").update({
-                                        "saldo_pendiente": 0.0,
-                                        "estado": "Pagado"
-                                    }).eq("id", id_deuda).execute()
-                                    
-                                    st.success(f"🎉 ¡Mercadería devuelta y deuda saldada por completo para el folio {folio_seleccionado}!")
-                                else:
-                                    supabase.table("cuentas_por_cobrar").update({
-                                        "saldo_pendiente": nuevo_saldo,
-                                        "estado": "Pendiente"
-                                    }).eq("id", id_deuda).execute()
-                                    
-                                    st.success(f"✅ Reingreso exitoso. Stock devuelto a bodega y saldo rebajado en ${total_rebaja_calculada:,.2f}. Nuevo saldo:${nuevo_saldo:,.2f}")
+                                supabase.table("cuentas_por_cobrar").update({
+                                    "saldo_pendiente": nuevo_saldo,
+                                    "estado": estado_final
+                                }).eq("id", id_deuda).execute()
 
+                                st.success(f"🎉 ¡Devolución procesada! Se devolvió el stock, se rebajó la deuda y se descontaron ${total_rebaja_calculada:,.2f} de las Ventas y Caja.")
                                 st.rerun()
 
                             except Exception as e:
-                                st.error(f"❌ Error al procesar el reingreso de consignación: {e}")
+                                st.error(f"❌ Error al procesar la devolución: {e}")
 
 def mostrar_modulo_registro_gastos(supabase):
     st.markdown("### 📋 Registro y Control de Gastos")
