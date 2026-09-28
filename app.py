@@ -24,7 +24,7 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN DE ELEMENTOS DE DESARROLLADOR
+# 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN TOTAL DE ELEMENTOS DE DESARROLLADOR
 # (Obligatorio: debe ser la PRIMERA llamada a 'st' en todo el código)
 # ==============================================================================
 st.set_page_config(
@@ -34,20 +34,22 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Oculta menú de Streamlit, barra superior con botón Fork/GitHub, footer, estado y estilos CSS generales
+# Oculta menú de Streamlit, botones de GitHub, opción Deploy, marcas de agua, cabecera y footer
 st.markdown("""
     <style>
-    /* Ocultar menú principal, encabezado y pie de página */
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
+    /* Ocultar menú principal, encabezado y pie de página de Streamlit */
+    #MainMenu {visibility: hidden !important; display: none !important;}
+    header {visibility: hidden !important; display: none !important;}
+    footer {visibility: hidden !important; display: none !important;}
     
-    /* Ocultar barra superior nativa (Fork, GitHub, Botones de desarrollador) */
+    /* Ocultar barra superior nativa (Buscador, Fork, GitHub, Deploy y Status) */
     .stAppHeader {display: none !important;}
     [data-testid="stHeader"] {display: none !important;}
-    [data-testid="stToolbar"] {display: none !important;}
+    [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
     [data-testid="stDecoration"] {display: none !important;}
     [data-testid="stStatusWidget"] {display: none !important;}
+    [data-testid="stActionButtonIcon"] {display: none !important;}
+    .stDeployButton {display: none !important;}
     
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
@@ -146,7 +148,7 @@ PROVEEDORES_FILE = os.path.join(CLIENTES_DIR, "maestro_proveedores.xlsx")
 # ==============================================================================
 
 def obtener_datos_emisor(supabase, tenant_id):
-    """Obtiene los datos legales de la empresa emisora desde Supabase."""
+    """Obtiene los datos legales de la empresa emisora desde Supabase o retorna valores predeterminados."""
     try:
         res = supabase.table("empresas").select("*").eq("rut_empresa", str(tenant_id)).execute()
         if res.data and len(res.data) > 0:
@@ -155,12 +157,12 @@ def obtener_datos_emisor(supabase, tenant_id):
         pass
     
     return {
-        "razon_social": st.session_state.get("empresa_razon_social", "MI EMPRESA SPA"),
-        "rut_empresa": tenant_id or "12345678-9",
-        "giro": st.session_state.get("empresa_giro", "Giro Comercial No Especificado"),
-        "direccion": st.session_state.get("empresa_direccion", "Dirección Matriz"),
-        "comuna": st.session_state.get("empresa_comuna", "Santiago"),
-        "email_dte": st.session_state.get("empresa_email", "dte@miempresa.cl")
+        "razon_social": st.session_state.get("empresa_razon_social", "SANDRO CESAR MUÑOZ TORO"),
+        "rut_empresa": tenant_id or "15382273-5",
+        "giro": st.session_state.get("empresa_giro", "VENTA AL POR MAYOR Y DETALLE DE BEBIDAS ALCOHOLICAS Y ANALCOHOLICAS"),
+        "direccion": st.session_state.get("empresa_direccion", "AVENIDA MAIPU 1512"),
+        "comuna": st.session_state.get("empresa_comuna", "SAN FELIPE"),
+        "email_dte": st.session_state.get("empresa_email", "contacto@botilleriasapiron.cl")
     }
 
 def generar_encabezado_documento(tipo_doc, folio, emisor, receptor):
@@ -258,7 +260,7 @@ def mostrar_documento_unificado(tipo_documento, folio, datos_emisor, datos_recep
 <div style="color: #64b5f6; font-weight: bold; font-size: 13px; margin-bottom: 4px;">👤 DATOS RECEPTOR</div>
 <div style="font-size: 12px; color: #ccc; line-height: 1.4;">
 <b>Cliente:</b> {datos_receptor.get('nombre', 'CLIENTE CONTADO')} &nbsp;|&nbsp; <b>RUT:</b> {datos_receptor.get('rut', '66666666-6')}<br>
-<b>Giro:</b> {datos_receptor.get('giro', 'Particular')} &nbsp;|&nbsp; <b>Dirección:</b> {datos_receptor.get('direccion', 'N/A')}, {datos_receptor.get('comuna', 'Santiago')}
+<b>Giro:</b> {datos_receptor.get('giro', 'Particular')} &nbsp;|&nbsp; <b>Dirección:</b> {datos_receptor.get('direccion', 'N/A')}, {datos_receptor.get('comuna', 'San Felipe')}
 </div>
 </div>
 <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;">
