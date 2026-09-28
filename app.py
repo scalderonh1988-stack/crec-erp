@@ -769,6 +769,22 @@ def limpiar_folio_str(val):
     return s
 
 
+import streamlit as st
+import pandas as pd
+from datetime import date, datetime
+from modulos.servicios.data_manager import supabase
+
+
+def limpiar_folio_str(val):
+    """Convierte cualquier valor de folio a string limpio eliminando sufijos .0"""
+    if val is None:
+        return ""
+    s = str(val).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
+
+
 # ----------------- SECCIÓN CUENTAS POR COBRAR (NUBE) -----------------
 def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     mostrar_encabezado_con_home("📑 Gestión de Cuentas por Cobrar")
@@ -892,6 +908,8 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             saldo_actual = float(fila_deuda["saldo_pendiente"])
             monto_abonado_actual = float(fila_deuda.get("monto_abonado", 0.0))
             id_deuda = fila_deuda["id"]
+            rut_cli_sel = str(fila_deuda.get("rut_cliente", "")).strip()
+            nom_cli_sel = str(fila_deuda.get("cliente", "")).strip()
             
             # --- CONSULTAR DETALLE DE VENTA PARA DETECTAR CONSIGNACIONES ---
             items_venta = []
@@ -963,7 +981,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
 
                 else:
                     monto_abono = st.number_input(
-                        f"💵 Monto a abonar en USD (Saldo adeudado: ${saldo_actual:,.2f} USD):",
+                        f"💵 Monto a abonar en USD (Saldo de este folio: ${saldo_actual:,.2f} USD):",
                         min_value=0.0,
                         step=10.0,
                         format="%.2f",
@@ -971,44 +989,102 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                     )
             else:
                 monto_abono = st.number_input(
-                    f"💵 Monto a abonar en dinero (Saldo adeudado: ${saldo_actual:,.2f}):",
+                    f"💵 Monto a abonar en dinero (Saldo de este folio: ${saldo_actual:,.2f}):",
                     min_value=0.0,
                     step=100.0,
                     key=f"clp_{folio_seleccionado}"
                 )
 
-            # --- BOTÓN DE CONFIRMACIÓN DE ABONO EN DINERO ---
+            # --- BOTÓN DE CONFIRMACIÓN CON LÓGICA DE PAGO EN CASCADA ---
             if st.button("💵 Confirmar y Registrar Abono", type="primary", use_container_width=True, key=f"btn_confirmar_abono_{folio_seleccionado}"):
                 if monto_abono <= 0:
                     st.warning("⚠️ Ingresa un monto mayor a 0 para registrar el abono.")
                 else:
                     try:
-                        # Permite saldos negativos si se abona más de la deuda (Saldo a Favor)
-                        nuevo_saldo = saldo_actual - float(monto_abono)
-                        nuevo_monto_abonado = monto_abonado_actual + float(monto_abono)
-                        
-                        if nuevo_saldo < 0:
-                            nuevo_estado = "Saldo a Favor"
-                            monto_excedente = abs(nuevo_saldo)
-                            msg_exito = f"🎉 ¡Abono registrado! La deuda del Folio **{folio_seleccionado}** fue saldada y el cliente tiene un **Saldo a Favor de ${monto_excedente:,.2f}**."
-                        elif nuevo_saldo == 0:
-                            nuevo_estado = "Pagado"
-                            msg_exito = f"🎉 ¡Abono registrado! La deuda del Folio **{folio_seleccionado}** ha sido pagada por completo."
+                        monto_restante = float(monto_abono)
+
+                        # CASO 1: El abono es menor o igual a la deuda seleccionada
+                        if monto_restante <= saldo_actual:
+                            nuevo_saldo = saldo_actual - monto_restante
+                            nuevo_monto_abonado = monto_abonado_actual + monto_restante
+                            nuevo_estado = "Pagado" if nuevo_saldo == 0 else "Pendiente"
+
+                            supabase.table("cuentas_por_cobrar").update({
+                                "monto_abonado": nuevo_monto_abonado,
+                                "saldo_pendiente": nuevo_saldo,
+                                "estado": nuevo_estado
+                            }).eq("id", id_deuda).execute()
+
+                            st.success(f"✅ ¡Abono de **${monto_abono:,.2f}** registrado con éxito! Nuevo saldo del Folio {folio_seleccionado}: **${nuevo_saldo:,.2f}**")
+
+                        # CASO 2: El abono supera la deuda del folio actual (APLICAR CASCADA A OTRAS VENTAS)
                         else:
-                            nuevo_estado = "Pendiente"
-                            msg_exito = f"✅ ¡Abono de **${monto_abono:,.2f}** registrado con éxito! Nuevo saldo pendiente: **${nuevo_saldo:,.2f}**"
+                            detalles_pago = []
 
-                        # Actualización de saldo, abono acumulado y estado en Supabase
-                        supabase.table("cuentas_por_cobrar").update({
-                            "monto_abonado": nuevo_monto_abonado,
-                            "saldo_pendiente": nuevo_saldo,
-                            "estado": nuevo_estado
-                        }).eq("id", id_deuda).execute()
+                            # A. Saldar la deuda seleccionada primero
+                            monto_restante -= saldo_actual
+                            supabase.table("cuentas_por_cobrar").update({
+                                "monto_abonado": monto_abonado_actual + saldo_actual,
+                                "saldo_pendiente": 0.0,
+                                "estado": "Pagado"
+                            }).eq("id", id_deuda).execute()
+                            detalles_pago.append(f"• **Folio {folio_seleccionado}**: Pagado completamente (${saldo_actual:,.2f})")
 
-                        st.success(msg_exito)
+                            # B. Consultar otras deudas pendientes del mismo cliente (de más antigua a más reciente)
+                            q_otras = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual)
+                            if rut_cli_sel and rut_cli_sel not in ["Sin RUT", "66666666-6", ""]:
+                                q_otras = q_otras.eq("rut_cliente", rut_cli_sel)
+                            else:
+                                q_otras = q_otras.eq("cliente", nom_cli_sel)
+
+                            res_otras = q_otras.neq("id", id_deuda).gt("saldo_pendiente", 0).order("fecha_emision", desc=False).execute()
+                            otras_deudas = res_otras.data or []
+
+                            # C. Distribuir el saldo restante en las deudas de las otras ventas
+                            for d in otras_deudas:
+                                if monto_restante <= 0:
+                                    break
+
+                                id_d = d["id"]
+                                folio_d = limpiar_folio_str(d.get("folio_venta"))
+                                saldo_d = float(d.get("saldo_pendiente", 0.0))
+                                abonado_d = float(d.get("monto_abonado", 0.0))
+
+                                if monto_restante >= saldo_d:
+                                    # Se liquida completamente esta otra venta
+                                    monto_restante -= saldo_d
+                                    supabase.table("cuentas_por_cobrar").update({
+                                        "monto_abonado": abonado_d + saldo_d,
+                                        "saldo_pendiente": 0.0,
+                                        "estado": "Pagado"
+                                    }).eq("id", id_d).execute()
+                                    detalles_pago.append(f"• **Folio {folio_d}**: Pagado completamente (${saldo_d:,.2f})")
+                                else:
+                                    # Abono parcial a esta otra venta y se agota el dinero recibido
+                                    nuevo_saldo_d = saldo_d - monto_restante
+                                    supabase.table("cuentas_por_cobrar").update({
+                                        "monto_abonado": abonado_d + monto_restante,
+                                        "saldo_pendiente": nuevo_saldo_d,
+                                        "estado": "Pendiente"
+                                    }).eq("id", id_d).execute()
+                                    detalles_pago.append(f"• **Folio {folio_d}**: Abono parcial de ${monto_restante:,.2f} (Queda saldo de${nuevo_saldo_d:,.2f})")
+                                    monto_restante = 0.0
+
+                            # D. Si el cliente liquida TODAS sus deudas y aún le sobra dinero
+                            if monto_restante > 0:
+                                supabase.table("cuentas_por_cobrar").update({
+                                    "saldo_pendiente": -monto_restante,
+                                    "estado": "Saldo a Favor"
+                                }).eq("id", id_deuda).execute()
+                                detalles_pago.append(f"• 🟢 **Saldo a Favor restante para el cliente**: **${monto_restante:,.2f}**")
+
+                            st.success(f"🎉 **¡Abono en cascada procesado exitosamente por ${monto_abono:,.2f}!**")
+                            for det in detalles_pago:
+                                st.write(det)
+
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al registrar el abono en Supabase: {e}")
+                        st.error(f"❌ Error al procesar el abono en cascada: {e}")
 
             # --- REGISTRO DE REINGRESO / DEVOLUCIÓN (SÓLO SI ES CONSIGNACIÓN) ---
             if es_consignacion and items_venta:
