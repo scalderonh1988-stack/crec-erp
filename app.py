@@ -24,7 +24,7 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN TOTAL DE ELEMENTOS DE DESARROLLADOR
+# 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN TOTAL DE ELEMENTOS
 # (Obligatorio: debe ser la PRIMERA llamada a 'st' en todo el código)
 # ==============================================================================
 st.set_page_config(
@@ -34,40 +34,62 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Oculta menú de Streamlit, botones de GitHub, opción Deploy, cabecera, footer e íconos flotantes
+# ------------------------------------------------------------------------------
+# A. SCRIPT EN JAVASCRIPT: Elimina los íconos flotantes externos de Streamlit Cloud
+# (Corona roja, globo, status) actuando sobre el documento principal.
+# ------------------------------------------------------------------------------
+components.html("""
+    <script>
+        function hideStreamlitCloudBadges() {
+            try {
+                const parentDoc = window.parent.document;
+                const selectors = [
+                    '[data-testid="stStatusWidget"]',
+                    '[data-testid="stAppBadge"]',
+                    '.stViewerBadge',
+                    'div[class*="viewerBadge"]',
+                    'div[class*="styles_viewerBadge"]',
+                    'div[class*="stAppBadge"]',
+                    'a[href*="streamlit.io"]',
+                    'a[href*="streamlit.app"]',
+                    '#root > div:nth-child(2)'
+                ];
+                
+                selectors.forEach(selector => {
+                    const elements = parentDoc.querySelectorAll(selector);
+                    elements.forEach(el => {
+                        el.style.setProperty('display', 'none', 'important');
+                        el.style.setProperty('visibility', 'hidden', 'important');
+                        el.style.setProperty('opacity', '0', 'important');
+                        el.style.setProperty('pointer-events', 'none', 'important');
+                    });
+                });
+            } catch (e) {
+                console.log(e);
+            }
+        }
+        setInterval(hideStreamlitCloudBadges, 300);
+    </script>
+""", height=0, width=0)
+
+# ------------------------------------------------------------------------------
+# B. ESTILOS CSS: Oculta menús internos, encabezados y footer de la app
+# ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* 1. Ocultar menú principal, encabezado y pie de página de Streamlit */
+    /* Ocultar menú principal, encabezado y pie de página */
     #MainMenu {visibility: hidden !important; display: none !important;}
     header {visibility: hidden !important; display: none !important;}
     footer {visibility: hidden !important; display: none !important;}
     
-    /* 2. Ocultar barra superior nativa (Buscador, Fork, GitHub, Deploy y Status) */
+    /* Ocultar barra superior nativa (Buscador, Fork, GitHub, Deploy y Status) */
     .stAppHeader {display: none !important;}
     [data-testid="stHeader"] {display: none !important;}
     [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
     [data-testid="stDecoration"] {display: none !important;}
     .stDeployButton {display: none !important;}
 
-    /* 3. Ocultar los íconos de la esquina inferior derecha (Corona de Streamlit Cloud y Globo) */
-    [data-testid="stStatusWidget"],
-    [data-testid="stAppBadge"],
-    [data-testid="stActionButtonIcon"],
-    .stViewerBadge,
-    div[class*="viewerBadge"],
-    div[class*="styles_viewerBadge"],
-    div[class*="stAppBadge"],
-    a[href*="streamlit.io"],
-    a[href*="streamlit.app"] {
-        display: none !important;
-        visibility: hidden !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
-        width: 0px !important;
-        height: 0px !important;
-    }
-    
-    /* 4. Bloquear selección accidental de texto en pantallas de caja */
+    /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
 
     /* Estilos globales */
@@ -96,7 +118,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. IMPORTACIÓN DE MÓDULOS DE LA APLICACIÓN
+# 2. IMPORTACIÓN DE MÓDULOS DE LA APLICACIÓN Y CONTINUACIÓN DEL CÓDIGO...
 # ==============================================================================
 from modulos.servicios.data_manager import get_current_tenant
 from modulos.servicios.data_manager import guardar_nuevo_cliente, cargar_maestro_clientes
