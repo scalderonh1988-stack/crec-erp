@@ -1590,6 +1590,15 @@ def mostrar_modulo_conciliacion_retiros(ruta_negocio):
         else:
             st.info("ℹ️ No hay cuentas bancarias personalizadas creadas aún.")
 
+def limpiar_folio_str(val):
+    if val is None:
+        return ""
+    s = str(val).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
+
+
 # --- CONEXIÓN DE REPORTES A SUPABASE ---
 def mostrar_modulo_reportes_avanzados(ruta_negocio):
     if st.button("⬅️ Volver al Home", use_container_width=True):
@@ -1599,31 +1608,74 @@ def mostrar_modulo_reportes_avanzados(ruta_negocio):
     st.markdown("### 📊 Módulo de Reportes e Inteligencia de Negocio")
     st.info("📈 Analiza el rendimiento financiero en tiempo real conectado a Supabase.")
 
-    rut_actual = st.session_state.get("negocio_seleccionado")
+    rut_actual = str(st.session_state.get("negocio_seleccionado", "")).strip()
     fecha_hoy = date.today().strftime('%Y-%m-%d')
     
-    # Lectura de Ventas y Gastos en la Nube
-    try:
-        res_ventas = supabase.table("ventas").select("monto").eq("rut_empresa", rut_actual).like("fecha", f"{fecha_hoy}%").execute()
-        total_ingresos_dia = sum([float(v['monto'] or 0) for v in res_ventas.data])
-    except:
-        total_ingresos_dia = 0.0
+    # 1. Lectura de Ventas e Ingresos Reales de Hoy
+    total_ingresos_dia = 0.0
+    total_ventas_brutas = 0.0
+    total_notas_credito_ajuste = 0.0
 
     try:
-        res_gastos = supabase.table("gastos").select("monto, categoria").eq("rut_empresa", rut_actual).execute()
-        df_g = pd.DataFrame(res_gastos.data)
-        
-        # Filtramos solo los gastos de hoy para el balance
-        res_gastos_hoy = supabase.table("gastos").select("monto").eq("rut_empresa", rut_actual).like("fecha", f"{fecha_hoy}%").execute()
-        total_egresos_hoy = sum([float(g['monto'] or 0) for g in res_gastos_hoy.data])
-    except:
+        res_ventas = supabase.table("ventas").select("*").eq("rut_empresa", rut_actual).like("fecha", f"{fecha_hoy}%").execute()
+        if not res_ventas.data:
+            res_ventas = supabase.table("ventas").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+            if res_ventas.data:
+                res_ventas.data = [v for v in res_ventas.data if str(v.get("fecha", "")).startswith(fecha_hoy)]
+
+        if res_ventas.data:
+            for v in res_ventas.data:
+                monto = float(v.get("monto") or 0.0)
+                cod_prod = str(v.get("codigo_producto", ""))
+                doc = str(v.get("documento", "")).upper()
+
+                # Ignorar de la caja diaria los ajustes contables de saldo/cartera (NC-SALDO)
+                if cod_prod == "NC-SALDO" or "AJUSTE" in doc:
+                    total_notas_credito_ajuste += abs(monto)
+                    continue
+                
+                total_ingresos_dia += monto
+                if monto > 0:
+                    total_ventas_brutas += monto
+
+    except Exception as e:
+        st.error(f"⚠️ Error al consultar ventas de hoy: {e}")
+        total_ingresos_dia = 0.0
+
+    # 2. Lectura de Gastos en la Nube
+    total_egresos_hoy = 0.0
+    df_g = pd.DataFrame()
+
+    try:
+        res_gastos = supabase.table("gastos").select("monto, categoria, fecha").eq("rut_empresa", rut_actual).execute()
+        if not res_gastos.data:
+            res_gastos = supabase.table("gastos").select("monto, categoria, fecha").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+
+        if res_gastos.data:
+            df_g = pd.DataFrame(res_gastos.data)
+            
+            # Filtrar solo gastos de hoy
+            gastos_hoy = [
+                float(g.get("monto") or 0.0) 
+                for g in res_gastos.data 
+                if str(g.get("fecha", "")).startswith(fecha_hoy)
+            ]
+            total_egresos_hoy = sum(gastos_hoy)
+
+    except Exception as e:
+        st.error(f"⚠️ Error al consultar gastos: {e}")
         total_egresos_hoy = 0.0
         df_g = pd.DataFrame()
 
     archivo_cxp = os.path.join(ruta_negocio, "Cuentas_por_Cobrar.xlsx")
     archivo_cpp = os.path.join(ruta_negocio, "Cuentas_Por_Pagar.xlsx")
 
-    tab_r1, tab_r2, tab_r3, tab_r4 = st.tabs(["💰 Balance de Hoy (Nube)", "📈 Análisis de Gastos (Nube)", "📑 Estado de Cartera", "📄 Exportar Informes PDF"])
+    tab_r1, tab_r2, tab_r3, tab_r4 = st.tabs([
+        "💰 Balance de Hoy (Nube)", 
+        "📈 Análisis de Gastos (Nube)", 
+        "📑 Estado de Cartera", 
+        "📄 Exportar Informes PDF"
+    ])
 
     with tab_r1:
         st.markdown("#### 💵 Resumen General de Ingresos vs. Gastos (Día Actual)")
@@ -1631,16 +1683,33 @@ def mostrar_modulo_reportes_avanzados(ruta_negocio):
 
         col_rep1, col_rep2, col_rep3 = st.columns(3)
         with col_rep1:
-            st.metric(label="🪙 Ingresos Totales de Hoy", value=f"${total_ingresos_dia:,.2f}")
+            st.metric(
+                label="🪙 Ingresos Reales de Caja (Hoy)", 
+                value=f"${total_ingresos_dia:,.2f}",
+                help="Suma de las ventas físicas del día. Excluye ajustes contables de saldo (NC-SALDO)."
+            )
         with col_rep2:
-            st.metric(label="📉 Gastos Operativos Hoy", value=f"${total_egresos_hoy:,.2f}")
+            st.metric(
+                label="📉 Gastos Operativos Hoy", 
+                value=f"${total_egresos_hoy:,.2f}"
+            )
         with col_rep3:
-            st.metric(label="💼 Margen Neto Operativo", value=f"${utilidad_estimada:,.2f}", delta="Estimado")
+            st.metric(
+                label="💼 Margen Neto Operativo", 
+                value=f"${utilidad_estimada:,.2f}", 
+                delta="Estimado Hoy"
+            )
+
+        if total_notas_credito_ajuste > 0:
+            st.info(
+                f"ℹ️ **Ajustes Contables de Cartera:** Hoy se emitieron **${total_notas_credito_ajuste:,.2f}** "
+                f"en Notas de Crédito por condonación / ajuste de saldo en Cuentas por Cobrar. *(No afectan el flujo de efectivo físico de hoy)*."
+            )
 
     with tab_r2:
         st.markdown("#### 📂 Desglose Histórico de Gastos por Categoría")
         if not df_g.empty and 'categoria' in df_g.columns and 'monto' in df_g.columns:
-            df_g['monto'] = pd.to_numeric(df_g['monto'], errors='coerce')
+            df_g['monto'] = pd.to_numeric(df_g['monto'], errors='coerce').fillna(0.0)
             gasto_por_cat = df_g.groupby('categoria')['monto'].sum().reset_index()
             st.dataframe(gasto_por_cat, use_container_width=True)
             st.bar_chart(gasto_por_cat.set_index('categoria')['monto'])
@@ -1648,18 +1717,46 @@ def mostrar_modulo_reportes_avanzados(ruta_negocio):
             st.info("ℹ️ No hay registros suficientes de gastos en la nube.")
 
     with tab_r3:
-        st.markdown("#### ⏳ Reporte de Cuentas por Cobrar y Atrasos (Excel temporal)")
-        if os.path.exists(archivo_cxp):
+        st.markdown("#### ⏳ Reporte de Cuentas por Cobrar (Clientes)")
+        
+        # 1. Intentar cargar desde Supabase
+        df_cobrar_nube = pd.DataFrame()
+        try:
+            res_cxc = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual).execute()
+            if not res_cxc.data:
+                res_cxc = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+            if res_cxc.data:
+                df_cobrar_nube = pd.DataFrame(res_cxc.data)
+        except Exception as e_cxc:
+            st.warning(f"⚠️ No se pudo cargar Cuentas por Cobrar de Supabase: {e_cxc}")
+
+        if not df_cobrar_nube.empty:
+            cols_mostrar_cxc = [c for c in ["folio_venta", "cliente", "rut_cliente", "monto_total", "monto_abonado", "saldo_pendiente", "estado"] if c in df_cobrar_nube.columns]
+            st.dataframe(df_cobrar_nube[cols_mostrar_cxc], use_container_width=True)
+        elif os.path.exists(archivo_cxp):
             df_cobrar = pd.read_excel(archivo_cxp)
             if not df_cobrar.empty:
                 st.dataframe(df_cobrar, use_container_width=True)
             else:
                 st.info("ℹ️ No hay registros activos en Cuentas por Cobrar.")
         else:
-            st.info("ℹ️ No existe archivo de Cuentas por Cobrar.")
+            st.info("ℹ️ No existen registros de Cuentas por Cobrar.")
 
         st.markdown("#### 💳 Estado de Cuentas por Pagar (Proveedores)")
-        if os.path.exists(archivo_cpp):
+        
+        df_pagar_nube = pd.DataFrame()
+        try:
+            res_cpp = supabase.table("cuentas_por_pagar").select("*").eq("rut_empresa", rut_actual).execute()
+            if not res_cpp.data:
+                res_cpp = supabase.table("cuentas_por_pagar").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
+            if res_cpp.data:
+                df_pagar_nube = pd.DataFrame(res_cpp.data)
+        except:
+            pass
+
+        if not df_pagar_nube.empty:
+            st.dataframe(df_pagar_nube, use_container_width=True)
+        elif os.path.exists(archivo_cpp):
             df_pagar = pd.read_excel(archivo_cpp)
             if not df_pagar.empty:
                 st.dataframe(df_pagar, use_container_width=True)
@@ -1687,13 +1784,18 @@ def mostrar_modulo_reportes_avanzados(ruta_negocio):
                 pdf.cell(0, 8, "RESUMEN FINANCIERO DEL DIA", ln=True)
                 pdf.set_font("Arial", '', 10)
                 
-                pdf.cell(100, 7, "Ingresos Totales Registrados:", border=1)
+                pdf.cell(100, 7, "Ingresos Reales de Caja:", border=1)
                 pdf.cell(90, 7, f"${total_ingresos_dia:,.2f}", border=1, ln=True, align='R')
                 pdf.cell(100, 7, "Gastos Operativos Totales:", border=1)
                 pdf.cell(90, 7, f"${total_egresos_hoy:,.2f}", border=1, ln=True, align='R')
                 pdf.cell(100, 7, "Margen Neto Operativo Estimado:", border=1)
                 pdf.cell(90, 7, f"${utilidad_estimada:,.2f}", border=1, ln=True, align='R')
                 pdf.ln(10)
+
+                if total_notas_credito_ajuste > 0:
+                    pdf.set_font("Arial", 'I', 9)
+                    pdf.cell(0, 6, f"* Nota: Se emitieron ${total_notas_credito_ajuste:,.2f} en NC por ajuste de cartera (no afectan flujo de caja).", ln=True)
+                    pdf.ln(5)
 
                 pdf.set_font("Arial", 'I', 9)
                 pdf.cell(0, 6, "Reporte generado automáticamente desde la Nube.", ln=True, align='C')
