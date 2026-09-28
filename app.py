@@ -34,24 +34,40 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Oculta menú de Streamlit, botones de GitHub, opción Deploy, marcas de agua, cabecera y footer
+# Oculta menú de Streamlit, botones de GitHub, opción Deploy, cabecera, footer e íconos flotantes
 st.markdown("""
     <style>
-    /* Ocultar menú principal, encabezado y pie de página de Streamlit */
+    /* 1. Ocultar menú principal, encabezado y pie de página de Streamlit */
     #MainMenu {visibility: hidden !important; display: none !important;}
     header {visibility: hidden !important; display: none !important;}
     footer {visibility: hidden !important; display: none !important;}
     
-    /* Ocultar barra superior nativa (Buscador, Fork, GitHub, Deploy y Status) */
+    /* 2. Ocultar barra superior nativa (Buscador, Fork, GitHub, Deploy y Status) */
     .stAppHeader {display: none !important;}
     [data-testid="stHeader"] {display: none !important;}
     [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
     [data-testid="stDecoration"] {display: none !important;}
-    [data-testid="stStatusWidget"] {display: none !important;}
-    [data-testid="stActionButtonIcon"] {display: none !important;}
     .stDeployButton {display: none !important;}
+
+    /* 3. Ocultar los íconos de la esquina inferior derecha (Corona de Streamlit Cloud y Globo) */
+    [data-testid="stStatusWidget"],
+    [data-testid="stAppBadge"],
+    [data-testid="stActionButtonIcon"],
+    .stViewerBadge,
+    div[class*="viewerBadge"],
+    div[class*="styles_viewerBadge"],
+    div[class*="stAppBadge"],
+    a[href*="streamlit.io"],
+    a[href*="streamlit.app"] {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        width: 0px !important;
+        height: 0px !important;
+    }
     
-    /* Bloquear selección accidental de texto en pantallas de caja */
+    /* 4. Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
 
     /* Estilos globales */
