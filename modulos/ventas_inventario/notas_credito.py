@@ -17,7 +17,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
     st.markdown("### 🔄 Emisión de Notas de Crédito y Devoluciones (DTE 61)")
     st.markdown(
         "📌 **Gestión Tributaria & Operativa:** Genera Notas de Crédito Electrónicas (DTE Tipo 61) "
-        "ante el SII, anula o corrige documentos, reingresa stock a bodega y ajusta saldos."
+        "ante el SII, anula o corrige documentos, reingresa stock a bodega y ajusta saldos en Cuentas por Cobrar."
     )
 
     # --- 3. LECTURA DIRECTA DESDE SUPABASE ---
@@ -29,7 +29,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
             .select("*")
             .eq("rut_empresa", str(tenant_id))
             .order("fecha", desc=True)
-            .limit(1000)
+            .limit(2000)
             .execute()
         )
 
@@ -47,11 +47,20 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         st.error(f"❌ Error al consultar ventas en Supabase: {e}")
         return
 
-    col_id = next((c for c in df_ventas.columns if c in ["folio", "id", "transaccion"]), "folio")
+    # CORRECCIÓN DE COLUMNA DE BÚSQUEDA: Forzar prioridad de 'folio' sobre 'id'
+    if "folio" in df_ventas.columns:
+        col_id = "folio"
+    elif "transaccion" in df_ventas.columns:
+        col_id = "transaccion"
+    else:
+        col_id = "id"
+
     col_tipo = next((c for c in df_ventas.columns if c in ["documento", "tipo_documento"]), "documento")
 
-    # --- PREPARAR BUSCADOR DE FOLIOS ---
+    # --- PREPARAR BUSCADOR DE FOLIOS (Ordenados Descendente) ---
     lista_folios = df_ventas[col_id].dropna().astype(str).unique().tolist()
+    # Ordenar folios de mayor a menor si son numéricos
+    lista_folios = sorted(lista_folios, key=lambda x: int(x) if x.isdigit() else x, reverse=True)
     opciones_folios = ["-- Seleccionar Folio --"] + lista_folios
 
     st.markdown("---")
@@ -59,12 +68,15 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
     col1, col2 = st.columns(2)
     with col1:
-        tipo_doc_busqueda = st.selectbox("Tipo de Documento a Buscar:", ["Todos", "Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"])
+        tipo_doc_busqueda = st.selectbox(
+            "Tipo de Documento a Buscar:",
+            ["Todos", "Boleta Electrónica", "Factura Electrónica", "Guía de Despacho", "Nota de Venta Interna"]
+        )
     with col2:
         folio_busqueda = st.selectbox(
             "Seleccione el Número de Folio:",
             options=opciones_folios,
-            help="💡 Selecciona el folio del documento a anular o modificar."
+            help="💡 Selecciona el folio de la venta a anular o modificar."
         )
 
     # --- 4. BÚSQUEDA Y SELECCIÓN ---
@@ -82,7 +94,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                 df_filtrado = df_filtrado[df_filtrado[col_tipo].str.contains(tipo_doc_busqueda, case=False, na=False)]
 
             if df_filtrado.empty:
-                st.error(f"❌ No se encontró el folio '{folio_limpio}' para el documento seleccionado.")
+                st.error(f"❌ No se encontró el folio '{folio_limpio}' para el tipo de documento seleccionado.")
             else:
                 st.success("✅ Documento localizado exitosamente.")
                 st.session_state["venta_encontrada_nc"] = df_filtrado
@@ -100,12 +112,34 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         cliente_origen = str(primera_fila.get("cliente", "Cliente General"))
         rut_cliente_origen = str(primera_fila.get("rut_cliente", "66666666-6"))
 
+        # --- CONSULTA A TABLA CUENTAS_POR_COBRAR ---
+        saldo_pendiente_cxc = 0.0
+        monto_cxc = 0.0
+        estado_cxc = "Sin Registro / Pagado"
+
+        try:
+            res_cxc = (
+                supabase.table("cuentas_por_cobrar")
+                .select("*")
+                .eq("rut_empresa", str(tenant_id))
+                .eq("folio_venta", str(folio_origen))
+                .execute()
+            )
+            if res_cxc.data:
+                registro_cxc = res_cxc.data[0]
+                saldo_pendiente_cxc = float(registro_cxc.get("saldo_pendiente", 0.0))
+                monto_cxc = float(registro_cxc.get("monto_total", 0.0))
+                estado_cxc = str(registro_cxc.get("estado", "Pendiente"))
+        except Exception as e_cxc:
+            print(f"Error consultando Cuentas por Cobrar: {e_cxc}")
+
         # Mostrar encabezado de resumen
-        c_meta1, c_meta2, c_meta3, c_meta4 = st.columns(4)
-        c_meta1.metric("Folio Origen", folio_origen)
+        c_meta1, c_meta2, c_meta3, c_meta4, c_meta5 = st.columns(5)
+        c_meta1.metric("Folio Venta", folio_origen)
         c_meta2.metric("Documento", doc_origen)
         c_meta3.metric("Modo Emisión", modo_origen)
         c_meta4.metric("Cliente", cliente_origen[:20])
+        c_meta5.metric("Saldo CxC Pendiente", f"${saldo_pendiente_cxc:,.0f}", delta=estado_cxc)
 
         cols_mostrar = [c for c in ["folio", "fecha", "codigo_producto", "detalle", "cantidad", "neto", "iva", "monto", "metodo_pago"] if c in df_resultado.columns]
         st.dataframe(df_resultado[cols_mostrar], use_container_width=True)
@@ -291,9 +325,15 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
                 supabase.table("ventas").insert(registros_nc_batch).execute()
 
-                # 4. Ajustar Cuentas por Cobrar si corresponde
+                # 4. Ajustar Cuentas por Cobrar (Búsqueda por folio_venta)
                 try:
-                    res_cxc = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", str(tenant_id)).eq("folio_venta", str(folio_origen)).execute()
+                    res_cxc = (
+                        supabase.table("cuentas_por_cobrar")
+                        .select("*")
+                        .eq("rut_empresa", str(tenant_id))
+                        .eq("folio_venta", str(folio_origen))
+                        .execute()
+                    )
                     if res_cxc.data:
                         for cxc in res_cxc.data:
                             saldo_act = float(cxc.get("saldo_pendiente", 0))
@@ -306,7 +346,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                 except Exception as err_cxc:
                     print(f"Error ajustando CxC: {err_cxc}")
 
-                st.success(f"🎉 ¡Nota de Crédito {folio_nc_final} emitida exitosamente! Inventario y caja actualizados.")
+                st.success(f"🎉 ¡Nota de Crédito {folio_nc_final} emitida exitosamente! Inventario y saldo CxC actualizados.")
                 if pdf_url_nc:
                     st.link_button("📄 Descargar DTE Nota de Crédito (PDF)", pdf_url_nc, use_container_width=True)
 
