@@ -13,11 +13,11 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         st.rerun()
     st.markdown("---")
 
-    # --- 2. TÍTULOS ---
+    # --- 2. TÍTULOS Y DESCRIPCIÓN ---
     st.markdown("### 🔄 Emisión de Notas de Crédito y Devoluciones (DTE 61)")
     st.markdown(
         "📌 **Gestión Tributaria & Operativa:** Genera Notas de Crédito Electrónicas (DTE Tipo 61) "
-        "ante el SII, anula o corrige documentos, reingresa stock a bodega y ajusta saldos en Cuentas por Cobrar."
+        "ante el SII, anula saldos pendientes de deuda, devuelve stock a bodega y ajusta Cuentas por Cobrar."
     )
 
     # --- 3. LECTURA DIRECTA DESDE SUPABASE ---
@@ -47,7 +47,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         st.error(f"❌ Error al consultar ventas en Supabase: {e}")
         return
 
-    # CORRECCIÓN DE COLUMNA DE BÚSQUEDA: Forzar prioridad de 'folio' sobre 'id'
+    # Priorizar la columna 'folio' sobre 'id'
     if "folio" in df_ventas.columns:
         col_id = "folio"
     elif "transaccion" in df_ventas.columns:
@@ -57,9 +57,8 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
     col_tipo = next((c for c in df_ventas.columns if c in ["documento", "tipo_documento"]), "documento")
 
-    # --- PREPARAR BUSCADOR DE FOLIOS (Ordenados Descendente) ---
+    # --- PREPARAR BUSCADOR DE FOLIOS ---
     lista_folios = df_ventas[col_id].dropna().astype(str).unique().tolist()
-    # Ordenar folios de mayor a menor si son numéricos
     lista_folios = sorted(lista_folios, key=lambda x: int(x) if x.isdigit() else x, reverse=True)
     opciones_folios = ["-- Seleccionar Folio --"] + lista_folios
 
@@ -104,7 +103,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         df_resultado = st.session_state["venta_encontrada_nc"]
         primera_fila = df_resultado.iloc[0]
 
-        # Datos clave del documento original
         doc_origen = str(primera_fila.get("documento", "Boleta Electrónica"))
         folio_origen = str(primera_fila.get("folio", ""))
         fecha_origen = str(primera_fila.get("fecha", ""))[:10]
@@ -112,10 +110,13 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         cliente_origen = str(primera_fila.get("cliente", "Cliente General"))
         rut_cliente_origen = str(primera_fila.get("rut_cliente", "66666666-6"))
 
-        # --- CONSULTA A TABLA CUENTAS_POR_COBRAR ---
-        saldo_pendiente_cxc = 0.0
-        monto_cxc = 0.0
-        estado_cxc = "Sin Registro / Pagado"
+        # Monto total registrado en las líneas de la venta
+        monto_total_venta = float(df_resultado["monto"].sum()) if "monto" in df_resultado.columns else 0.0
+
+        # --- CONSULTAR TABLA CUENTAS_POR_COBRAR ---
+        saldo_pendiente_cxc = monto_total_venta
+        monto_abonado = 0.0
+        estado_cxc = "Sin Registro"
 
         try:
             res_cxc = (
@@ -126,36 +127,67 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                 .execute()
             )
             if res_cxc.data:
-                registro_cxc = res_cxc.data[0]
-                saldo_pendiente_cxc = float(registro_cxc.get("saldo_pendiente", 0.0))
-                monto_cxc = float(registro_cxc.get("monto_total", 0.0))
-                estado_cxc = str(registro_cxc.get("estado", "Pendiente"))
+                reg_cxc = res_cxc.data[0]
+                saldo_pendiente_cxc = float(reg_cxc.get("saldo_pendiente", 0.0))
+                monto_total_cxc = float(reg_cxc.get("monto_total", monto_total_venta))
+                if monto_total_cxc > 0:
+                    monto_total_venta = monto_total_cxc
+                monto_abonado = max(0.0, monto_total_venta - saldo_pendiente_cxc)
+                estado_cxc = str(reg_cxc.get("estado", "Pendiente"))
         except Exception as e_cxc:
             print(f"Error consultando Cuentas por Cobrar: {e_cxc}")
 
-        # Mostrar encabezado de resumen
-        c_meta1, c_meta2, c_meta3, c_meta4, c_meta5 = st.columns(5)
-        c_meta1.metric("Folio Venta", folio_origen)
-        c_meta2.metric("Documento", doc_origen)
-        c_meta3.metric("Modo Emisión", modo_origen)
-        c_meta4.metric("Cliente", cliente_origen[:20])
-        c_meta5.metric("Saldo CxC Pendiente", f"${saldo_pendiente_cxc:,.0f}", delta=estado_cxc)
+        # --- PANEL DE RESUMEN FINANCIERO Y VALORES EN PANTALLA ---
+        st.markdown("#### 📊 Estado Financiero y Deuda del Documento")
+        
+        c_m1, c_m2, c_m3, c_m4, c_m5 = st.columns(5)
+        c_m1.metric("Folio Venta", folio_origen)
+        c_m2.metric("Monto Total Venta", f"${monto_total_venta:,.0f}")
+        c_m3.metric("Monto Abonado", f"${monto_abonado:,.0f}")
+        c_m4.metric("Saldo Pendiente", f"${saldo_pendiente_cxc:,.0f}", delta=estado_cxc)
+        c_m5.metric("Modo Emisión", modo_origen)
+
+        # Si existe abono parcial, mostrar cuadro informativo especial
+        if monto_abonado > 0 and saldo_pendiente_cxc > 0:
+            st.warning(
+                f"⚠️ **Venta con Abono Parcial:** El cliente ha pagado **${monto_abonado:,.0f}** de "
+                f"**${monto_total_venta:,.0f}**. El saldo adeudado en Cuentas por Cobrar es de **${saldo_pendiente_cxc:,.0f}**."
+            )
 
         cols_mostrar = [c for c in ["folio", "fecha", "codigo_producto", "detalle", "cantidad", "neto", "iva", "monto", "metodo_pago"] if c in df_resultado.columns]
         st.dataframe(df_resultado[cols_mostrar], use_container_width=True)
 
-        st.markdown("#### 📦 2. Tipo y Alcance de la Devolución")
+        st.markdown("#### 📦 2. Definir el Alcance de la Nota de Crédito")
+
+        # Construcción dinámica de opciones de anulación
+        opciones_devolucion = []
+
+        # Si hay un saldo pendiente diferente de 0 y menor al total, habilitar como opción destacada
+        if saldo_pendiente_cxc > 0 and saldo_pendiente_cxc < monto_total_venta:
+            opciones_devolucion.append(f"Anular SOLO el Saldo Pendiente (${saldo_pendiente_cxc:,.0f})")
+
+        opciones_devolucion.append(f"Devolución Total (Anulación Completa de la Venta - ${monto_total_venta:,.0f})")
+        opciones_devolucion.append("Devolución Parcial (Ajustar cantidades por producto)")
+
         tipo_devolucion = st.radio(
-            "Seleccione el alcance de la Nota de Crédito:",
-            ["Devolución Total (Anulación Completa)", "Devolución Parcial (Editar cantidades)"],
+            "¿Cómo desea procesar esta Nota de Crédito?",
+            opciones_devolucion,
             key="radio_tipo_nc"
         )
 
-        motivo_nc = st.text_input("📝 Motivo de la Nota de Crédito / Anulación:", value="Anulación por devolución de productos / error en venta")
+        # Motivo por defecto según la opción elegida
+        if "Saldo Pendiente" in tipo_devolucion:
+            motivo_defecto = f"Anulación por condonación de saldo pendiente folio {folio_origen}"
+        elif "Total" in tipo_devolucion:
+            motivo_defecto = f"Anulación completa por devolución / error en venta folio {folio_origen}"
+        else:
+            motivo_defecto = "Anulación parcial por devolución de ítems"
 
-        # PREPARAR DATOS PARA DEVOLUCIÓN PARCIAL
+        motivo_nc = st.text_input("📝 Motivo de la Nota de Crédito (S.I.I.):", value=motivo_defecto)
+
+        # PREPARAR DATOS PARA DEVOLUCIÓN PARCIAL DE PRODUCTOS
         datos_parciales = []
-        if tipo_devolucion == "Devolución Parcial (Editar cantidades)":
+        if tipo_devolucion == "Devolución Parcial (Ajustar cantidades por producto)":
             st.markdown("##### 📝 Ajuste de Cantidades a Devolver")
             st.write("Indica en la columna **'Cantidad a Devolver'** cuántas unidades regresarán a inventario:")
 
@@ -191,11 +223,23 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                 fecha_hoy = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 es_oficial = (modo_origen == "OFICIAL")
                 
-                # 1. Armar detalle de ítems y montos a devolver
                 items_a_procesar = []
                 monto_total_devolucion = 0.0
+                es_ajuste_saldo = "Saldo Pendiente" in tipo_devolucion
 
-                if tipo_devolucion == "Devolución Total (Anulación Completa)":
+                # CASO A: ANULACIÓN SOLO DEL SALDO PENDIENTE
+                if es_ajuste_saldo:
+                    monto_total_devolucion = saldo_pendiente_cxc
+                    items_a_procesar.append({
+                        "codigo": "NC-SALDO",
+                        "nombre": f"Ajuste / Anulación Saldo Pendiente Venta {folio_origen}",
+                        "cantidad": 1.0,
+                        "precio_unitario": saldo_pendiente_cxc,
+                        "monto": saldo_pendiente_cxc
+                    })
+
+                # CASO B: ANULACIÓN COMPLETA TOTAL DE LA VENTA
+                elif "Total" in tipo_devolucion:
                     for _, row in df_resultado.iterrows():
                         cant_dev = float(row.get("cantidad", 1))
                         monto_lin = float(row.get("monto", 0))
@@ -209,6 +253,8 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                             "precio_unitario": p_unit,
                             "monto": monto_lin
                         })
+
+                # CASO C: DEVOLUCIÓN PARCIAL POR PRODUCTO
                 else:
                     for item in datos_parciales:
                         cant_dev = float(item["Cantidad a Devolver"])
@@ -225,8 +271,8 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                                 "monto": monto_lin
                             })
 
-                if not items_a_procesar:
-                    st.warning("⚠️ No has seleccionado cantidades válidas para devolver.")
+                if not items_a_procesar or monto_total_devolucion <= 0:
+                    st.warning("⚠️ No has seleccionado un monto o cantidad válida para devolver.")
                     st.stop()
 
                 # 2. Timbrado ante el SII si el documento original fue OFICIAL
@@ -254,12 +300,15 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                     }
                     codigo_doc_origen = mapa_tipo_origen.get(doc_origen, 39)
 
+                    # CodRef SII: 1 = Anula Documento | 3 = Modifica Montos
+                    cod_ref_sii = 1 if ("Total" in tipo_devolucion and not es_ajuste_saldo) else 3
+
                     referencias_sii = [{
                         "NroLinRef": 1,
                         "TpoDocRef": codigo_doc_origen,
                         "FolioRef": str(folio_origen),
                         "FchRef": fecha_origen,
-                        "CodRef": 1 if "Total" in tipo_devolucion else 3,
+                        "CodRef": cod_ref_sii,
                         "RazonRef": motivo_nc[:90]
                     }]
 
@@ -282,12 +331,13 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                         st.error(f"🚨 Error de Timbrado SII: {err_dte}")
                         st.stop()
 
-                # 3. Reingresar Stock y Registrar en Base de Datos (Supabase)
+                # 3. Reingresar Stock (únicamente si no es ajuste exclusivo de saldo) y Guardar en Supabase
                 bodega_target = st.session_state.get("bodega_pos_seleccionada", "Bodega Principal")
                 registros_nc_batch = []
 
                 for item in items_a_procesar:
-                    if item["codigo"] and item["cantidad"] > 0:
+                    # Si es producto físico, devolver a inventario
+                    if item["codigo"] and item["codigo"] != "NC-SALDO" and item["cantidad"] > 0:
                         try:
                             supabase.rpc("actualizar_stock_atomico", {
                                 "p_rut_empresa": str(tenant_id),
@@ -325,7 +375,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
                 supabase.table("ventas").insert(registros_nc_batch).execute()
 
-                # 4. Ajustar Cuentas por Cobrar (Búsqueda por folio_venta)
+                # 4. Ajustar Cuentas por Cobrar
                 try:
                     res_cxc = (
                         supabase.table("cuentas_por_cobrar")
@@ -346,7 +396,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                 except Exception as err_cxc:
                     print(f"Error ajustando CxC: {err_cxc}")
 
-                st.success(f"🎉 ¡Nota de Crédito {folio_nc_final} emitida exitosamente! Inventario y saldo CxC actualizados.")
+                st.success(f"🎉 ¡Nota de Crédito {folio_nc_final} emitida por ${monto_total_devolucion:,.0f}! Cuentas por cobrar e inventario actualizados.")
                 if pdf_url_nc:
                     st.link_button("📄 Descargar DTE Nota de Crédito (PDF)", pdf_url_nc, use_container_width=True)
 
