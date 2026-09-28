@@ -57,9 +57,15 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
     col_tipo = next((c for c in df_ventas.columns if c in ["documento", "tipo_documento"]), "documento")
 
-    # --- PREPARAR BUSCADOR DE FOLIOS ---
+   # --- PREPARAR BUSCADOR DE FOLIOS ---
     lista_folios = df_ventas[col_id].dropna().astype(str).unique().tolist()
-    lista_folios = sorted(lista_folios, key=lambda x: int(x) if x.isdigit() else x, reverse=True)
+    
+    # Ordenamiento seguro que permite mezclar folios numéricos y con texto sin error
+    lista_folios = sorted(
+        lista_folios, 
+        key=lambda x: (int(x) if str(x).isdigit() else -1, str(x)), 
+        reverse=True
+    )
     opciones_folios = ["-- Seleccionar Folio --"] + lista_folios
 
     st.markdown("---")
