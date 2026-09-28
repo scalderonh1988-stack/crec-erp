@@ -5,6 +5,14 @@ from modulos.servicios.data_manager import supabase, get_current_tenant
 from modulos.servicios.dte_manager import emitir_dte_openfactura, validar_rut
 
 
+def limpiar_folio_str(val):
+    """Limpia formateos float como '54.0' para convertirlos en string limpio '54'."""
+    s = str(val).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
+
+
 def mostrar_modulo_notas_credito(ruta_negocio):
     # --- 1. BOTÓN DE VOLVER AL HOME ---
     if st.button("🏠 Volver al Home", use_container_width=True):
@@ -57,15 +65,11 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
     col_tipo = next((c for c in df_ventas.columns if c in ["documento", "tipo_documento"]), "documento")
 
-   # --- PREPARAR BUSCADOR DE FOLIOS ---
-    lista_folios = df_ventas[col_id].dropna().astype(str).unique().tolist()
-    
-    # Ordenamiento seguro que permite mezclar folios numéricos y con texto sin error
-    lista_folios = sorted(
-        lista_folios, 
-        key=lambda x: (int(x) if str(x).isdigit() else -1, str(x)), 
-        reverse=True
-    )
+    # --- PREPARAR BUSCADOR DE FOLIOS ---
+    lista_folios_raw = df_ventas[col_id].dropna().unique().tolist()
+    lista_folios = [limpiar_folio_str(f) for f in lista_folios_raw]
+    lista_folios = list(dict.fromkeys(lista_folios)) # Eliminar duplicados manteniendo orden
+    lista_folios = sorted(lista_folios, key=lambda x: int(x) if x.isdigit() else x, reverse=True)
     opciones_folios = ["-- Seleccionar Folio --"] + lista_folios
 
     st.markdown("---")
@@ -90,8 +94,8 @@ def mostrar_modulo_notas_credito(ruta_negocio):
             st.warning("⚠️ Selecciona un número de folio válido.")
         else:
             df_filtrado = df_ventas.copy()
-            df_filtrado[col_id] = df_filtrado[col_id].astype(str)
-            folio_limpio = str(folio_busqueda).strip()
+            df_filtrado[col_id] = df_filtrado[col_id].apply(limpiar_folio_str)
+            folio_limpio = limpiar_folio_str(folio_busqueda)
 
             df_filtrado = df_filtrado[df_filtrado[col_id] == folio_limpio]
 
@@ -110,7 +114,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         primera_fila = df_resultado.iloc[0]
 
         doc_origen = str(primera_fila.get("documento", "Boleta Electrónica"))
-        folio_origen = str(primera_fila.get("folio", ""))
+        folio_origen = limpiar_folio_str(primera_fila.get("folio", ""))
         fecha_origen = str(primera_fila.get("fecha", ""))[:10]
         modo_origen = str(primera_fila.get("modo_emision", "INTERNO")).upper()
         cliente_origen = str(primera_fila.get("cliente", "Cliente General"))
@@ -119,7 +123,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         # Monto total registrado en las líneas de la venta
         monto_total_venta = float(df_resultado["monto"].sum()) if "monto" in df_resultado.columns else 0.0
 
-        # --- CONSULTAR TABLA CUENTAS_POR_COBRAR ---
+        # --- CONSULTAR TABLA CUENTAS_POR_COBRAR CON BÚSQUEDA LIMPIA ---
         saldo_pendiente_cxc = monto_total_venta
         monto_abonado = 0.0
         estado_cxc = "Sin Registro"
@@ -132,6 +136,16 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                 .eq("folio_venta", str(folio_origen))
                 .execute()
             )
+            
+            # Respaldo de búsqueda si rut_empresa tiene variaciones de formato
+            if not res_cxc.data:
+                res_cxc = (
+                    supabase.table("cuentas_por_cobrar")
+                    .select("*")
+                    .eq("folio_venta", str(folio_origen))
+                    .execute()
+                )
+
             if res_cxc.data:
                 reg_cxc = res_cxc.data[0]
                 saldo_pendiente_cxc = float(reg_cxc.get("saldo_pendiente", 0.0))
@@ -168,7 +182,7 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         # Construcción dinámica de opciones de anulación
         opciones_devolucion = []
 
-        # Si hay un saldo pendiente diferente de 0 y menor al total, habilitar como opción destacada
+        # Habilitar la opción del Saldo Pendiente si existe abono
         if saldo_pendiente_cxc > 0 and saldo_pendiente_cxc < monto_total_venta:
             opciones_devolucion.append(f"Anular SOLO el Saldo Pendiente (${saldo_pendiente_cxc:,.0f})")
 
