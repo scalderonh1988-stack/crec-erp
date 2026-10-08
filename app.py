@@ -72,21 +72,30 @@ components.html("""
 """, height=0, width=0)
 
 # ------------------------------------------------------------------------------
-# B. ESTILOS CSS: Oculta menús internos, encabezados y footer de la app
+# B. ESTILOS CSS: Oculta menús internos y barra superior sin ocultar la flecha del menú
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* Ocultar menú principal, encabezado y pie de página */
+    /* Ocultar menú principal, pie de página y botones de barra de herramientas */
     #MainMenu {visibility: hidden !important; display: none !important;}
-    header {visibility: hidden !important; display: none !important;}
     footer {visibility: hidden !important; display: none !important;}
-    
-    /* Ocultar barra superior nativa (Buscador, Fork, GitHub, Deploy y Status) */
-    .stAppHeader {display: none !important;}
-    [data-testid="stHeader"] {display: none !important;}
     [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
     [data-testid="stDecoration"] {display: none !important;}
     .stDeployButton {display: none !important;}
+
+    /* Hacer el header transparente para que no moleste visualmente pero mantenga sus elementos */
+    header, .stAppHeader, [data-testid="stHeader"] {
+        background-color: transparent !important;
+        background: none !important;
+    }
+
+    /* Restaurar y forzar visibilidad del botón para desplegar/replegar la barra lateral */
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapseButton"] {
+        visibility: visible !important;
+        display: flex !important;
+        z-index: 999999 !important;
+    }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
