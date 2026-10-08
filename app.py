@@ -72,29 +72,56 @@ components.html("""
 """, height=0, width=0)
 
 # ------------------------------------------------------------------------------
-# B. ESTILOS CSS: Oculta menús internos y barra superior sin ocultar la flecha del menú
+# B. ESTILOS CSS: Oculta elementos nativos y fija el botón flotante de la flecha
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* Ocultar menú principal, pie de página y botones de barra de herramientas */
-    #MainMenu {visibility: hidden !important; display: none !important;}
-    footer {visibility: hidden !important; display: none !important;}
-    [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
-    [data-testid="stDecoration"] {display: none !important;}
-    .stDeployButton {display: none !important;}
+    /* Ocultar menú principal (3 puntos), pie de página, adornos y barra de herramientas */
+    #MainMenu { visibility: hidden !important; display: none !important; }
+    footer { visibility: hidden !important; display: none !important; }
+    [data-testid="stDecoration"] { display: none !important; }
+    [data-testid="stToolbar"] { display: none !important; }
+    .stDeployButton { display: none !important; }
 
-    /* Hacer el header transparente para que no moleste visualmente pero mantenga sus elementos */
+    /* Mantener el header transparente con interacciones habilitadas */
     header, .stAppHeader, [data-testid="stHeader"] {
         background-color: transparent !important;
-        background: none !important;
+        background: transparent !important;
+        pointer-events: auto !important;
     }
 
-    /* Restaurar y forzar visibilidad del botón para desplegar/replegar la barra lateral */
+    /* FIJAR Y ESTILAR LA FLECHA DE DESPLIEGUE DEL SIDEBAR */
     [data-testid="collapsedControl"],
-    [data-testid="stSidebarCollapseButton"] {
-        visibility: visible !important;
+    [data-testid="stSidebarCollapseButton"],
+    button[aria-label*="sidebar"],
+    button[aria-label*="Sidebar"] {
         display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 0.6rem !important;
+        left: 0.6rem !important;
         z-index: 999999 !important;
+        background-color: #1E3A8A !important; /* Azul acorde a tu tema */
+        border: 1px solid #3B82F6 !important;
+        border-radius: 8px !important;
+        padding: 4px 8px !important;
+        box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.5) !important;
+        cursor: pointer !important;
+    }
+
+    /* Forzar que el ícono de la flecha SVG sea visible en blanco */
+    [data-testid="collapsedControl"] svg,
+    [data-testid="stSidebarCollapseButton"] svg {
+        fill: #FFFFFF !important;
+        color: #FFFFFF !important;
+    }
+
+    /* Efecto al pasar el cursor sobre la flecha */
+    [data-testid="collapsedControl"]:hover,
+    [data-testid="stSidebarCollapseButton"]:hover {
+        background-color: #2563EB !important;
+        border-color: #60A5FA !important;
     }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
