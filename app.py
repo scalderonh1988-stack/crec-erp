@@ -51,8 +51,7 @@ components.html("""
                     'div[class*="styles_viewerBadge"]',
                     'div[class*="stAppBadge"]',
                     'a[href*="streamlit.io"]',
-                    'a[href*="streamlit.app"]',
-                    '#root > div:nth-child(2)'
+                    'a[href*="streamlit.app"]'
                 ];
                 
                 selectors.forEach(selector => {
