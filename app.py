@@ -75,22 +75,26 @@ components.html("""
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* 1. Ocultar únicamente los elementos molestos de la nube */
+    /* Ocultar elementos innecesarios de Streamlit */
     #MainMenu { display: none !important; }
     footer { display: none !important; }
     .stDeployButton { display: none !important; }
     [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stDecoration"] { display: none !important; }
 
-    /* 2. Mantener la cabecera activa para que Streamlit renderice el botón nativo */
+    /* Hacer que la cabecera no ocupe espacio pero permita mostrar el botón */
     [data-testid="stHeader"] {
         background-color: transparent !important;
-        visibility: visible !important;
-        display: block !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 0px !important;
         z-index: 99999 !important;
+        overflow: visible !important;
     }
 
-    /* 3. FORZAR EL BOTÓN FLOTANTE DE APERTURA EN LA ESQUINA SUPERIOR IZQUIERDA */
+    /* Botón flotante perfecto para abrir/cerrar la barra lateral sin descuadrar nada */
     [data-testid="collapsedControl"] {
         display: flex !important;
         visibility: visible !important;
