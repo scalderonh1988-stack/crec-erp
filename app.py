@@ -24,7 +24,7 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN TOTAL DE ELEMENTOS
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS LIMPIOS RESPONSIVOS
 # (Obligatorio: debe ser la PRIMERA llamada a 'st' en todo el código)
 # ==============================================================================
 st.set_page_config(
@@ -36,7 +36,6 @@ st.set_page_config(
 
 # ------------------------------------------------------------------------------
 # A. SCRIPT EN JAVASCRIPT: Elimina los íconos flotantes externos de Streamlit Cloud
-# (Corona roja, globo, status) actuando sobre el documento principal.
 # ------------------------------------------------------------------------------
 components.html("""
     <script>
@@ -72,71 +71,20 @@ components.html("""
 """, height=0, width=0)
 
 # ------------------------------------------------------------------------------
-# B. ESTILOS CSS UNIFICADOS: Barra lateral fija, limpieza y centrado exacto del Login
+# B. ESTILOS CSS UNIFICADOS (Sin bloquear la barra lateral ni los botones de ocultar)
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
     /* 1. Ocultar elementos nativos innecesarios de Streamlit */
     #MainMenu { visibility: hidden !important; display: none !important; }
     footer { visibility: hidden !important; display: none !important; }
-    [data-testid="stHeader"] { display: none !important; }
     [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stDecoration"] { display: none !important; }
     .stDeployButton { display: none !important; }
 
-    /* 2. FORZAR LA BARRA LATERAL A ESTAR SIEMPRE VISIBLE Y FIJA (Ancho: 280px) */
-    [data-testid="stSidebar"] {
-        display: flex !important;
-        visibility: visible !important;
-        transform: none !important;
-        margin-left: 0 !important;
-        left: 0 !important;
-        top: 0 !important;
-        bottom: 0 !important;
-        width: 280px !important;
-        min-width: 280px !important;
-        max-width: 280px !important;
-        position: fixed !important;
-        z-index: 100 !important;
-    }
-
-    /* 3. Ocultar el botón interno de cerrar la barra lateral (<) */
-    [data-testid="stSidebarCollapseButton"],
-    [data-testid="collapsedControl"] {
-        display: none !important;
-        visibility: hidden !important;
-    }
-
-    /* 4. DESPLAZAR EL CONTENIDO PRINCIPAL A LA DERECHA PARA EVITAR SUPERPOSICIÓN */
-    .main, [data-testid="stMain"], section.main {
-        margin-left: 280px !important;
-        width: calc(100% - 280px) !important;
-    }
-
-    /* 5. CENTRADO ABSOLUTO Y EXACTO PARA LA PANTALLA DE LOGIN */
-    .login-wrapper {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        position: fixed;
-        top: 0;
-        left: 280px;                  /* Arranca justo al terminar la barra lateral */
-        width: calc(100vw - 280px);   /* Ocupa exactamente el ancho restante visible */
-        height: 100vh;                /* Centrado vertical perfecto en toda la pantalla */
-        z-index: 99999;
-        background-color: #0E1117;    /* Fondo oscuro sincronizado con Streamlit */
-    }
-
-    .login-box {
-        width: 100%;
-        max-width: 440px;
-        padding: 24px;
-        background-color: #1F2937;
-        border-radius: 12px;
-        border: 1px solid #374151;
-        box-shadow: 0px 10px 25px rgba(0, 0, 0, 0.5);
-    }
+    /* NOTA: Eliminamos las restricciones de [data-testid="stSidebar"] y 
+       [data-testid="collapsedControl"] para que Streamlit controle los botones 
+       de colapsar (<< y >>) de forma nativa en computadores y celulares. */
 
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
