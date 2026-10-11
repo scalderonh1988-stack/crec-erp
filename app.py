@@ -71,30 +71,28 @@ components.html("""
 """, height=0, width=0)
 
 # ------------------------------------------------------------------------------
-# B. ESTILOS CSS UNIFICADOS (Garantiza visibilidad de cabecera y botones de barra lateral)
+# B. ESTILOS CSS UNIFICADOS Y LIMPIOS
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* Ocultar elementos innecesarios de Streamlit */
+    /* Ocultar elementos innecesarios de Streamlit Cloud */
     #MainMenu { display: none !important; }
     footer { display: none !important; }
     .stDeployButton { display: none !important; }
     [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stDecoration"] { display: none !important; }
 
-    /* Hacer que la cabecera no ocupe espacio pero permita mostrar el botón */
+    /* Permitir que la cabecera sea flotante y transparente sin bloquear espacio */
     [data-testid="stHeader"] {
         background-color: transparent !important;
-        position: fixed !important;
+        position: absolute !important;
         top: 0 !important;
         left: 0 !important;
-        width: 100% !important;
-        height: 0px !important;
         z-index: 99999 !important;
-        overflow: visible !important;
     }
 
-    /* Botón flotante perfecto para abrir/cerrar la barra lateral sin descuadrar nada */
+    /* Forzar que el botón de colapsar/expandir la barra lateral esté siempre visible, 
+       bien ubicado y operativo (tanto con << como con >>) */
     [data-testid="collapsedControl"] {
         display: flex !important;
         visibility: visible !important;
