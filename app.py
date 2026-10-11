@@ -24,7 +24,7 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS NATIVOS LIMPIOS
 # ==============================================================================
 st.set_page_config(
     page_title="CREC-ERP - Gestión Inteligente",
@@ -33,46 +33,34 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ------------------------------------------------------------------------------
-# ESTILOS CSS GENERALES DE LA APP (Limpieza de elementos innecesarios)
-# ------------------------------------------------------------------------------
+# Estilos CSS limpios: Oculta menús innecesarios pero MANTIENE intacta la barra superior y la flecha nativa
 st.markdown("""
     <style>
-    /* Ocultar elementos nativos innecesarios de Streamlit Cloud */
-    #MainMenu {visibility: hidden !important; display: none !important;}
-    footer {visibility: hidden !important; display: none !important;}
-    [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
-    [data-testid="stDecoration"] {display: none !important;}
-    .stDeployButton {display: none !important;}
+    #MainMenu { visibility: hidden !important; }
+    footer { visibility: hidden !important; }
+    [data-testid="stToolbar"] { display: none !important; }
+    [data-testid="stDecoration"] { display: none !important; }
+    .stDeployButton { display: none !important; }
 
-    /* Forzar que la flecha/botón de control de la barra lateral sea fijo y visible */
-    [data-testid="collapsedControl"] {
-        display: block !important;
-        visibility: visible !important;
-        position: fixed !important;
-        top: 12px !important;
-        left: 12px !important;
-        z-index: 999999 !important;
-        background-color: #1F2937 !important;
-        border: 1px solid #374151 !important;
-        border-radius: 8px !important;
-        padding: 4px !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-    
-    [data-testid="collapsedControl"] svg {
-        fill: #60A5FA !important;
-    }
-
-    [data-testid="stHeader"] {
-        background-color: transparent !important;
-        z-index: 99998 !important;
-    }
-
+    /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
+    
+    /* Estilos globales */
+    .main-title {
+        font-size: 1.8rem;
+        color: #1E3A8A;
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 0px;
+    }
+    .sub-title {
+        font-size: 0.95rem;
+        color: #4B5563;
+        text-align: center;
+        margin-bottom: 15px;
+    }
     </style>
 """, unsafe_allow_html=True)
-
 # ==============================================================================
 # 2. IMPORTACIÓN DE MÓDULOS DE LA APLICACIÓN Y CONTINUACIÓN DEL CÓDIGO...
 # ==============================================================================
