@@ -75,25 +75,32 @@ components.html("""
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* 1. Ocultar elementos nativos innecesarios de Streamlit */
-    #MainMenu { visibility: hidden !important; display: none !important; }
-    footer { visibility: hidden !important; display: none !important; }
+    /* 1. Ocultar únicamente los elementos molestos de la nube */
+    #MainMenu { display: none !important; }
+    footer { display: none !important; }
+    .stDeployButton { display: none !important; }
     [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stDecoration"] { display: none !important; }
-    .stDeployButton { display: none !important; }
 
-    /* 2. FORZAR QUE EL BOTÓN PARA VOLVER A ABRIR LA BARRA (CUANDO ESTÁ OCULTA) 
-       ESTÉ SIEMPRE VISIBLE EN LA ESQUINA SUPERIOR IZQUIERDA */
-    [data-testid="collapsedControl"] {
+    /* 2. Mantener la cabecera activa para que Streamlit renderice el botón nativo */
+    [data-testid="stHeader"] {
+        background-color: transparent !important;
+        visibility: visible !important;
         display: block !important;
+        z-index: 99999 !important;
+    }
+
+    /* 3. FORZAR EL BOTÓN FLOTANTE DE APERTURA EN LA ESQUINA SUPERIOR IZQUIERDA */
+    [data-testid="collapsedControl"] {
+        display: flex !important;
         visibility: visible !important;
         opacity: 1 !important;
         position: fixed !important;
         top: 12px !important;
         left: 12px !important;
-        z-index: 999999 !important;
+        z-index: 9999999 !important;
         background-color: #1F2937 !important;
-        border: 1px solid #3B82F6 !important;
+        border: 1px solid #374151 !important;
         border-radius: 8px !important;
         padding: 6px !important;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -101,8 +108,8 @@ st.markdown("""
 
     [data-testid="collapsedControl"] svg {
         fill: #60A5FA !important;
-        width: 22px !important;
-        height: 22px !important;
+        width: 20px !important;
+        height: 20px !important;
     }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
