@@ -24,7 +24,7 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS LIMPIOS RESPONSIVOS
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS NATIVOS CON CONTROL DE SIDEBAR
 # (Obligatorio: debe ser la PRIMERA llamada a 'st' en todo el código)
 # ==============================================================================
 st.set_page_config(
@@ -71,7 +71,7 @@ components.html("""
 """, height=0, width=0)
 
 # ------------------------------------------------------------------------------
-# B. ESTILOS CSS UNIFICADOS (Sin bloquear la barra lateral ni los botones de ocultar)
+# B. ESTILOS CSS UNIFICADOS (Garantiza visibilidad de cabecera y botones de barra lateral)
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -82,9 +82,21 @@ st.markdown("""
     [data-testid="stDecoration"] { display: none !important; }
     .stDeployButton { display: none !important; }
 
-    /* NOTA: Eliminamos las restricciones de [data-testid="stSidebar"] y 
-       [data-testid="collapsedControl"] para que Streamlit controle los botones 
-       de colapsar (<< y >>) de forma nativa en computadores y celulares. */
+    /* 2. PERMITIR QUE LA CABECERA Y LOS CONTROLES DE LA BARRA SEAN VISIBLES */
+    [data-testid="stHeader"] {
+        background-color: transparent !important;
+        visibility: visible !important;
+        display: block !important;
+    }
+
+    /* 3. ASEGURAR QUE LOS BOTONES DE OCULTAR/MOSTRAR (<< / >>) ESTÉN SIEMPRE PRESENTES */
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapseButton"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        z-index: 999999 !important;
+    }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
