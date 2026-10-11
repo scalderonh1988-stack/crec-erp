@@ -24,10 +24,8 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y BOTÓN FLOTANTE PARA LA BARRA LATERAL
+# 1. CONFIGURACIÓN DE PÁGINA
 # ==============================================================================
-import streamlit.components.v1 as components
-
 st.set_page_config(
     page_title="CREC-ERP - Gestión Inteligente",
     page_icon="📦",
@@ -36,109 +34,17 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------------------------
-# A. SCRIPT DE CONTROL: Botón flotante ☰ + Limpieza de badges de Streamlit Cloud
-# ------------------------------------------------------------------------------
-components.html(
-    """
-    <style>
-        /* Estilo del botón flotante permanente en la esquina superior izquierda */
-        #floating-sidebar-btn {
-            position: fixed;
-            top: 12px;
-            left: 12px;
-            z-index: 999999;
-            background-color: #1F2937;
-            color: #60A5FA;
-            border: 1px solid #374151;
-            border-radius: 8px;
-            width: 42px;
-            height: 42px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-            font-size: 22px;
-            font-weight: bold;
-            transition: all 0.2s ease-in-out;
-            user-select: none;
-        }
-        #floating-sidebar-btn:hover {
-            background-color: #374151;
-            color: #FFFFFF;
-            border-color: #60A5FA;
-            transform: scale(1.05);
-        }
-    </style>
-
-    <button id="floating-sidebar-btn" title="Mostrar / Ocultar Menú" onclick="toggleSidebar()">☰</button>
-
-    <script>
-        function toggleSidebar() {
-            try {
-                const parentDoc = window.parent.document;
-                
-                // 1. Intentar hacer clic en el botón nativo de control de Streamlit
-                const nativeBtn = parentDoc.querySelector('[data-testid="collapsedControl"]') || 
-                                  parentDoc.querySelector('button[kind="header"]');
-                if (nativeBtn) {
-                    nativeBtn.click();
-                    return;
-                }
-                
-                // 2. Plan B: Buscar cualquier botón interactivo superior si el nativo cambia de ID
-                const headerButtons = parentDoc.querySelectorAll('header button');
-                if (headerButtons.length > 0) {
-                    headerButtons[0].click();
-                }
-            } catch (e) {
-                console.log("Error al alternar menú:", e);
-            }
-        }
-
-        // Limpiar insignias flotantes de Streamlit Cloud automáticamente
-        function cleanupStreamlitBadges() {
-            try {
-                const parentDoc = window.parent.document;
-                const selectors = [
-                    '[data-testid="stStatusWidget"]',
-                    '[data-testid="stAppBadge"]',
-                    '.stViewerBadge',
-                    'a[href*="streamlit.io"]',
-                    'a[href*="streamlit.app"]'
-                ];
-                selectors.forEach(selector => {
-                    parentDoc.querySelectorAll(selector).forEach(el => {
-                        el.style.setProperty('display', 'none', 'important');
-                    });
-                });
-            } catch (e) {}
-        }
-        setInterval(cleanupStreamlitBadges, 400);
-    </script>
-""",
-    height=0,
-    width=0,
-)
-
-# ------------------------------------------------------------------------------
-# B. ESTILOS CSS GENERALES DE LA APP
+# ESTILOS CSS GENERALES DE LA APP (Limpieza de elementos innecesarios)
 # ------------------------------------------------------------------------------
 st.markdown(
     """
     <style>
-    /* Ocultar elementos nativos innecesarios */
+    /* Ocultar elementos nativos innecesarios de Streamlit Cloud */
     #MainMenu {visibility: hidden !important; display: none !important;}
     footer {visibility: hidden !important; display: none !important;}
     [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
     [data-testid="stDecoration"] {display: none !important;}
     .stDeployButton {display: none !important;}
-
-    /* Asegurar que el header mantenga espacio para el botón flotante */
-    [data-testid="stHeader"] {
-        background-color: transparent !important;
-        visibility: visible !important;
-    }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
@@ -399,13 +305,11 @@ def generar_pdf_nota_venta(datos_emisor, datos_receptor, items, totales, num_doc
     giro_rec = datos_receptor.get('giro') or 'Particular / Consumidor Final'
     dir_rec = datos_receptor.get('direccion') or 'N/A'
 
-    # Título Principal
     pdf.set_font("Arial", style='B', size=16)
     pdf.set_text_color(13, 71, 161)
     pdf.cell(0, 10, txt=txt(f"NOTA DE VENTA INTERNA N° {num_documento}"), ln=True, align='C')
     pdf.ln(3)
 
-    # Datos Emisor
     pdf.set_font("Arial", style='B', size=10)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 5, txt=txt(f"EMISOR: {razon_emisor.upper()}"), ln=True)
@@ -414,7 +318,6 @@ def generar_pdf_nota_venta(datos_emisor, datos_receptor, items, totales, num_doc
     pdf.cell(0, 5, txt=txt(f"Dirección: {dir_emisor}"), ln=True)
     pdf.ln(3)
 
-    # Datos Receptor
     pdf.set_font("Arial", style='B', size=10)
     pdf.cell(0, 5, txt=txt(f"RECEPTOR: {nom_rec}"), ln=True)
     pdf.set_font("Arial", size=9)
@@ -422,7 +325,6 @@ def generar_pdf_nota_venta(datos_emisor, datos_receptor, items, totales, num_doc
     pdf.cell(0, 5, txt=txt(f"Dirección: {dir_rec}"), ln=True)
     pdf.ln(5)
 
-    # Tabla Encabezados
     pdf.set_fill_color(13, 71, 161)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Arial", style='B', size=9)
@@ -432,7 +334,6 @@ def generar_pdf_nota_venta(datos_emisor, datos_receptor, items, totales, num_doc
     pdf.cell(35, 7, txt("TOTAL"), border=1, align='R', fill=True)
     pdf.ln()
 
-    # Tabla Filas
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Arial", size=9)
     for item in items:
@@ -449,7 +350,6 @@ def generar_pdf_nota_venta(datos_emisor, datos_receptor, items, totales, num_doc
 
     pdf.ln(4)
 
-    # Totales
     neto = float(totales.get('neto', 0))
     iva = float(totales.get('iva', 0))
     total = float(totales.get('total', 0))
@@ -504,19 +404,16 @@ def obtener_bytes_imagen(logo_src):
     if not logo_src:
         return None
 
-    # 1. Objeto de Streamlit (UploadedFile) o Stream con getvalue()/read()
     if hasattr(logo_src, "getvalue"):
         return io.BytesIO(logo_src.getvalue())
     if hasattr(logo_src, "read"):
         return io.BytesIO(logo_src.read())
 
-    # 2. Si ya son Bytes directos
     if isinstance(logo_src, bytes):
         return io.BytesIO(logo_src)
 
     logo_str = str(logo_src).strip()
 
-    # 3. Formato Data URI Base64 ("data:image/png;base64,...")
     if logo_str.startswith("data:image"):
         try:
             base64_data = logo_str.split(",")[1]
@@ -524,14 +421,12 @@ def obtener_bytes_imagen(logo_src):
         except Exception:
             pass
 
-    # 4. Cadena Base64 pura
     if len(logo_str) > 100 and not logo_str.startswith("http") and not os.path.exists(logo_str):
         try:
             return io.BytesIO(base64.b64decode(logo_str))
         except Exception:
             pass
 
-    # 5. URL HTTP o HTTPS (Con bypass de verificación SSL y User-Agent)
     if logo_str.startswith("http://") or logo_str.startswith("https://"):
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -541,7 +436,6 @@ def obtener_bytes_imagen(logo_src):
         except Exception:
             pass
 
-    # 6. Ruta de archivo en el sistema local
     if os.path.exists(logo_str):
         try:
             with open(logo_str, "rb") as f:
