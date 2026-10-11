@@ -73,21 +73,35 @@ components.html("""
 """, height=0, width=0)
 
 # ------------------------------------------------------------------------------
-# B. ESTILOS CSS: Oculta menús internos, encabezados y footer de la app
+# B. ESTILOS CSS: Oculta menús y botones de deploy, PERO MANTIENE VIVA la flecha de la barra lateral
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* Ocultar menú principal, encabezado y pie de página */
+    /* Ocultar menú principal y pie de página */
     #MainMenu {visibility: hidden !important; display: none !important;}
-    header {visibility: hidden !important; display: none !important;}
     footer {visibility: hidden !important; display: none !important;}
     
-    /* Ocultar barra superior nativa (Buscador, Fork, GitHub, Deploy y Status) */
-    .stAppHeader {display: none !important;}
-    [data-testid="stHeader"] {display: none !important;}
+    /* Ocultar elementos molestos (Deploy, GitHub, Toolbar, Decoración) */
     [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
     [data-testid="stDecoration"] {display: none !important;}
     .stDeployButton {display: none !important;}
+
+    /* 
+       IMPORTANTE: En lugar de ocultar el header por completo (lo que borraba la flecha), 
+       lo hacemos transparente para que no estorbe visualmente, pero permitimos que exista.
+    */
+    [data-testid="stHeader"] {
+        background-color: transparent !important;
+        visibility: visible !important;
+        display: block !important;
+    }
+
+    /* Forzar que el botón de la flechita (para abrir/cerrar la barra) NUNCA desaparezca */
+    [data-testid="collapsedControl"] {
+        display: block !important;
+        visibility: visible !important;
+        z-index: 999999 !important;
+    }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
