@@ -82,47 +82,31 @@ st.markdown("""
     [data-testid="stDecoration"] { display: none !important; }
     .stDeployButton { display: none !important; }
 
-    /* 2. PERMITIR QUE LA CABECERA Y LOS CONTROLES DE LA BARRA SEAN VISIBLES */
-    [data-testid="stHeader"] {
-        background-color: transparent !important;
-        visibility: visible !important;
+    /* 2. FORZAR QUE EL BOTÓN PARA VOLVER A ABRIR LA BARRA (CUANDO ESTÁ OCULTA) 
+       ESTÉ SIEMPRE VISIBLE EN LA ESQUINA SUPERIOR IZQUIERDA */
+    [data-testid="collapsedControl"] {
         display: block !important;
-    }
-
-    /* 3. ASEGURAR QUE LOS BOTONES DE OCULTAR/MOSTRAR (<< / >>) ESTÉN SIEMPRE PRESENTES */
-    [data-testid="collapsedControl"],
-    [data-testid="stSidebarCollapseButton"] {
-        display: flex !important;
         visibility: visible !important;
         opacity: 1 !important;
+        position: fixed !important;
+        top: 12px !important;
+        left: 12px !important;
         z-index: 999999 !important;
+        background-color: #1F2937 !important;
+        border: 1px solid #3B82F6 !important;
+        border-radius: 8px !important;
+        padding: 6px !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+
+    [data-testid="collapsedControl"] svg {
+        fill: #60A5FA !important;
+        width: 22px !important;
+        height: 22px !important;
     }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
-
-    /* Estilos globales */
-    .main-title {
-        font-size: 1.6rem;
-        color: #60A5FA;
-        text-align: center;
-        font-weight: bold;
-        margin-bottom: 2px;
-    }
-    .sub-title {
-        font-size: 0.9rem;
-        color: #9CA3AF;
-        text-align: center;
-        margin-bottom: 20px;
-    }
-    .ticket-box {
-        background-color: #1F2937;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px dashed #3B82F6;
-        color: #F3F4F6;
-        font-family: monospace;
-    }
     </style>
 """, unsafe_allow_html=True)
 # ==============================================================================
