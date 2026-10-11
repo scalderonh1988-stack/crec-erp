@@ -24,83 +24,120 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN TOTAL DE ELEMENTOS
-# (Obligatorio: debe ser la PRIMERA llamada a 'st' en todo el código)
+# 1. CONFIGURACIÓN DE PÁGINA Y BOTÓN FLOTANTE PARA LA BARRA LATERAL
 # ==============================================================================
+import streamlit.components.v1 as components
+
 st.set_page_config(
     page_title="CREC-ERP - Gestión Inteligente",
     page_icon="📦",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 # ------------------------------------------------------------------------------
-# A. SCRIPT EN JAVASCRIPT: Elimina los íconos flotantes externos de Streamlit Cloud
-# (Corona roja, globo, status) actuando sobre el documento principal.
+# A. SCRIPT DE CONTROL: Botón flotante ☰ + Limpieza de badges de Streamlit Cloud
 # ------------------------------------------------------------------------------
-components.html("""
+components.html(
+    """
+    <style>
+        /* Estilo del botón flotante permanente en la esquina superior izquierda */
+        #floating-sidebar-btn {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 999999;
+            background-color: #1F2937;
+            color: #60A5FA;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            width: 42px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            font-size: 22px;
+            font-weight: bold;
+            transition: all 0.2s ease-in-out;
+            user-select: none;
+        }
+        #floating-sidebar-btn:hover {
+            background-color: #374151;
+            color: #FFFFFF;
+            border-color: #60A5FA;
+            transform: scale(1.05);
+        }
+    </style>
+
+    <button id="floating-sidebar-btn" title="Mostrar / Ocultar Menú" onclick="toggleSidebar()">☰</button>
+
     <script>
-        function hideStreamlitCloudBadges() {
+        function toggleSidebar() {
+            try {
+                const parentDoc = window.parent.document;
+                
+                // 1. Intentar hacer clic en el botón nativo de control de Streamlit
+                const nativeBtn = parentDoc.querySelector('[data-testid="collapsedControl"]') || 
+                                  parentDoc.querySelector('button[kind="header"]');
+                if (nativeBtn) {
+                    nativeBtn.click();
+                    return;
+                }
+                
+                // 2. Plan B: Buscar cualquier botón interactivo superior si el nativo cambia de ID
+                const headerButtons = parentDoc.querySelectorAll('header button');
+                if (headerButtons.length > 0) {
+                    headerButtons[0].click();
+                }
+            } catch (e) {
+                console.log("Error al alternar menú:", e);
+            }
+        }
+
+        // Limpiar insignias flotantes de Streamlit Cloud automáticamente
+        function cleanupStreamlitBadges() {
             try {
                 const parentDoc = window.parent.document;
                 const selectors = [
                     '[data-testid="stStatusWidget"]',
                     '[data-testid="stAppBadge"]',
                     '.stViewerBadge',
-                    'div[class*="viewerBadge"]',
-                    'div[class*="styles_viewerBadge"]',
-                    'div[class*="stAppBadge"]',
                     'a[href*="streamlit.io"]',
-                    'a[href*="streamlit.app"]',
-                    '#root > div:nth-child(2)'
+                    'a[href*="streamlit.app"]'
                 ];
-                
                 selectors.forEach(selector => {
-                    const elements = parentDoc.querySelectorAll(selector);
-                    elements.forEach(el => {
+                    parentDoc.querySelectorAll(selector).forEach(el => {
                         el.style.setProperty('display', 'none', 'important');
-                        el.style.setProperty('visibility', 'hidden', 'important');
-                        el.style.setProperty('opacity', '0', 'important');
-                        el.style.setProperty('pointer-events', 'none', 'important');
                     });
                 });
-            } catch (e) {
-                console.log(e);
-            }
+            } catch (e) {}
         }
-        setInterval(hideStreamlitCloudBadges, 300);
+        setInterval(cleanupStreamlitBadges, 400);
     </script>
-""", height=0, width=0)
+""",
+    height=0,
+    width=0,
+)
 
 # ------------------------------------------------------------------------------
-# B. ESTILOS CSS: Oculta menús y botones de deploy, PERO MANTIENE VIVA la flecha de la barra lateral
+# B. ESTILOS CSS GENERALES DE LA APP
 # ------------------------------------------------------------------------------
-st.markdown("""
+st.markdown(
+    """
     <style>
-    /* Ocultar menú principal y pie de página */
+    /* Ocultar elementos nativos innecesarios */
     #MainMenu {visibility: hidden !important; display: none !important;}
     footer {visibility: hidden !important; display: none !important;}
-    
-    /* Ocultar elementos molestos (Deploy, GitHub, Toolbar, Decoración) */
     [data-testid="stToolbar"] {display: none !important; visibility: hidden !important;}
     [data-testid="stDecoration"] {display: none !important;}
     .stDeployButton {display: none !important;}
 
-    /* 
-       IMPORTANTE: En lugar de ocultar el header por completo (lo que borraba la flecha), 
-       lo hacemos transparente para que no estorbe visualmente, pero permitimos que exista.
-    */
+    /* Asegurar que el header mantenga espacio para el botón flotante */
     [data-testid="stHeader"] {
         background-color: transparent !important;
         visibility: visible !important;
-        display: block !important;
-    }
-
-    /* Forzar que el botón de la flechita (para abrir/cerrar la barra) NUNCA desaparezca */
-    [data-testid="collapsedControl"] {
-        display: block !important;
-        visibility: visible !important;
-        z-index: 999999 !important;
     }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
@@ -120,16 +157,10 @@ st.markdown("""
         text-align: center;
         margin-bottom: 15px;
     }
-    .ticket-box {
-        background-color: #1F2937;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px dashed #3B82F6;
-        color: #F3F4F6;
-        font-family: monospace;
-    }
     </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ==============================================================================
 # 2. IMPORTACIÓN DE MÓDULOS DE LA APLICACIÓN Y CONTINUACIÓN DEL CÓDIGO...
