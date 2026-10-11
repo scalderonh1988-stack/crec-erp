@@ -24,8 +24,7 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS NATIVOS CON CONTROL DE SIDEBAR
-# (Obligatorio: debe ser la PRIMERA llamada a 'st' en todo el código)
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS NATIVOS
 # ==============================================================================
 st.set_page_config(
     page_title="CREC-ERP - Gestión Inteligente",
@@ -71,48 +70,15 @@ components.html("""
 """, height=0, width=0)
 
 # ------------------------------------------------------------------------------
-# B. ESTILOS CSS UNIFICADOS Y LIMPIOS
+# B. ESTILOS CSS (Sin tocar la cabecera para preservar el comportamiento nativo)
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* Ocultar elementos innecesarios de Streamlit Cloud */
-    #MainMenu { display: none !important; }
-    footer { display: none !important; }
+    /* Ocultar elementos molestos de la nube sin romper la barra lateral */
+    #MainMenu { visibility: hidden !important; }
+    footer { visibility: hidden !important; }
     .stDeployButton { display: none !important; }
-    [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stDecoration"] { display: none !important; }
-
-    /* Permitir que la cabecera sea flotante y transparente sin bloquear espacio */
-    [data-testid="stHeader"] {
-        background-color: transparent !important;
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        z-index: 99999 !important;
-    }
-
-    /* Forzar que el botón de colapsar/expandir la barra lateral esté siempre visible, 
-       bien ubicado y operativo (tanto con << como con >>) */
-    [data-testid="collapsedControl"] {
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        position: fixed !important;
-        top: 12px !important;
-        left: 12px !important;
-        z-index: 9999999 !important;
-        background-color: #1F2937 !important;
-        border: 1px solid #374151 !important;
-        border-radius: 8px !important;
-        padding: 6px !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-    }
-
-    [data-testid="collapsedControl"] svg {
-        fill: #60A5FA !important;
-        width: 20px !important;
-        height: 20px !important;
-    }
 
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
