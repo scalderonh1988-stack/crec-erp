@@ -24,40 +24,144 @@ from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS NATIVOS LIMPIOS
+# 1. CONFIGURACIÓN DE PÁGINA Y OCULTACIÓN TOTAL DE ELEMENTOS
+# (Obligatorio: debe ser la PRIMERA llamada a 'st' en todo el código)
 # ==============================================================================
 st.set_page_config(
     page_title="CREC-ERP - Gestión Inteligente",
     page_icon="📦",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-# Estilos CSS limpios: Oculta menús innecesarios pero MANTIENE intacta la barra superior y la flecha nativa
+# ------------------------------------------------------------------------------
+# A. SCRIPT EN JAVASCRIPT: Elimina los íconos flotantes externos de Streamlit Cloud
+# (Corona roja, globo, status) actuando sobre el documento principal.
+# ------------------------------------------------------------------------------
+components.html("""
+    <script>
+        function hideStreamlitCloudBadges() {
+            try {
+                const parentDoc = window.parent.document;
+                const selectors = [
+                    '[data-testid="stStatusWidget"]',
+                    '[data-testid="stAppBadge"]',
+                    '.stViewerBadge',
+                    'div[class*="viewerBadge"]',
+                    'div[class*="styles_viewerBadge"]',
+                    'div[class*="stAppBadge"]',
+                    'a[href*="streamlit.io"]',
+                    'a[href*="streamlit.app"]'
+                ];
+                
+                selectors.forEach(selector => {
+                    const elements = parentDoc.querySelectorAll(selector);
+                    elements.forEach(el => {
+                        el.style.setProperty('display', 'none', 'important');
+                        el.style.setProperty('visibility', 'hidden', 'important');
+                        el.style.setProperty('opacity', '0', 'important');
+                        el.style.setProperty('pointer-events', 'none', 'important');
+                    });
+                });
+            } catch (e) {
+                console.log(e);
+            }
+        }
+        setInterval(hideStreamlitCloudBadges, 300);
+    </script>
+""", height=0, width=0)
+
+# ------------------------------------------------------------------------------
+# B. ESTILOS CSS UNIFICADOS: Barra lateral fija, limpieza y centrado exacto del Login
+# ------------------------------------------------------------------------------
 st.markdown("""
     <style>
-    #MainMenu { visibility: hidden !important; }
-    footer { visibility: hidden !important; }
+    /* 1. Ocultar elementos nativos innecesarios de Streamlit */
+    #MainMenu { visibility: hidden !important; display: none !important; }
+    footer { visibility: hidden !important; display: none !important; }
+    [data-testid="stHeader"] { display: none !important; }
     [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stDecoration"] { display: none !important; }
     .stDeployButton { display: none !important; }
 
+    /* 2. FORZAR LA BARRA LATERAL A ESTAR SIEMPRE VISIBLE Y FIJA (Ancho: 280px) */
+    [data-testid="stSidebar"] {
+        display: flex !important;
+        visibility: visible !important;
+        transform: none !important;
+        margin-left: 0 !important;
+        left: 0 !important;
+        top: 0 !important;
+        bottom: 0 !important;
+        width: 280px !important;
+        min-width: 280px !important;
+        max-width: 280px !important;
+        position: fixed !important;
+        z-index: 100 !important;
+    }
+
+    /* 3. Ocultar el botón interno de cerrar la barra lateral (<) */
+    [data-testid="stSidebarCollapseButton"],
+    [data-testid="collapsedControl"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+
+    /* 4. DESPLAZAR EL CONTENIDO PRINCIPAL A LA DERECHA PARA EVITAR SUPERPOSICIÓN */
+    .main, [data-testid="stMain"], section.main {
+        margin-left: 280px !important;
+        width: calc(100% - 280px) !important;
+    }
+
+    /* 5. CENTRADO ABSOLUTO Y EXACTO PARA LA PANTALLA DE LOGIN */
+    .login-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        top: 0;
+        left: 280px;                  /* Arranca justo al terminar la barra lateral */
+        width: calc(100vw - 280px);   /* Ocupa exactamente el ancho restante visible */
+        height: 100vh;                /* Centrado vertical perfecto en toda la pantalla */
+        z-index: 99999;
+        background-color: #0E1117;    /* Fondo oscuro sincronizado con Streamlit */
+    }
+
+    .login-box {
+        width: 100%;
+        max-width: 440px;
+        padding: 24px;
+        background-color: #1F2937;
+        border-radius: 12px;
+        border: 1px solid #374151;
+        box-shadow: 0px 10px 25px rgba(0, 0, 0, 0.5);
+    }
+
     /* Bloquear selección accidental de texto en pantallas de caja */
     .stApp { user-select: none; }
-    
+
     /* Estilos globales */
     .main-title {
-        font-size: 1.8rem;
-        color: #1E3A8A;
+        font-size: 1.6rem;
+        color: #60A5FA;
         text-align: center;
         font-weight: bold;
-        margin-bottom: 0px;
+        margin-bottom: 2px;
     }
     .sub-title {
-        font-size: 0.95rem;
-        color: #4B5563;
+        font-size: 0.9rem;
+        color: #9CA3AF;
         text-align: center;
-        margin-bottom: 15px;
+        margin-bottom: 20px;
+    }
+    .ticket-box {
+        background-color: #1F2937;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px dashed #3B82F6;
+        color: #F3F4F6;
+        font-family: monospace;
     }
     </style>
 """, unsafe_allow_html=True)
