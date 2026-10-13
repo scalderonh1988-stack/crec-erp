@@ -5030,6 +5030,7 @@ elif menu == "⚙️ Configuración General":
                         st.rerun()
             except Exception as e:
                 st.error(f"❌ Ocurrió un error al procesar la importación: {e}")
+
 # ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO / HÍBRIDO OFFLINE) -----------------
 elif menu == "💰 Módulo de Ventas (POS)":
 
@@ -5042,7 +5043,14 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     DB_LOCAL_NAME = "pos_local_cache.db"
 
-    # --- 🛠️ FUNCIONES AUXILIARES PARA MODO OFFLINE (SQLITE + FALLBACK) ---
+    # --- 🛠️ FUNCIONES AUXILIARES PARA MODO OFFLINE Y EXENTOS ---
+    def evaluar_es_exento(val):
+        """Evalúa de forma robusta si un valor representa un producto exento."""
+        if isinstance(val, bool): return val
+        if isinstance(val, (int, float)): return val == 1
+        if isinstance(val, str): return val.lower().strip() in ["true", "si", "sí", "1", "t", "yes"]
+        return False
+
     def init_db_local_pos():
         """Inicializa las tablas locales en SQLite si no existen."""
         try:
@@ -5120,8 +5128,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
         try:
             conn = sqlite3.connect(DB_LOCAL_NAME)
             df = pd.read_sql_query(
-                "SELECT codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico FROM productos_cache WHERE rut_empresa = ? AND bodega = ?",
-                conn, params=(str(rut), str(bodega))
+                "SELECT codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico FROM productos_cache WHERE rut_empresa = ?",
+                conn, params=(str(rut),)
             )
             conn.close()
             return df
@@ -5169,6 +5177,11 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 batch = []
                 folio_off = f"OFF-{v_id}"
                 for item in items:
+                    sub = float(item.get("Subtotal", 0))
+                    es_ex = evaluar_es_exento(item.get("Es Exento", False))
+                    neto_b = sub if es_ex else round(sub / 1.19, 2)
+                    iva_b = 0.0 if es_ex else round(sub - neto_b, 2)
+
                     batch.append({
                         "folio": str(folio_off),
                         "rut_empresa": str(rut),
@@ -5179,10 +5192,10 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         "codigo_producto": str(item.get("Código", "")),
                         "detalle": str(item.get("Descripción", "")),
                         "cantidad": float(item.get("Cantidad", 1)),
-                        "monto": float(item.get("Subtotal", 0)),
+                        "monto": sub,
                         "metodo_pago": metodo,
-                        "neto": round(float(item.get("Subtotal", 0)) / 1.19, 2),
-                        "iva": round(float(item.get("Subtotal", 0)) - (float(item.get("Subtotal", 0)) / 1.19), 2),
+                        "neto": neto_b,
+                        "iva": iva_b,
                         "impuesto_especifico": 0.0,
                         "modo_emision": modo
                     })
@@ -5260,7 +5273,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
     df_nube = pd.DataFrame()
     if modo_online:
         try:
-            # Traemos todos los campos (*) para evitar errores de columnas faltantes
             res_pos = supabase.table("productos").select("*").eq("rut_empresa", str(rut_actual)).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
@@ -5292,6 +5304,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     codigo_prod = str(prod[col_c])
                     nombre_prod = str(prod.get(col_d, 'Sin Nombre'))
                     precio_prod = float(prod.get(col_p, 0))
+                    es_ex = evaluar_es_exento(prod.get("es_exento", False))
                     
                     encontrado_en_carrito = False
                     for item in st.session_state.carrito_ventas:
@@ -5308,7 +5321,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             "Cantidad": 1.0,
                             "Precio Unitario": precio_prod,
                             "Subtotal": precio_prod,
-                            "Es Exento": str(prod.get("es_exento", False)).lower() in ["true", "si", "sí", "1"],
+                            "Es Exento": es_ex,
                             "Tasa ILA": 0.0,
                             "es_guia_previa": False
                         })
@@ -5388,6 +5401,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                         "Cantidad": cant,
                                         "Precio Unitario": precio_unitario,
                                         "Subtotal": monto_total,
+                                        "Es Exento": False,
                                         "es_guia_previa": True 
                                     })
                                 st.success(f"✅ Guía {folio_guia_a_facturar} cargada exitosamente.")
@@ -5473,30 +5487,28 @@ elif menu == "💰 Módulo de Ventas (POS)":
             dir_receptor = str(cliente_row.get("direccion") or "").strip()
             comuna_receptor = str(cliente_row.get("comuna") or "").strip()
 
-            # --- DETECCIÓN DE DATOS TRIBUTARIOS FALTANTES ---
             giro_invalido = not giro_receptor or giro_receptor.lower() in ["sin giro", "null", "none", ""]
             dir_invalida = not dir_receptor or dir_receptor.lower() in ["sin dirección", "sin direccion", "null", "none", ""]
             comuna_invalida = not comuna_receptor or comuna_receptor.lower() in ["null", "none", ""]
 
-            # Si faltan datos tributarios se muestra la alerta y el formulario en caliente
             if giro_invalido or dir_invalida or comuna_invalida:
-                st.warning("⚠️ **Cliente con Datos Tributarios Incompletos:** Este cliente no tiene Giro, Dirección o Comuna registrados para emitir Factura o Guía.")
+                st.warning("⚠️ **Cliente con Datos Tributarios Incompletos:** Este cliente no tiene Giro, Dirección o Comuna registrados.")
                 
-                with st.expander("✏️ Completar Datos Tributarios Ahora (Se guardará automáticamente en Supabase)", expanded=True):
+                with st.expander("✏️ Completar Datos Tributarios Ahora", expanded=True):
                     with st.form(key=f"form_quick_update_cliente_{cliente_rut}"):
                         col_u1, col_u2, col_u3 = st.columns(3)
                         with col_u1:
-                            val_giro = st.text_input("Giro Comercial", value="" if giro_invalido else giro_receptor, placeholder="Ej: Venta de Insumos")
+                            val_giro = st.text_input("Giro Comercial", value="" if giro_invalido else giro_receptor)
                         with col_u2:
-                            val_dir = st.text_input("Dirección", value="" if dir_invalida else dir_receptor, placeholder="Ej: Av. Bernardo O'Higgins 123")
+                            val_dir = st.text_input("Dirección", value="" if dir_invalida else dir_receptor)
                         with col_u3:
-                            val_comuna = st.text_input("Comuna", value="" if comuna_invalida else comuna_receptor, placeholder="Ej: San Felipe")
+                            val_comuna = st.text_input("Comuna", value="" if comuna_invalida else comuna_receptor)
                         
-                        btn_actualizar_cliente = st.form_submit_button("💾 Guardar en Base de Datos y Actualizar POS")
+                        btn_actualizar_cliente = st.form_submit_button("💾 Guardar en Base de Datos")
                         
                         if btn_actualizar_cliente:
                             if not val_giro.strip() or not val_dir.strip() or not val_comuna.strip():
-                                st.error("Debe ingresar Giro, Dirección y Comuna para guardar.")
+                                st.error("Debe ingresar Giro, Dirección y Comuna.")
                             else:
                                 try:
                                     update_payload = {
@@ -5504,30 +5516,25 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                         "direccion": val_dir.strip(),
                                         "comuna": val_comuna.strip()
                                     }
-                                    # Intentar actualización en Supabase
                                     supabase.table("clientes")\
                                         .update(update_payload)\
                                         .or_(f"rut.eq.{cliente_rut},rut_cliente.eq.{cliente_rut}")\
                                         .execute()
-                                    
-                                    st.success("✅ ¡Datos del cliente guardados exitosamente en Supabase!")
+                                    st.success("✅ ¡Datos guardados exitosamente!")
                                     st.rerun()
                                 except Exception as err_upd:
-                                    st.error(f"⚠️ Error al actualizar en Supabase: {err_upd}")
+                                    st.error(f"⚠️ Error al actualizar: {err_upd}")
     else:
         col_f1, col_f2 = st.columns(2)
         with col_f1: cliente_nombre = st.text_input("Razón Social / Nombre del Cliente", value=c_nombre_def, placeholder="Ej: Distribuidora Los Andes SpA")
         with col_f2: cliente_rut = st.text_input("RUT / Identificación Tributaria", value=c_rut_def, placeholder="Ej: 76.543.210-K")
-    # Si se selecciona Factura u Oficial (SII), solicitar campos obligatorios tributarios
+
     if (tipo_documento == "Factura Electrónica" or modo_operacion == "Oficial (SII)") and (not cliente_elegido or cliente_elegido.startswith("--")):
-        with st.expander("🏛️ Datos Tributarios del Receptor (Obligatorios para Facturas SII)", expanded=(tipo_documento == "Factura Electrónica")):
+        with st.expander("🏛️ Datos Tributarios del Receptor", expanded=(tipo_documento == "Factura Electrónica")):
             col_tr1, col_tr2, col_tr3 = st.columns(3)
-            with col_tr1:
-                giro_receptor = st.text_input("Giro Comercial:", value=giro_receptor, placeholder="Ej: Comercio de Abarrotes")
-            with col_tr2:
-                dir_receptor = st.text_input("Dirección:", value=dir_receptor, placeholder="Ej: Av. San Martín 456")
-            with col_tr3:
-                comuna_receptor = st.text_input("Comuna:", value=comuna_receptor, placeholder="Ej: San Felipe")
+            with col_tr1: giro_receptor = st.text_input("Giro Comercial:", value=giro_receptor)
+            with col_tr2: dir_receptor = st.text_input("Dirección:", value=dir_receptor)
+            with col_tr3: comuna_receptor = st.text_input("Comuna:", value=comuna_receptor)
 
     # =========================================================================
     # --- VISTA 1: PANTALLA DE ÉXITO (PDF Y RECIBO TÉRMICO DISPONIBLES) ---
@@ -5549,9 +5556,22 @@ elif menu == "💰 Módulo de Ventas (POS)":
             "comuna": comuna_receptor
         }
 
-        tot_general = sum(float(i.get('Subtotal', 0)) for i in items_a_mostrar)
-        tot_neto = round(tot_general / 1.19, 2)
-        tot_iva = round(tot_general - tot_neto, 2)
+        # --- CÁLCULO DE TOTALES RESPETANDO PRODUCTOS EXENTOS ---
+        tot_general = 0.0
+        tot_neto = 0.0
+        tot_iva = 0.0
+        for item in items_a_mostrar:
+            sub = float(item.get('Subtotal', 0))
+            tot_general += sub
+            if evaluar_es_exento(item.get('Es Exento', False)):
+                tot_neto += sub
+            else:
+                neto_item = sub / 1.19
+                tot_neto += neto_item
+                tot_iva += (sub - neto_item)
+
+        tot_neto = round(tot_neto, 2)
+        tot_iva = round(tot_iva, 2)
 
         totales_info = {
             "neto": tot_neto,
@@ -5559,7 +5579,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
             "total": tot_general
         }
 
-        # --- LEER CONFIGURACIÓN DE FORMATO (58mm, 80mm o Carta) ---
+        # --- CONFIGURACIÓN DE FORMATO TÉRMICO ---
         cfg_ticket_actual = st.session_state.get("config_ticket", {})
         formato_impresion = cfg_ticket_actual.get("formato_impresion", "80mm (Térmica Estándar)")
 
@@ -5576,11 +5596,12 @@ elif menu == "💰 Módulo de Ventas (POS)":
             linea_guion = "--------------------------------------------------"
             ancho_max = 55
 
-        # Construir líneas de productos ultra compactas en una sola línea
+        # Detalle ultra compacto para tickets térmicos
         lineas_productos_fmt = ""
         for item in items_a_mostrar:
             cant = int(item['Cantidad']) if float(item['Cantidad']).is_integer() else item['Cantidad']
-            desc = str(item['Descripción'])[:(ancho_max - 12)].ljust(ancho_max - 12)
+            ex_tag = " (EX)" if evaluar_es_exento(item.get('Es Exento', False)) else ""
+            desc = (str(item['Descripción']) + ex_tag)[:(ancho_max - 12)].ljust(ancho_max - 12)
             sub = f"${item['Subtotal']:,.0f}"
             lineas_productos_fmt += f"{cant}x {desc} {sub}\n"
 
@@ -5716,7 +5737,7 @@ TOTAL GENERAL: ${tot_general:,.2f}
                 else:
                     st.error("🔴 Monto insuficiente.")
             elif forma_pago in ["Crédito", "Consignación"]:
-                st.warning(f"⚖️ Esta venta en {forma_pago} se enviará al módulo de Cuentas por Cobrar.")
+                st.warning(f"⚖️ Esta venta en {forma_pago} se enviará a Cuentas por Cobrar.")
                 dias_credito = st.number_input(f"⏳ Días de Plazo para pagar ({forma_pago}):", min_value=1, value=30, step=1)
                 fecha_estimada = datetime.now() + timedelta(days=dias_credito)
                 st.info(f"📅 Fecha de vencimiento calculada: **{fecha_estimada.strftime('%d/%m/%Y')}**")
@@ -5745,7 +5766,6 @@ TOTAL GENERAL: ${tot_general:,.2f}
                         es_offline_para_cobro = not hay_conexion_activa()
                         fecha_hora_actual = datetime.now()
                         
-                        # --- 1. PROCESAR DTE OFICIAL (SI APLICA) ---
                         resultado_dte = None
                         numero_folio_actual = None
                         pdf_url_dte = None
@@ -5753,21 +5773,19 @@ TOTAL GENERAL: ${tot_general:,.2f}
 
                         if modo_str == "OFICIAL":
                             if es_offline_para_cobro:
-                                st.error("🚨 No es posible emitir DTE Oficial sin conexión a Internet (SII / Supabase). Revisa la red.")
+                                st.error("🚨 No es posible emitir DTE Oficial sin conexión a Internet.")
                                 st.session_state.procesando_emision_dte = False
                                 st.stop()
                             else:
-                                st.toast("⚡ Timbrando documento con el SII mediante OpenFactura...", icon="📡")
-                                
+                                st.toast("⚡ Timbrando documento con el SII...", icon="📡")
                                 datos_empresa_emision = obtener_datos_emisor(supabase, rut_actual) if modo_online else {}
                                 
-                                # Formatear items para el conector DTE
                                 items_payload_dte = [
                                     {
                                         "nombre": str(i["Descripción"]),
                                         "cantidad": float(i["Cantidad"]),
                                         "precio_unitario": float(i["Precio Unitario"]),
-                                        "es_exento": bool(i.get("Es Exento", False))
+                                        "es_exento": evaluar_es_exento(i.get("Es Exento", False))
                                     }
                                     for i in st.session_state.carrito_ventas
                                 ]
@@ -5791,12 +5809,11 @@ TOTAL GENERAL: ${tot_general:,.2f}
                                     st.session_state.url_pdf_oficial = pdf_url_dte
                                     st.toast(f"✅ DTE Timbrado Exitosamente. Folio SII: N° {numero_folio_actual}", icon="📜")
                                 else:
-                                    error_msg = resultado_dte.get("error", "Error desconocido en timbrado DTE") if resultado_dte else "Fallo conexión DTE"
+                                    error_msg = resultado_dte.get("error", "Error desconocido") if resultado_dte else "Fallo conexión DTE"
                                     st.error(f"🚨 Error de Timbrado SII: {error_msg}")
                                     st.session_state.procesando_emision_dte = False
                                     st.stop()
 
-                        # --- 2. ASIGNACIÓN DE FOLIO INTERNO (SI NO ES DTE OFICIAL) ---
                         if not numero_folio_actual:
                             if not es_offline_para_cobro:
                                 try:
@@ -5821,7 +5838,6 @@ TOTAL GENERAL: ${tot_general:,.2f}
                         transaccion_id_actual = str(numero_folio_actual)
                         lineas_productos = ""
                         
-                        # Eliminar guía previa si corresponde
                         folio_origen = st.session_state.get("folio_guia_origen")
                         if folio_origen and tipo_documento == "Factura Electrónica" and not es_offline_para_cobro:
                             try:
@@ -5831,14 +5847,13 @@ TOTAL GENERAL: ${tot_general:,.2f}
                                 pass 
                         
                         cfg_actual = st.session_state.get("config_ticket", {})
-                        tasa_iva_global = 0.19
-                        total_neto_ticket, total_iva_ticket, total_ila_ticket = 0.0, 0.0, 0.0
+                        total_neto_ticket, total_iva_ticket = 0.0, 0.0
                         registros_ventas_batch = []
 
                         for item in st.session_state.carrito_ventas:
-                            lineas_productos += f"- {item['Descripción']} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
+                            ex_tag_txt = " (EX)" if evaluar_es_exento(item.get('Es Exento', False)) else ""
+                            lineas_productos += f"- {item['Descripción']}{ex_tag_txt} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
                             
-                            # Descontar stock atómicamente si está online
                             if not es_offline_para_cobro and not item.get("es_guia_previa", False):
                                 try:
                                     codigo_vendido = str(item["Código"])
@@ -5865,10 +5880,13 @@ TOTAL GENERAL: ${tot_general:,.2f}
                                 except Exception as e:
                                     print(f"Error actualizando stock: {e}")
 
-                            tasa_iva_item = 0.0 if item.get("Es Exento", False) else tasa_iva_global
                             monto_bruto = float(item["Subtotal"])
-                            neto_calc = monto_bruto / (1.0 + tasa_iva_item)
-                            iva_calc = monto_bruto - neto_calc
+                            if evaluar_es_exento(item.get("Es Exento", False)):
+                                neto_calc = monto_bruto
+                                iva_calc = 0.0
+                            else:
+                                neto_calc = monto_bruto / 1.19
+                                iva_calc = monto_bruto - neto_calc
 
                             total_neto_ticket += neto_calc
                             total_iva_ticket += iva_calc
@@ -5893,7 +5911,6 @@ TOTAL GENERAL: ${tot_general:,.2f}
                                 "xml_url": xml_url_dte
                             })
 
-                        # --- 3. INSERCIÓN EN BASE DE DATOS ---
                         if not es_offline_para_cobro:
                             try:
                                 res_venta = supabase.table("ventas").insert(registros_ventas_batch).execute()
@@ -5904,7 +5921,6 @@ TOTAL GENERAL: ${tot_general:,.2f}
                         else:
                             guardar_venta_offline_db(rut_actual, caja_actual, tipo_documento, cliente_nombre, total_venta, forma_pago, modo_str, st.session_state.carrito_ventas)
 
-                        # Registrar Cuenta por Cobrar si es Crédito
                         if forma_pago in ["Crédito", "Consignación"] and not es_offline_para_cobro:
                             try:
                                 supabase.table("cuentas_por_cobrar").insert({
@@ -5921,7 +5937,6 @@ TOTAL GENERAL: ${tot_general:,.2f}
                             except Exception as e:
                                 print(f"Error registrando CxC: {e}")
 
-                        # Armar Ticket Térmico
                         st.session_state.items_recibo_actual = st.session_state.carrito_ventas.copy()
                         info_pago = f"RECIBIDO: ${efectivo_recibido:,.2f}\nVUELTO: ${cambio:,.2f}" if forma_pago == 'Efectivo' else f"CONDICIÓN: {forma_pago.upper()} ({dias_credito} DÍAS)"
                         
@@ -6019,7 +6034,7 @@ PAGO: {forma_pago.upper()}
                         if not match_row.empty:
                             fila = match_row.iloc[0]
                             stock_disponible = float(fila[col_stock] or 0.0)
-                            es_exento = fila.get("es_exento", False) in [True, "Si", "si", "Sí", "sí", "1"]
+                            es_exento = evaluar_es_exento(fila.get("es_exento", False))
                         
                         unidades_en_carrito = sum(item["Cantidad"] for item in st.session_state.carrito_ventas if item["Código"] == c_buscado)
                         total_intentado = unidades_en_carrito + float(cantidad_vendida)
@@ -6054,7 +6069,8 @@ PAGO: {forma_pago.upper()}
             for i, item in enumerate(st.session_state.carrito_ventas):
                 col_c1, col_c2, col_c3, col_c4, col_c5, col_c6 = st.columns([1.2, 2.5, 1.2, 1.5, 1.5, 0.8])
                 with col_c1: st.text(item["Código"])
-                desc_texto = item["Descripción"] + (" (📄 de Guía)" if item.get("es_guia_previa") else "")
+                ex_badge = " [EX]" if evaluar_es_exento(item.get("Es Exento", False)) else ""
+                desc_texto = item["Descripción"] + ex_badge + (" (📄 de Guía)" if item.get("es_guia_previa") else "")
                 with col_c2: st.text(desc_texto)
                 with col_c3:
                     nc = st.number_input("Cant", min_value=0.01, step=0.1, value=float(item["Cantidad"]), format="%.2f", key=f"cant_{i}", label_visibility="collapsed")
