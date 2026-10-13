@@ -5246,21 +5246,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     # --- 3. SELECTOR MULTI-BODEGA PARA EL POS ---
     rut_limpio = str(rut_actual).replace(".", "").strip()
-    bodegas_pos = []
-
-    if modo_online and rut_limpio:
-        try:
-            res_bod = supabase.table("bodegas").select("nombre").eq("rut_empresa", rut_limpio).execute()
-            if res_bod.data:
-                for r in res_bod.data:
-                    nb = str(r.get("nombre", "")).strip(' "\'')
-                    if nb and nb not in bodegas_pos:
-                        bodegas_pos.append(nb)
-        except Exception:
-            pass
-
-    if not bodegas_pos:
-        bodegas_pos = ["Bodega Principal"]
+    bodegas_pos = ["Bodega Principal"]
 
     bodega_actual = st.selectbox(
         "🏢 Selecciona la Bodega / Sucursal de origen:",
@@ -5274,7 +5260,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
     df_nube = pd.DataFrame()
     if modo_online:
         try:
-            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", str(rut_actual)).eq("bodega", bodega_actual).limit(10000).execute()
+            # Consultamos directamente por el RUT de la empresa sin filtrar por bodega
+            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", str(rut_actual)).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
                 st.session_state.df_nube_pos = df_nube
@@ -5286,7 +5273,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
     else:
         df_nube = cargar_catalogo_local(rut_actual, bodega_actual)
         st.session_state.df_nube_pos = df_nube
-
     # --- 5. LECTOR DE CÓDIGO DE BARRAS ---
     def procesar_escaneo_pos():
         codigo_leido = st.session_state.get("input_scanner", "").strip()
