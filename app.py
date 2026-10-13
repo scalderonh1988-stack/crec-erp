@@ -4908,7 +4908,6 @@ elif menu == "⚙️ Configuración General":
         )
 
         try:
-            # Consultamos 1 registro en Supabase para obtener el listado exacto de columnas
             res = supabase.table(tabla_destino).select("*").limit(1).execute()
             if res.data and len(res.data) > 0:
                 columnas = list(res.data[0].keys())
@@ -4972,53 +4971,50 @@ elif menu == "⚙️ Configuración General":
             except Exception as e:
                 st.error(f"❌ Ocurrió un error al exportar los datos: {e}")
 
-    ## ==============================================================================
-# 3. IMPORTAR BASE DE DATOS (A SUPABASE)
-# ==============================================================================
-elif accion == "Importar base de datos":
-    st.warning("⚠️ Carga un archivo Excel para ingresar registros masivos directamente a Supabase.")
+    # 3. IMPORTAR BASE DE DATOS (A SUPABASE)
+    elif accion == "Importar base de datos":
+        st.warning("⚠️ Carga un archivo Excel para ingresar registros masivos directamente a Supabase.")
 
-    tabla_destino = st.selectbox(
-        "Selecciona la tabla destino para la carga masiva:",
-        ["productos", "clientes", "proveedores", "gastos", "costos_fijos"],
-        key="select_tabla_destino_import_config"
-    )
+        tabla_destino = st.selectbox(
+            "Selecciona la tabla destino para la carga masiva:",
+            ["productos", "clientes", "proveedores", "gastos", "costos_fijos"],
+            key="select_tabla_destino_import_config"
+        )
 
-    archivo_cargado = st.file_uploader(
-        "Selecciona tu archivo Excel (.xlsx) o CSV desde tu equipo", 
-        type=["xlsx", "csv"], 
-        key="uploader_importar_bd_config"
-    )
+        archivo_cargado = st.file_uploader(
+            "Selecciona tu archivo Excel (.xlsx) o CSV desde tu equipo", 
+            type=["xlsx", "csv"], 
+            key="uploader_importar_bd_config"
+        )
 
-    if archivo_cargado is not None:
-        try:
-            if archivo_cargado.name.endswith(".csv"):
-                df_nuevo = pd.read_csv(archivo_cargado)
-            else:
-                df_nuevo = pd.read_excel(archivo_cargado)
+        if archivo_cargado is not None:
+            try:
+                if archivo_cargado.name.endswith(".csv"):
+                    df_nuevo = pd.read_csv(archivo_cargado)
+                else:
+                    df_nuevo = pd.read_excel(archivo_cargado)
 
-            st.write(f"📋 **Previsualización de datos a cargar ({len(df_nuevo.columns)} columnas):**")
-            st.dataframe(df_nuevo.head())
+                st.write(f"📋 **Previsualización de datos a cargar ({len(df_nuevo.columns)} columnas):**")
+                st.dataframe(df_nuevo.head())
 
-            if st.button("🚀 Confirmar y Cargar a Supabase", key="btn_confirmar_import_config"):
-                # 1. Asegurar el tenant_id o rut_empresa
-                if tenant_id and 'rut_empresa' not in df_nuevo.columns:
-                    df_nuevo['rut_empresa'] = str(tenant_id)
+                if st.button("🚀 Confirmar y Cargar a Supabase", key="btn_confirmar_import_config"):
+                    # 1. Asegurar el tenant_id o rut_empresa
+                    if tenant_id and 'rut_empresa' not in df_nuevo.columns:
+                        df_nuevo['rut_empresa'] = str(tenant_id)
 
-                # 2. ELIMINAR LA COLUMNA ID SI EXISTE (para que la base de datos la autogenere)
-                if 'id' in df_nuevo.columns:
-                    df_nuevo = df_nuevo.drop(columns=['id'])
+                    # 2. ELIMINAR LA COLUMNA ID SI EXISTE (para que la base de datos la autogenere)
+                    if 'id' in df_nuevo.columns:
+                        df_nuevo = df_nuevo.drop(columns=['id'])
 
-                # 3. Limpiar valores nulos para evitar errores en Supabase
-                registros = df_nuevo.where(pd.notnull(df_nuevo), None).to_dict(orient="records")
+                    # 3. Limpiar valores nulos para evitar errores en Supabase
+                    registros = df_nuevo.where(pd.notnull(df_nuevo), None).to_dict(orient="records")
 
-                # 4. Inserción masiva
-                supabase.table(tabla_destino).upsert(registros).execute()
-                st.success(f"✅ ¡Base de datos cargada con éxito! Se procesaron {len(registros)} registros en '{tabla_destino}'.")
-                st.rerun()
-        except Exception as e:
-            st.error(f"❌ Ocurrió un error al procesar la importación: {e}")
-
+                    # 4. Inserción masiva
+                    supabase.table(tabla_destino).upsert(registros).execute()
+                    st.success(f"✅ ¡Base de datos cargada con éxito! Se procesaron {len(registros)} registros en '{tabla_destino}'.")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"❌ Ocurrió un error al procesar la importación: {e}")
 
 # ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO / HÍBRIDO OFFLINE) -----------------
 elif menu == "💰 Módulo de Ventas (POS)":
