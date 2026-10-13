@@ -5275,7 +5275,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
     else:
         df_nube = cargar_catalogo_local(rut_actual, bodega_actual)
         st.session_state.df_nube_pos = df_nube
-        
+
     # --- 5. LECTOR DE CÓDIGO DE BARRAS ---
     def procesar_escaneo_pos():
         codigo_leido = st.session_state.get("input_scanner", "").strip()
@@ -5559,6 +5559,51 @@ elif menu == "💰 Módulo de Ventas (POS)":
             "total": tot_general
         }
 
+        # --- ADAPTAR ANCHO SEGÚN CONFIGURACIÓN (58mm, 80mm o Carta) ---
+        cfg_ticket_actual = st.session_state.get("config_ticket", {})
+        formato_impresion = cfg_ticket_actual.get("formato_impresion", "80mm (Térmica Estándar)")
+
+        if "58mm" in formato_impresion:
+            separador = "================================"
+            linea_guion = "--------------------------------"
+            ancho_max = 32
+        elif "80mm" in formato_impresion:
+            separador = "=========================================="
+            linea_guion = "------------------------------------------"
+            ancho_max = 42
+        else:
+            separador = "=================================================="
+            linea_guion = "--------------------------------------------------"
+            ancho_max = 55
+
+        lineas_productos_fmt = ""
+        for item in items_a_mostrar:
+            lineas_productos_fmt += f"- {str(item['Descripción'])[:ancho_max]} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
+
+        texto_recibo_dinamico = f"""
+{separador}
+   {cfg_ticket_actual.get('nombre_empresa', 'MI EMPRESA')[:ancho_max]}
+   RUT: {cfg_ticket_actual.get('rut_empresa', rut_actual)}
+{separador}
+DOC: {tipo_documento.upper()}
+FOLIO: {st.session_state.get("ultimo_folio", "N/A")}
+FECHA: {fecha_emision_venta.strftime('%d/%m/%Y')}
+{linea_guion}
+CLI: {cliente_nombre[:ancho_max] if cliente_nombre else 'CLIENTE CONTADO'}
+RUT: {cliente_rut if cliente_rut else '66666666-6'}
+{linea_guion}
+DETALLE:
+{lineas_productos_fmt}{linea_guion}
+NETO: ${tot_neto:,.2f}
+IVA (19%): ${tot_iva:,.2f}
+{linea_guion}
+TOTAL GENERAL: ${tot_general:,.2f}
+{separador}
+{cfg_ticket_actual.get('pie_pagina', '¡Gracias por su compra!')}
+{separador}"""
+
+        st.session_state.ultimo_recibo = texto_recibo_dinamico
+
         mostrar_documento_unificado(
             tipo_documento=tipo_documento,
             folio=st.session_state.get("ultimo_folio", "N/A"),
@@ -5573,10 +5618,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
         col_pdf, col_termico, col_nueva = st.columns(3)
 
         with col_pdf:
-            # Si hay un PDF oficial retornado por OpenFactura, ofrecer su descarga directa
-            if st.session_state.get("url_pdf_oficial"):
-                st.link_button("📄 Descargar DTE Oficial (OpenFactura)", st.session_state.url_pdf_oficial, use_container_width=True)
-            else:
+            if "Carta" in formato_impresion:
                 try:
                     pdf_bytes = generar_guia_pdf(
                         cliente_nombre,
@@ -5587,7 +5629,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         datos_empresa=datos_emisor
                     )
                     st.download_button(
-                        label=f"📄 Descargar {tipo_documento} (PDF Interno)",
+                        label=f"📄 Descargar {tipo_documento} (PDF Tamaño Carta)",
                         data=pdf_bytes,
                         file_name=f"{tipo_documento.replace(' ', '_')}_{st.session_state.get('ultimo_folio', 'N/A')}.pdf",
                         mime="application/pdf",
@@ -5595,11 +5637,33 @@ elif menu == "💰 Módulo de Ventas (POS)":
                     )
                 except Exception as e:
                     st.error(f"⚠️ Error generando PDF: {e}")
+            else:
+                if st.session_state.get("url_pdf_oficial"):
+                    st.link_button("📄 Descargar DTE Oficial (OpenFactura)", st.session_state.url_pdf_oficial, use_container_width=True)
+                else:
+                    try:
+                        pdf_bytes = generar_guia_pdf(
+                            cliente_nombre,
+                            cliente_rut,
+                            items_a_mostrar,
+                            tipo_documento,
+                            fecha_emision_venta,
+                            datos_empresa=datos_emisor
+                        )
+                        st.download_button(
+                            label=f"📄 Descargar {tipo_documento} (PDF Interno)",
+                            data=pdf_bytes,
+                            file_name=f"{tipo_documento.replace(' ', '_')}_{st.session_state.get('ultimo_folio', 'N/A')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"⚠️ Error generando PDF: {e}")
 
         with col_termico:
             if st.session_state.ultimo_recibo:
                 st.download_button(
-                    label="📥 Descargar Recibo Térmico",
+                    label=f"📥 Descargar Recibo Térmico ({formato_impresion.split(' ')[0]})",
                     data=st.session_state.ultimo_recibo,
                     file_name=f"Ticket_{tipo_documento.replace(' ', '_')}_{st.session_state.get('ultimo_folio', 'N/A')}.txt",
                     mime="text/plain",
