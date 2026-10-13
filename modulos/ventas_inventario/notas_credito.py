@@ -69,7 +69,10 @@ def mostrar_modulo_notas_credito(ruta_negocio):
     lista_folios_raw = df_ventas[col_id].dropna().unique().tolist()
     lista_folios = [limpiar_folio_str(f) for f in lista_folios_raw]
     lista_folios = list(dict.fromkeys(lista_folios)) # Eliminar duplicados manteniendo orden
-    lista_folios = sorted(lista_folios, key=lambda x: int(x) if x.isdigit() else x, reverse=True)
+    
+    # Corrección segura con tuplas para evitar TypeError entre int y str en Python 3
+    lista_folios = sorted(lista_folios, key=lambda x: (0, int(x)) if str(x).isdigit() else (1, str(x)), reverse=True)
+    
     opciones_folios = ["-- Seleccionar Folio --"] + lista_folios
 
     st.markdown("---")
@@ -137,7 +140,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                 .execute()
             )
             
-            # Respaldo de búsqueda si rut_empresa tiene variaciones de formato
             if not res_cxc.data:
                 res_cxc = (
                     supabase.table("cuentas_por_cobrar")
@@ -167,7 +169,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
         c_m4.metric("Saldo Pendiente", f"${saldo_pendiente_cxc:,.0f}", delta=estado_cxc)
         c_m5.metric("Modo Emisión", modo_origen)
 
-        # Si existe abono parcial, mostrar cuadro informativo especial
         if monto_abonado > 0 and saldo_pendiente_cxc > 0:
             st.warning(
                 f"⚠️ **Venta con Abono Parcial:** El cliente ha pagado **${monto_abonado:,.0f}** de "
@@ -179,10 +180,8 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
         st.markdown("#### 📦 2. Definir el Alcance de la Nota de Crédito")
 
-        # Construcción dinámica de opciones de anulación
         opciones_devolucion = []
 
-        # Habilitar la opción del Saldo Pendiente si existe abono
         if saldo_pendiente_cxc > 0 and saldo_pendiente_cxc < monto_total_venta:
             opciones_devolucion.append(f"Anular SOLO el Saldo Pendiente (${saldo_pendiente_cxc:,.0f})")
 
@@ -195,7 +194,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
             key="radio_tipo_nc"
         )
 
-        # Motivo por defecto según la opción elegida
         if "Saldo Pendiente" in tipo_devolucion:
             motivo_defecto = f"Anulación por condonación de saldo pendiente folio {folio_origen}"
         elif "Total" in tipo_devolucion:
@@ -205,7 +203,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
         motivo_nc = st.text_input("📝 Motivo de la Nota de Crédito (S.I.I.):", value=motivo_defecto)
 
-        # PREPARAR DATOS PARA DEVOLUCIÓN PARCIAL DE PRODUCTOS
         datos_parciales = []
         if tipo_devolucion == "Devolución Parcial (Ajustar cantidades por producto)":
             st.markdown("##### 📝 Ajuste de Cantidades a Devolver")
@@ -237,7 +234,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
         st.markdown("---")
 
-        # --- 🚀 BOTÓN DE EMISIÓN E INTEGRACIÓN DTE ---
         if st.button("🚀 Emitir Nota de Crédito y Procesar Devolución", type="primary", use_container_width=True):
             try:
                 fecha_hoy = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -247,7 +243,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                 monto_total_devolucion = 0.0
                 es_ajuste_saldo = "Saldo Pendiente" in tipo_devolucion
 
-                # CASO A: ANULACIÓN SOLO DEL SALDO PENDIENTE
                 if es_ajuste_saldo:
                     monto_total_devolucion = saldo_pendiente_cxc
                     items_a_procesar.append({
@@ -258,7 +253,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                         "monto": saldo_pendiente_cxc
                     })
 
-                # CASO B: ANULACIÓN COMPLETA TOTAL DE LA VENTA
                 elif "Total" in tipo_devolucion:
                     for _, row in df_resultado.iterrows():
                         cant_dev = float(row.get("cantidad", 1))
@@ -274,7 +268,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                             "monto": monto_lin
                         })
 
-                # CASO C: DEVOLUCIÓN PARCIAL POR PRODUCTO
                 else:
                     for item in datos_parciales:
                         cant_dev = float(item["Cantidad a Devolver"])
@@ -295,7 +288,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                     st.warning("⚠️ No has seleccionado un monto o cantidad válida para devolver.")
                     st.stop()
 
-                # 2. Timbrado ante el SII si el documento original fue OFICIAL
                 folio_nc_final = f"NC-{folio_origen}"
                 pdf_url_nc = None
                 xml_url_nc = None
@@ -319,8 +311,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                         "Guía de Despacho": 52
                     }
                     codigo_doc_origen = mapa_tipo_origen.get(doc_origen, 39)
-
-                    # CodRef SII: 1 = Anula Documento | 3 = Modifica Montos
                     cod_ref_sii = 1 if ("Total" in tipo_devolucion and not es_ajuste_saldo) else 3
 
                     referencias_sii = [{
@@ -351,12 +341,10 @@ def mostrar_modulo_notas_credito(ruta_negocio):
                         st.error(f"🚨 Error de Timbrado SII: {err_dte}")
                         st.stop()
 
-                # 3. Reingresar Stock (únicamente si no es ajuste exclusivo de saldo) y Guardar en Supabase
                 bodega_target = st.session_state.get("bodega_pos_seleccionada", "Bodega Principal")
                 registros_nc_batch = []
 
                 for item in items_a_procesar:
-                    # Si es producto físico, devolver a inventario
                     if item["codigo"] and item["codigo"] != "NC-SALDO" and item["cantidad"] > 0:
                         try:
                             supabase.rpc("actualizar_stock_atomico", {
@@ -395,7 +383,6 @@ def mostrar_modulo_notas_credito(ruta_negocio):
 
                 supabase.table("ventas").insert(registros_nc_batch).execute()
 
-                # 4. Ajustar Cuentas por Cobrar
                 try:
                     res_cxc = (
                         supabase.table("cuentas_por_cobrar")
