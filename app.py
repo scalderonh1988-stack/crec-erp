@@ -5260,19 +5260,22 @@ elif menu == "💰 Módulo de Ventas (POS)":
     df_nube = pd.DataFrame()
     if modo_online:
         try:
-            # Consultamos directamente por el RUT de la empresa sin filtrar por bodega
-            res_pos = supabase.table("productos").select("codigo, descripcion, precio_venta, stock, es_exento, impuesto_especifico").eq("rut_empresa", str(rut_actual)).limit(10000).execute()
+            # Traemos todos los campos (*) para evitar errores de columnas faltantes
+            res_pos = supabase.table("productos").select("*").eq("rut_empresa", str(rut_actual)).limit(10000).execute()
             if res_pos.data:
                 df_nube = pd.DataFrame(res_pos.data)
                 st.session_state.df_nube_pos = df_nube
                 respaldar_catalogo_local(df_nube, rut_actual, bodega_actual)
+            else:
+                st.warning("⚠️ Supabase respondió pero no devolvió productos para este RUT.")
         except Exception as e:
-            st.warning(f"⚠️ Red inestable. Cambiando a memoria local: {e}")
+            st.error(f"❌ Error al conectar con Supabase: {e}")
             df_nube = cargar_catalogo_local(rut_actual, bodega_actual)
             st.session_state.df_nube_pos = df_nube
     else:
         df_nube = cargar_catalogo_local(rut_actual, bodega_actual)
         st.session_state.df_nube_pos = df_nube
+        
     # --- 5. LECTOR DE CÓDIGO DE BARRAS ---
     def procesar_escaneo_pos():
         codigo_leido = st.session_state.get("input_scanner", "").strip()
