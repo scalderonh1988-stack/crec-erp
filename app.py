@@ -4972,7 +4972,7 @@ elif menu == "⚙️ Configuración General":
             except Exception as e:
                 st.error(f"❌ Ocurrió un error al exportar los datos: {e}")
 
-    # ==============================================================================
+    ## ==============================================================================
 # 3. IMPORTAR BASE DE DATOS (A SUPABASE)
 # ==============================================================================
 elif accion == "Importar base de datos":
