@@ -4994,28 +4994,42 @@ elif menu == "⚙️ Configuración General":
                 else:
                     df_nuevo = pd.read_excel(archivo_cargado)
 
-                st.write(f"📋 **Previsualización de datos a cargar ({len(df_nuevo.columns)} columnas):**")
+                st.write(f"📋 **Previsualización de datos a cargar ({len(df_nuevo)} registros, {len(df_nuevo.columns)} columnas):**")
                 st.dataframe(df_nuevo.head())
 
                 if st.button("🚀 Confirmar y Cargar a Supabase", key="btn_confirmar_import_config"):
-                    # 1. Asegurar el tenant_id o rut_empresa
-                    if tenant_id and 'rut_empresa' not in df_nuevo.columns:
-                        df_nuevo['rut_empresa'] = str(tenant_id)
+                    with st.spinner("Procesando y subiendo registros por lotes a la nube..."):
+                        
+                        # 1. Asegurar el tenant_id o rut_empresa
+                        if tenant_id and 'rut_empresa' not in df_nuevo.columns:
+                            df_nuevo['rut_empresa'] = str(tenant_id)
 
-                    # 2. ELIMINAR LA COLUMNA ID SI EXISTE (para que la base de datos la autogenere)
-                    if 'id' in df_nuevo.columns:
-                        df_nuevo = df_nuevo.drop(columns=['id'])
+                        # 2. ELIMINAR LA COLUMNA ID SI EXISTE (para que la base de datos la autogenere)
+                        if 'id' in df_nuevo.columns:
+                            df_nuevo = df_nuevo.drop(columns=['id'])
 
-                    # 3. Limpiar valores nulos para evitar errores en Supabase
-                    registros = df_nuevo.where(pd.notnull(df_nuevo), None).to_dict(orient="records")
+                        # 3. Limpiar valores nulos y NaN para evitar errores en Supabase
+                        df_nuevo = df_nuevo.where(pd.notnull(df_nuevo), None)
+                        registros = df_nuevo.to_dict(orient="records")
 
-                    # 4. Inserción masiva
-                    supabase.table(tabla_destino).upsert(registros).execute()
-                    st.success(f"✅ ¡Base de datos cargada con éxito! Se procesaron {len(registros)} registros en '{tabla_destino}'.")
-                    st.rerun()
+                        # 4. Definir columna de conflicto según la tabla destino
+                        conflict_col = "codigo" if tabla_destino == "productos" else ("rut" if tabla_destino in ["clientes", "proveedores"] else None)
+
+                        # 5. Inserción masiva por lotes (batches de 100) para evitar saturar Supabase
+                        batch_size = 100
+                        total_registros = len(registros)
+                        
+                        for i in range(0, total_registros, batch_size):
+                            batch = registros[i:i + batch_size]
+                            if conflict_col:
+                                supabase.table(tabla_destino).upsert(batch, on_conflict=conflict_col).execute()
+                            else:
+                                supabase.table(tabla_destino).upsert(batch).execute()
+
+                        st.success(f"✅ ¡Base de datos cargada con éxito! Se procesaron {total_registros} registros en '{tabla_destino}' por lotes.")
+                        st.rerun()
             except Exception as e:
                 st.error(f"❌ Ocurrió un error al procesar la importación: {e}")
-
 # ----------------- SECCIÓN VENTAS / POS RÁPIDO (CONECTADO A LA NUBE Y AISLADO / HÍBRIDO OFFLINE) -----------------
 elif menu == "💰 Módulo de Ventas (POS)":
 
