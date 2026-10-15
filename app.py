@@ -2998,11 +2998,11 @@ elif menu == "📊 Dashboard Ejecutivo":
     total_credito_fiscal = credito_fiscal_compras + credito_fiscal_gastos
 
     # ==============================================================================
-    # 5. INVENTARIO Y MARGENES DESDE SUPABASE (VALORIZADO CON IVA DIFERENCIADO)
+    # 5. INVENTARIO Y MARGENES DESDE SUPABASE (VALORIZADO AL COSTO NETO DESGLOSADO)
     # ==============================================================================
-    inversion_inventario_costo_bruto = 0.0
-    inventario_afecto = 0.0
-    inventario_exento = 0.0
+    inventario_neto_afectos = 0.0
+    inventario_costo_exentos = 0.0
+    inversion_inventario_costo_neto_total = 0.0
     total_productos = 0
     margen_promedio = 0.0
 
@@ -3032,17 +3032,15 @@ elif menu == "📊 Dashboard Ejecutivo":
                         else:
                             df_prod['es_exento'] = False
                         
-                        # Factor IVA: 1.0 si es exento (sin IVA), 1.19 si es afecto
-                        df_prod['factor_iva'] = df_prod['es_exento'].apply(lambda x: 1.0 if x else 1.19)
+                        # Cálculo estrictamente al Costo Neto (Costo Unitario x Stock, sin multiplicar por 1.19)
+                        df_prod['valor_neto'] = df_prod['costo_clean'] * df_prod['stock_clean']
                         
-                        # Cálculo individual por producto valorizado
-                        df_prod['valor_total'] = df_prod['costo_clean'] * df_prod['stock_clean'] * df_prod['factor_iva']
+                        # Desglose por tipo de producto
+                        inventario_neto_afectos = float(df_prod[~df_prod['es_exento']]['valor_neto'].sum())
+                        inventario_costo_exentos = float(df_prod[df_prod['es_exento']]['valor_neto'].sum())
                         
-                        inversion_inventario_costo_bruto = float(df_prod['valor_total'].sum())
-                        
-                        # Opcional: Separar subtotales si deseas analizarlos por separado
-                        inventario_afecto = float(df_prod[~df_prod['es_exento']]['valor_total'].sum())
-                        inventario_exento = float(df_prod[df_prod['es_exento']]['valor_total'].sum())
+                        # Total Neto de Inventario
+                        inversion_inventario_costo_neto_total = inventario_neto_afectos + inventario_costo_exentos
                         
                         total_productos = len(df_prod)
 
@@ -3120,20 +3118,27 @@ elif menu == "📊 Dashboard Ejecutivo":
 
     # --- BLOQUE 2: SALUD DE INVENTARIO Y UTILIDAD REAL ---
     st.markdown("### 📈 Inventario, Punto de Equilibrio y Rentabilidad")
-    col_b2_1, col_b2_2, col_b2_3 = st.columns(3)
+    col_b2_1, col_b2_2, col_b2_3, col_b2_4 = st.columns(4)
+    
     with col_b2_1:
         st.metric(
-            label="📦 Inventario Valorizado (Costo Bruto c/IVA)", 
-            value=f"${inversion_inventario_costo_bruto:,.0f}", 
+            label="📦 Inventario Valorizado Neto Total", 
+            value=f"${inversion_inventario_costo_neto_total:,.0f}", 
             delta=f"{total_productos} productos"
         )
     with col_b2_2:
         st.metric(
-            label="⚖️ Punto de Equilibrio Mensual", 
-            value=f"${punto_equilibrio:,.0f}", 
-            help="Monto de venta mínimo necesario para cubrir los costos fijos según tu margen promedio."
+            label="🏷️ Valorizado Neto Productos Afectos", 
+            value=f"${inventario_neto_afectos:,.0f}", 
+            help="Costo neto acumulado de los productos afectos a IVA."
         )
     with col_b2_3:
+        st.metric(
+            label="🔖 Valorizado Costo Productos Exentos", 
+            value=f"${inventario_costo_exentos:,.0f}", 
+            help="Costo total acumulado de los productos exentos de IVA."
+        )
+    with col_b2_4:
         color_delta = "normal" if utilidad_neta_estimada >= 0 else "inverse"
         st.metric(
             label="💼 Utilidad Neta Estimada", 
@@ -3141,7 +3146,6 @@ elif menu == "📊 Dashboard Ejecutivo":
             delta=f"Egresos Totales: ${total_egresos_operativos:,.0f}",
             delta_color=color_delta
         )
-
     st.divider()
 
     # --- BLOQUE 3: SALUD FISCAL E IMPUESTOS (F29) ---
