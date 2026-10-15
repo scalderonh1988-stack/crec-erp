@@ -3123,7 +3123,7 @@ elif menu == "📊 Dashboard Ejecutivo":
         print(f"Error cargando inventario desde la nube: {e}")
 
     # ==============================================================================
-    # 6. CÁLCULOS FINANCIEROS Y FLUJO DE CAJA REAL (ACTUALIZADO)
+    # 6. CÁLCULOS FINANCIEROS Y FLUJO DE CAJA REAL (CORREGIDO)
     # ==============================================================================
     total_ventas_historico = 0.0
     if not df_v.empty:
@@ -3134,18 +3134,23 @@ elif menu == "📊 Dashboard Ejecutivo":
     # Entradas Totales (Ventas + Capital Inyectado)
     total_entradas = total_ventas_historico + float(total_inversion_inicial)
 
-    # --- A. GASTOS EFECTIVAMENTE PAGADOS ---
+    # --- A. GASTOS HISTÓRICOS Y GASTOS PAGADOS ---
+    total_gastos_historico = 0.0
     total_gastos_pagados = 0.0
     if not df_g.empty:
-        col_estado_g = next((c for c in ['estado', 'status'] if c in df_g.columns), None)
-        if col_estado_g:
-            df_g_pag = df_g[df_g[col_estado_g].astype(str).str.strip().str.lower().isin(['pagado', 'pagada', 'ok'])]
-        else:
-            df_g_pag = df_g.copy() # Si no hay columna de estado, se asume pagado al registrarse
+        col_monto_g_h = next((c for c in ['monto', 'total', 'monto_total'] if c in df_g.columns), None)
+        if col_monto_g_h:
+            # Gasto total histórico para reportes generales
+            total_gastos_historico = float(pd.to_numeric(df_g[col_monto_g_h], errors='coerce').fillna(0).sum())
             
-        col_m_g_h = next((c for c in ['monto', 'total', 'monto_total'] if c in df_g_pag.columns), None)
-        if col_m_g_h:
-            total_gastos_pagados = float(pd.to_numeric(df_g_pag[col_m_g_h], errors='coerce').fillna(0).sum())
+            # Filtrar solo gastos efectivamente pagados para la caja
+            col_estado_g = next((c for c in ['estado', 'status'] if c in df_g.columns), None)
+            if col_estado_g:
+                df_g_pag = df_g[df_g[col_estado_g].astype(str).str.strip().str.lower().isin(['pagado', 'pagada', 'ok'])]
+            else:
+                df_g_pag = df_g.copy() # Si no hay columna de estado, se asume pagado
+                
+            total_gastos_pagados = float(pd.to_numeric(df_g_pag[col_monto_g_h], errors='coerce').fillna(0).sum())
 
     # --- B. CUENTAS A PROVEEDORES EFECTIVAMENTE PAGADAS ---
     total_proveedores_pagados = 0.0
@@ -3164,7 +3169,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     except Exception as e:
         print(f"Aviso al cargar cuentas por pagar pagadas: {e}")
 
-    # --- C. COMPRAS DIRECTAS (SI APLICA) ---
+    # --- C. COMPRAS DIRECTAS ---
     total_compras_historico = 0.0
     if not df_c.empty:
         col_monto_c_h = next((c for c in ['costo_total', 'CostoTotal', 'monto_total', 'monto', 'total'] if c in df_c.columns), None)
