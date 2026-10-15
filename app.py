@@ -3484,7 +3484,10 @@ elif menu == "📦 Inventario y Productos":
                             supabase.table("productos").insert(nuevo_producto).execute()
                             st.success(f"✅ Producto creado.")
                         st.rerun()
-                    except Exception as e: st.error(f"❌ Error: {e}")
+                    except Exception as e: 
+                        # ESTO DETENDRÁ LA APP Y MOSTRARÁ EL ERROR REAL EN ROJO
+                        st.error(f"❌ ERROR DETALLADO DE SUPABASE: {e}")
+                        st.stop()
 
     # ==========================================
     # 🚨 PESTAÑA 2: INGREDIENTES / MATERIA PRIMA (NUEVA)
