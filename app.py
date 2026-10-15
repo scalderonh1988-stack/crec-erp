@@ -3123,7 +3123,7 @@ elif menu == "📊 Dashboard Ejecutivo":
         print(f"Error cargando inventario desde la nube: {e}")
 
     # ==============================================================================
-    # 6. CÁLCULOS FINANCIEROS Y FLUJO BRUTO REAL DE CAJA
+    # 6. CÁLCULOS FINANCIEROS Y FLUJO DE CAJA REAL (ACTUALIZADO)
     # ==============================================================================
     total_ventas_historico = 0.0
     if not df_v.empty:
@@ -3131,26 +3131,54 @@ elif menu == "📊 Dashboard Ejecutivo":
         if col_monto_v:
             total_ventas_historico = float(pd.to_numeric(df_v[col_monto_v], errors='coerce').fillna(0).sum())
 
+    # Entradas Totales (Ventas + Capital Inyectado)
     total_entradas = total_ventas_historico + float(total_inversion_inicial)
 
+    # --- A. GASTOS EFECTIVAMENTE PAGADOS ---
+    total_gastos_pagados = 0.0
+    if not df_g.empty:
+        col_estado_g = next((c for c in ['estado', 'status'] if c in df_g.columns), None)
+        if col_estado_g:
+            df_g_pag = df_g[df_g[col_estado_g].astype(str).str.strip().str.lower().isin(['pagado', 'pagada', 'ok'])]
+        else:
+            df_g_pag = df_g.copy() # Si no hay columna de estado, se asume pagado al registrarse
+            
+        col_m_g_h = next((c for c in ['monto', 'total', 'monto_total'] if c in df_g_pag.columns), None)
+        if col_m_g_h:
+            total_gastos_pagados = float(pd.to_numeric(df_g_pag[col_m_g_h], errors='coerce').fillna(0).sum())
+
+    # --- B. CUENTAS A PROVEEDORES EFECTIVAMENTE PAGADAS ---
+    total_proveedores_pagados = 0.0
+    try:
+        res_cpp_pag = supabase.table("cuentas_por_pagar").select("*").in_("estado", ["PAGADO", "PAGADA", "Pagado", "Pagada", "pagado"]).execute()
+        if res_cpp_pag.data:
+            df_cpp_pag = pd.DataFrame(res_cpp_pag.data)
+            if not df_cpp_pag.empty:
+                col_rut_cpp_p = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_cpp_pag.columns), None)
+                if col_rut_cpp_p and tenant_clean:
+                    df_cpp_pag = df_cpp_pag[df_cpp_pag[col_rut_cpp_p].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
+                if not df_cpp_pag.empty:
+                    col_monto_cpp = next((c for c in ['monto', 'total', 'monto_total', 'saldo', 'monto_pagado'] if c in df_cpp_pag.columns), None)
+                    if col_monto_cpp:
+                        total_proveedores_pagados = float(pd.to_numeric(df_cpp_pag[col_monto_cpp], errors='coerce').fillna(0).sum())
+    except Exception as e:
+        print(f"Aviso al cargar cuentas por pagar pagadas: {e}")
+
+    # --- C. COMPRAS DIRECTAS (SI APLICA) ---
     total_compras_historico = 0.0
     if not df_c.empty:
         col_monto_c_h = next((c for c in ['costo_total', 'CostoTotal', 'monto_total', 'monto', 'total'] if c in df_c.columns), None)
         if col_monto_c_h:
             total_compras_historico = float(pd.to_numeric(df_c[col_monto_c_h], errors='coerce').fillna(0).sum())
 
-    total_gastos_historico = 0.0
-    if not df_g.empty:
-        col_monto_g_h = next((c for c in ['monto', 'total', 'monto_total'] if c in df_g.columns), None)
-        if col_monto_g_h:
-            total_gastos_historico = float(pd.to_numeric(df_g[col_monto_g_h], errors='coerce').fillna(0).sum())
+    # Egresos Totales Reales de Caja (Gastos Pagados + Proveedores Pagados + Compras directas)
+    total_egresos_caja = round(total_gastos_pagados + total_proveedores_pagados + total_compras_historico)
+    
+    dinero_estimado_caja = round(total_entradas - total_egresos_caja)
 
     total_compras_historico = round(total_compras_historico)
     total_gastos_historico = round(total_gastos_historico)
     total_ventas_historico = round(total_ventas_historico)
-
-    total_egresos_historico = total_compras_historico + total_gastos_historico
-    dinero_estimado_caja = round(total_entradas - total_egresos_historico)
 
     total_inversion_mercaderia_total = inversion_mercaderia_gastos + compras_totales_periodo
     total_egresos_operativos = costos_fijos + costos_variables
@@ -3180,7 +3208,7 @@ elif menu == "📊 Dashboard Ejecutivo":
             value=f"${dinero_estimado_caja:,.0f}", 
             delta="Superávit de Caja" if dinero_estimado_caja >= 0 else "Déficit de Caja",
             delta_color=color_caja,
-            help="Fórmula Real: (Ventas Históricas + Fondo Inyectado) - (Compras Históricas + Gastos Históricos)."
+            help="Fórmula Real: (Ventas + Capital Inyectado) - (Gastos Pagados + Proveedores Pagados + Compras)."
         )
 
     st.divider()
