@@ -1,32 +1,31 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from supabase import create_client
 
-# --- INICIALIZACIÓN DE SUPABASE PARA EL MÓDULO ---
-try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception:
-    # Si las credenciales están en otro formato, intentamos rescatarlas de la sesión
-    supabase = st.session_state.get("supabase", None)
-
-def mostrar_modulo_cuadratura_diaria(ruta_negocio):
+def mostrar_modulo_cuadratura_diaria(*args, **kwargs):
     st.markdown("### 📒 Cuadratura Diaria y Cuaderno de Caja (Nube)")
     st.markdown("📌 **Control de Caja Inteligente:** Gestiona tus ingresos generales y registra tus cierres directamente en Supabase.")
 
-    # Obtenemos el RUT actual de la sesión de manera segura
+    # 1. Obtener el RUT actual de la sesión de forma segura
     rut_actual = st.session_state.get("negocio_seleccionado")
     if not rut_actual:
         st.error("❌ No se ha identificado el negocio. Por favor, inicia sesión.")
         st.stop()
 
+    # 2. Obtener el cliente de Supabase de forma segura (desde session_state o globales)
+    supabase = st.session_state.get("supabase", None)
     if not supabase:
-        st.error("❌ No se pudo establecer conexión con Supabase en este módulo.")
+        try:
+            # Intento alternativo si está definido de forma global en app.py
+            supabase = globals().get("supabase", None)
+        except Exception:
+            pass
+
+    if not supabase:
+        st.error("❌ No se encontró la conexión activa a Supabase. Verifica tu sesión.")
         st.stop()
 
-    # 1. Inputs de Carga Diaria con números limpios
+    # 3. Inputs de Carga Diaria con números limpios
     fecha_cuat = st.date_input("Fecha de Cuadratura", value=date.today())
     
     st.markdown("#### 💰 Ingresos Generales de Caja")
@@ -107,7 +106,7 @@ def mostrar_modulo_cuadratura_diaria(ruta_negocio):
             except Exception as e:
                 st.error(f"❌ Error al guardar en Supabase: {e}")
 
-    # 2. SECCIÓN DE ACUMULADOS Y REPORTES DESDE LA NUBE
+    # 4. SECCIÓN DE ACUMULADOS Y REPORTES DESDE LA NUBE
     st.markdown("---")
     st.markdown("### 📊 Acumulados y Reportes Progresivos (Nube)")
     
