@@ -1,31 +1,45 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+from supabase import create_client
+
+# --- CONEXIÓN SEGURA A SUPABASE ---
+@st.cache_resource
+def conectar_supabase():
+    try:
+        # Intento 1: Variables planas en secrets.toml
+        if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
+            return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+        # Intento 2: Sección [supabase] en secrets.toml
+        elif "supabase" in st.secrets:
+            sub = st.secrets["supabase"]
+            url = sub.get("SUPABASE_URL") or sub.get("url")
+            key = sub.get("SUPABASE_KEY") or sub.get("key")
+            if url and key:
+                return create_client(url, key)
+    except Exception:
+        pass
+    
+    # Intento 3: Respaldo desde la sesión de la app principal
+    return st.session_state.get("supabase", None)
+
+supabase = conectar_supabase()
 
 def mostrar_modulo_cuadratura_diaria(*args, **kwargs):
     st.markdown("### 📒 Cuadratura Diaria y Cuaderno de Caja (Nube)")
     st.markdown("📌 **Control de Caja Inteligente:** Gestiona tus ingresos generales y registra tus cierres directamente en Supabase.")
 
-    # 1. Obtener el RUT actual de la sesión de forma segura
+    # Obtener el RUT actual de la sesión
     rut_actual = st.session_state.get("negocio_seleccionado")
     if not rut_actual:
         st.error("❌ No se ha identificado el negocio. Por favor, inicia sesión.")
         st.stop()
 
-    # 2. Obtener el cliente de Supabase de forma segura (desde session_state o globales)
-    supabase = st.session_state.get("supabase", None)
     if not supabase:
-        try:
-            # Intento alternativo si está definido de forma global en app.py
-            supabase = globals().get("supabase", None)
-        except Exception:
-            pass
-
-    if not supabase:
-        st.error("❌ No se encontró la conexión activa a Supabase. Verifica tu sesión.")
+        st.error("❌ No se pudo conectar a Supabase. Revisa que tus llaves en `secrets.toml` se llamen `SUPABASE_URL` y `SUPABASE_KEY`.")
         st.stop()
 
-    # 3. Inputs de Carga Diaria con números limpios
+    # 1. Inputs de Carga Diaria con números limpios
     fecha_cuat = st.date_input("Fecha de Cuadratura", value=date.today())
     
     st.markdown("#### 💰 Ingresos Generales de Caja")
@@ -106,7 +120,7 @@ def mostrar_modulo_cuadratura_diaria(*args, **kwargs):
             except Exception as e:
                 st.error(f"❌ Error al guardar en Supabase: {e}")
 
-    # 4. SECCIÓN DE ACUMULADOS Y REPORTES DESDE LA NUBE
+    # 2. SECCIÓN DE ACUMULADOS Y REPORTES DESDE LA NUBE
     st.markdown("---")
     st.markdown("### 📊 Acumulados y Reportes Progresivos (Nube)")
     
