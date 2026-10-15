@@ -2761,8 +2761,50 @@ elif menu == "📊 Dashboard Ejecutivo":
     tenant_clean = limpiar_rut_str(tenant_id)
 
     # ==============================================================================
-    # 0. INVERSIÓN INICIAL / INYECCIONES DE CAPITAL DESDE SUPABASE
+    # 0. CARGA PREVIA DE COSTOS FIJOS Y MÁRGENES (Para el cálculo del Punto de Equilibrio)
     # ==============================================================================
+    costos_fijos_mensual = 0.0
+    try:
+        res_cf = supabase.table("costos_fijos").select("*").eq("activo", True).execute()
+        if res_cf.data:
+            df_cf = pd.DataFrame(res_cf.data)
+            if not df_cf.empty:
+                col_rut_cf = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_cf.columns), None)
+                if col_rut_cf and tenant_clean:
+                    df_cf = df_cf[df_cf[col_rut_cf].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
+                if not df_cf.empty and 'monto' in df_cf.columns:
+                    costos_fijos_mensual = float(pd.to_numeric(df_cf['monto'], errors='coerce').fillna(0).sum())
+    except Exception as e:
+        print(f"Error cargando costos fijos: {e}")
+
+    margen_promedio_val = 40.0 # Valor por defecto si no hay productos
+    try:
+        res_prod_m = supabase.table("productos").select("*").execute()
+        if res_prod_m.data:
+            df_pm = pd.DataFrame(res_prod_m.data)
+            if not df_pm.empty:
+                col_rut_p = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_pm.columns), None)
+                if col_rut_p and tenant_clean:
+                    df_pm_f = df_pm[df_pm[col_rut_p].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
+                    if not df_pm_f.empty:
+                        df_pm = df_pm_f
+                
+                col_c = next((c for c in ['costo', 'costo_unitario', 'precio_costo', 'costo_promedio'] if c in df_pm.columns), None)
+                col_p = next((c for c in ['precio_venta', 'precio', 'precio_unitario', 'pvp'] if c in df_pm.columns), None)
+                if col_c and col_p:
+                    df_pm['c_clean'] = pd.to_numeric(df_pm[col_c], errors='coerce').fillna(0)
+                    df_pm['p_clean'] = pd.to_numeric(df_pm[col_p], errors='coerce').fillna(0)
+                    df_m_calc = df_pm[(df_pm['c_clean'] > 0) & (df_pm['p_clean'] > 0)].copy()
+                    if not df_m_calc.empty:
+                        df_m_calc['m'] = ((df_m_calc['p_clean'] - df_m_calc['c_clean']) / df_m_calc['p_clean']) * 100
+                        margen_promedio_val = float(df_m_calc['m'].mean())
+    except Exception:
+        pass
+
+    pct_margen_decimal = (margen_promedio_val / 100.0) if margen_promedio_val > 0 else 0.40
+    punto_equilibrio_mensual = costos_fijos_mensual / pct_margen_decimal if pct_margen_decimal > 0 else 0.0
+
+    # Inversión inicial
     total_inversion_inicial = 0.0
     try:
         res_iny = supabase.table("inyecciones_capital").select("*").execute()
@@ -2777,7 +2819,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     except Exception as e:
         print(f"Aviso al cargar inyecciones_capital desde Supabase: {e}")
 
-    # 🕒 Selector de Período Temporal e Inyección de Capital
+    # 🕒 Selector de Período Temporal y Punto de Equilibrio Dinámico
     st.markdown("### 🎛️ Configuración Financiera y Filtro Temporal")
     col_f1, col_f2 = st.columns([2, 2])
     with col_f1:
@@ -2785,6 +2827,31 @@ elif menu == "📊 Dashboard Ejecutivo":
             "Selecciona el período a visualizar:",
             options=["Diaria (Hoy)", "Semanal (Últimos 7 días)", "Quincenal (Últimos 15 días)", "Mensual (Últimos 30 días)", "Histórico Completo"],
             index=3
+        )
+        
+        # --- CÁLCULO DINÁMICO ADAPTADO AL PERÍODO SELECCIONADO ---
+        if periodo_seleccionado == "Diaria (Hoy)":
+            factor_periodo = 1 / 30.0
+            label_pe = "⚖️ Punto de Equilibrio (Diario)"
+        elif periodo_seleccionado == "Semanal (Últimos 7 días)":
+            factor_periodo = 7 / 30.0
+            label_pe = "⚖️ Punto de Equilibrio (Semanal - 7 días)"
+        elif periodo_seleccionado == "Quincenal (Últimos 15 días)":
+            factor_periodo = 15 / 30.0
+            label_pe = "⚖️ Punto de Equilibrio (Quincenal - 15 días)"
+        elif periodo_seleccionado == "Mensual (Últimos 30 días)":
+            factor_periodo = 1.0
+            label_pe = "⚖️ Punto de Equilibrio (Mensual)"
+        else:
+            factor_periodo = 1.0
+            label_pe = "⚖️ Punto de Equilibrio (Mensual Base)"
+
+        punto_equilibrio_dinamico = punto_equilibrio_mensual * factor_periodo
+
+        st.metric(
+            label=label_pe,
+            value=f"${punto_equilibrio_dinamico:,.0f}",
+            help="Venta mínima requerida para cubrir los costos fijos en este período según tu margen promedio."
         )
 
     with col_f2:
