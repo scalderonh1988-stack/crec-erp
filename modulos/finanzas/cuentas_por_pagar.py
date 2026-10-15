@@ -72,25 +72,36 @@ def mostrar_modulo_cuentas_por_pagar(ruta_negocio):
 
         st.divider()
         st.markdown("#### 📂 Listado General de Cuentas")
-        st.markdown("Utiliza el botón **'✅ Marcar Pagado'** al lado de cada documento para actualizar su estado de inmediato.")
+        st.markdown("Utiliza el botón **'✅ Marcar Pagado'** para actualizar el estado o **'🗑️ Borrar'** si el registro está duplicado.")
 
         for idx, row in df_cuentas.iterrows():
             estado_actual = str(row.get('estado', 'PENDIENTE')).upper()
             es_pendiente = estado_actual == 'PENDIENTE'
+            id_registro = row.get('id')
 
-            c_info, c_action = st.columns([8, 2])
+            # Reorganizamos en 3 columnas: Información, Acción de Pago, Botón Borrar
+            c_info, c_action, c_delete = st.columns([6, 2, 2])
+            
             with c_info:
-                st.info(f"🏢 **{row.get('proveedor', '')}** | Fac: **{row.get('numero_factura', '')}** | Emisión: {row.get('fecha_emision', '')} | Vence: **{row.get('fecha_vencimiento', '')}** | Monto: **${float(row.get('monto_total', 0)):,.0f}** | Estado: **{estado_actual}**")
+                st.info(f"🏢 **{row.get('proveedor', '')}** | Fac: **{row.get('numero_factura', '')}** | Vence: **{row.get('fecha_vencimiento', '')}** | **${float(row.get('monto_total', 0)):,.0f}** | **{estado_actual}**")
            
             with c_action:
                 if es_pendiente:
-                    if st.button("✅ Marcar Pagado", key=f"pagar_cta_{idx}_{row.get('numero_factura')}", type="primary"):
+                    if st.button("✅ Pagar", key=f"pagar_cta_{idx}_{id_registro}", type="primary"):
                         try:
-                            # Actualizamos el estado a PAGADO en Supabase
-                            supabase.table("cuentas_por_pagar").update({"estado": "PAGADO"}).eq("rut_empresa", str(tenant_id)).eq("id", row.get('id')).execute()
-                            st.success(f"🎉 ¡Factura {row.get('numero_factura', '')} marcada como Pagada!")
+                            supabase.table("cuentas_por_pagar").update({"estado": "PAGADO"}).eq("rut_empresa", str(tenant_id)).eq("id", id_registro).execute()
+                            st.success("🎉 ¡Factura pagada!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al actualizar el pago: {e}")
+                            st.error(f"❌ Error: {e}")
                 else:
                     st.success("✔ Pagado")
+
+            with c_delete:
+                if st.button("🗑️ Borrar", key=f"del_cta_{idx}_{id_registro}"):
+                    try:
+                        supabase.table("cuentas_por_pagar").delete().eq("rut_empresa", str(tenant_id)).eq("id", id_registro).execute()
+                        st.success("🗑️ Registro eliminado.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al borrar: {e}")
