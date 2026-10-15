@@ -2998,9 +2998,11 @@ elif menu == "📊 Dashboard Ejecutivo":
     total_credito_fiscal = credito_fiscal_compras + credito_fiscal_gastos
 
     # ==============================================================================
-    # 5. INVENTARIO Y MARGENES DESDE SUPABASE (VALORIZADO A COSTO BRUTO CON IVA)
+    # 5. INVENTARIO Y MARGENES DESDE SUPABASE (VALORIZADO CON IVA DIFERENCIADO)
     # ==============================================================================
     inversion_inventario_costo_bruto = 0.0
+    inventario_afecto = 0.0
+    inventario_exento = 0.0
     total_productos = 0
     margen_promedio = 0.0
 
@@ -3024,8 +3026,24 @@ elif menu == "📊 Dashboard Ejecutivo":
                         df_prod['costo_clean'] = pd.to_numeric(df_prod[col_costo], errors='coerce').fillna(0)
                         df_prod['stock_clean'] = pd.to_numeric(df_prod[col_stock], errors='coerce').fillna(0)
                         
-                        # Multiplicación por 1.19 para obtener Costo Bruto (con IVA)
-                        inversion_inventario_costo_bruto = float((df_prod['costo_clean'] * df_prod['stock_clean'] * 1.19).sum())
+                        # --- DETECCIÓN DE PRODUCTOS EXENTOS ---
+                        if 'exento' in df_prod.columns:
+                            df_prod['es_exento'] = df_prod['exento'].fillna(False).astype(bool)
+                        else:
+                            df_prod['es_exento'] = False
+                        
+                        # Factor IVA: 1.0 si es exento (sin IVA), 1.19 si es afecto
+                        df_prod['factor_iva'] = df_prod['es_exento'].apply(lambda x: 1.0 if x else 1.19)
+                        
+                        # Cálculo individual por producto valorizado
+                        df_prod['valor_total'] = df_prod['costo_clean'] * df_prod['stock_clean'] * df_prod['factor_iva']
+                        
+                        inversion_inventario_costo_bruto = float(df_prod['valor_total'].sum())
+                        
+                        # Opcional: Separar subtotales si deseas analizarlos por separado
+                        inventario_afecto = float(df_prod[~df_prod['es_exento']]['valor_total'].sum())
+                        inventario_exento = float(df_prod[df_prod['es_exento']]['valor_total'].sum())
+                        
                         total_productos = len(df_prod)
 
                     if col_precio and col_costo:
