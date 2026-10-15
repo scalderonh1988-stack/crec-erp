@@ -3186,7 +3186,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     st.divider()
 
     # --- BLOQUE 2: SALUD DE INVENTARIO Y UTILIDAD REAL ---
-    st.markdown("### 📈 Inventario, Punto de Equilibrio y Rentabilidad")
+    st.markdown("### 📈 Inventario y Rentabilidad")
     col_b2_1, col_b2_2, col_b2_3, col_b2_4 = st.columns(4)
     
     with col_b2_1:
