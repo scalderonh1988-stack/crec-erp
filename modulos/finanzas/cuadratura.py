@@ -1,10 +1,30 @@
-import streamlit as pd
+import streamlit as st
 import pandas as pd
 from datetime import date
+from supabase import create_client
 
-def mostrar_modulo_cuadratura_diaria(ruta_negocio, rut_actual, supabase):
+# --- INICIALIZACIÓN DE SUPABASE PARA EL MÓDULO ---
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception:
+    # Si las credenciales están en otro formato, intentamos rescatarlas de la sesión
+    supabase = st.session_state.get("supabase", None)
+
+def mostrar_modulo_cuadratura_diaria(ruta_negocio):
     st.markdown("### 📒 Cuadratura Diaria y Cuaderno de Caja (Nube)")
     st.markdown("📌 **Control de Caja Inteligente:** Gestiona tus ingresos generales y registra tus cierres directamente en Supabase.")
+
+    # Obtenemos el RUT actual de la sesión de manera segura
+    rut_actual = st.session_state.get("negocio_seleccionado")
+    if not rut_actual:
+        st.error("❌ No se ha identificado el negocio. Por favor, inicia sesión.")
+        st.stop()
+
+    if not supabase:
+        st.error("❌ No se pudo establecer conexión con Supabase en este módulo.")
+        st.stop()
 
     # 1. Inputs de Carga Diaria con números limpios
     fecha_cuat = st.date_input("Fecha de Cuadratura", value=date.today())
