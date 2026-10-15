@@ -1,21 +1,10 @@
-import streamlit as st
+import streamlit as pd
 import pandas as pd
 from datetime import date
-import os
 
-def mostrar_modulo_cuadratura_diaria(ruta_negocio):
-    st.markdown("### 📒 Cuadratura Diaria y Cuaderno de Caja")
-    st.markdown("📌 **Control de Caja Inteligente:** Gestiona tus ingresos generales y controla tus cierres de forma limpia.")
-
-    archivo_cuadratura = os.path.join(ruta_negocio, "Cuadratura_Diaria.xlsx")
-    
-    columnas_requeridas = [
-        'ID', 'Fecha', 'Efectivo', 'Transferencia', 'Debito', 'Cigarros', 'Otros_Ingresos', 
-        'VentaTotal', 'MarkupGeneral', 'MarkupCigarros', 'CostoReposicion', 'UtilidadRetirable', 'Observaciones'
-    ]
-
-    if not os.path.exists(archivo_cuadratura):
-        pd.DataFrame(columns=columnas_requeridas).to_excel(archivo_cuadratura, index=False)
+def mostrar_modulo_cuadratura_diaria(ruta_negocio, rut_actual, supabase):
+    st.markdown("### 📒 Cuadratura Diaria y Cuaderno de Caja (Nube)")
+    st.markdown("📌 **Control de Caja Inteligente:** Gestiona tus ingresos generales y registra tus cierres directamente en Supabase.")
 
     # 1. Inputs de Carga Diaria con números limpios
     fecha_cuat = st.date_input("Fecha de Cuadratura", value=date.today())
@@ -23,15 +12,15 @@ def mostrar_modulo_cuadratura_diaria(ruta_negocio):
     st.markdown("#### 💰 Ingresos Generales de Caja")
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
-        efectivo_c = float(st.number_input("💵 Efectivo ($)", min_value=0, step=1000, value=0, format="%d"))
+        efectivo_c = float(st.number_input("💵 Efectivo ($)", min_value=0.0, step=1000.0, value=0.0, format="%.0f"))
     with col_f2:
-        transferencia_c = float(st.number_input("📱 Transferencias ($)", min_value=0, step=1000, value=0, format="%d"))
+        transferencia_c = float(st.number_input("📱 Transferencias ($)", min_value=0.0, step=1000.0, value=0.0, format="%.0f"))
     with col_f3:
-        debito_c = float(st.number_input("💳 Débito / Tarjetas ($)", min_value=0, step=1000, value=0, format="%d"))
+        debito_c = float(st.number_input("💳 Débito / Tarjetas ($)", min_value=0.0, step=1000.0, value=0.0, format="%.0f"))
 
     col_f4, col_f5 = st.columns(2)
     with col_f4:
-        otros_ingresos_c = float(st.number_input("➕ Otros Ingresos ($)", min_value=0, step=1000, value=0, format="%d"))
+        otros_ingresos_c = float(st.number_input("➕ Otros Ingresos ($)", min_value=0.0, step=1000.0, value=0.0, format="%.0f"))
     with col_f5:
         markup_general = st.number_input("📈 Markup Productos Generales (%)", min_value=1.0, max_value=500.0, value=50.0, step=5.0)
 
@@ -44,7 +33,7 @@ def mostrar_modulo_cuadratura_diaria(ruta_negocio):
         st.markdown("#### 🚬 Control Específico de Cigarrillos")
         col_cig1, col_cig2 = st.columns(2)
         with col_cig1:
-            cigarrillos_c = float(st.number_input("🚬 Venta de Cigarrillos ($)", min_value=0, step=1000, value=0, format="%d"))
+            cigarrillos_c = float(st.number_input("🚬 Venta de Cigarrillos ($)", min_value=0.0, step=1000.0, value=0.0, format="%.0f"))
         with col_cig2:
             markup_cigarros = st.number_input("📉 Markup Específico Cigarrillos (%)", min_value=1.0, max_value=100.0, value=10.0, step=1.0)
 
@@ -70,109 +59,110 @@ def mostrar_modulo_cuadratura_diaria(ruta_negocio):
 
     observaciones_c = st.text_input("📝 Observaciones del Cierre de Caja", value="Cierre normal")
 
-    btn_guardar_cuat = st.button("💾 Guardar Cuadratura y Retiro", type="primary")
+    btn_guardar_cuat = st.button("💾 Guardar Cuadratura en la Nube", type="primary")
 
     if btn_guardar_cuat:
         if venta_total_calculada <= 0:
             st.warning("⚠️ Debes ingresar al menos un monto en los ingresos de caja.")
         else:
-            df_cuat_ant = pd.read_excel(archivo_cuadratura)
-            nuevo_id = str(pd.Timestamp.now().timestamp())
-            
-            nuevo_registro = pd.DataFrame([{
-                'ID': nuevo_id,
-                'Fecha': str(fecha_cuat),
-                'Efectivo': efectivo_c,
-                'Transferencia': transferencia_c,
-                'Debito': debito_c,
-                'Cigarros': cigarrillos_c if aplicar_cigarros else 0.0,
-                'Otros_Ingresos': otros_ingresos_c,
-                'VentaTotal': venta_total_calculada,
-                'MarkupGeneral': markup_general,
-                'MarkupCigarros': markup_cigarros if aplicar_cigarros else 0.0,
-                'CostoReposicion': costo_reposicion_total,
-                'UtilidadRetirable': utilidad_neta_disponible,
-                'Observaciones': observaciones_c
-            }])
-            pd.concat([df_cuat_ant, nuevo_registro], ignore_index=True).to_excel(archivo_cuadratura, index=False)
-            st.success("✅ ¡Cuadratura guardada con éxito!")
-            st.rerun()
+            nuevo_registro = {
+                "rut_empresa": rut_actual,
+                "fecha": str(fecha_cuat),
+                "efectivo": efectivo_c,
+                "transferencia": transferencia_c,
+                "debito": debito_c,
+                "cigarros": cigarrillos_c if aplicar_cigarros else 0.0,
+                "otros_ingresos": otros_ingresos_c,
+                "venta_total": venta_total_calculada,
+                "markup_general": markup_general,
+                "markup_cigarros": markup_cigarros if aplicar_cigarros else 0.0,
+                "costo_reposicion": costo_reposicion_total,
+                "utilidad_retirable": utilidad_neta_disponible,
+                "observaciones": observaciones_c
+            }
+            try:
+                supabase.table("cuadratura_diaria").insert(nuevo_registro).execute()
+                st.success("✅ ¡Cuadratura guardada y sincronizada con la nube con éxito!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error al guardar en Supabase: {e}")
 
-    # 2. SECCIÓN DE ACUMULADOS Y REPORTES PROGRESIVOS
+    # 2. SECCIÓN DE ACUMULADOS Y REPORTES DESDE LA NUBE
     st.markdown("---")
-    st.markdown("### 📊 Acumulados y Reportes Progresivos")
+    st.markdown("### 📊 Acumulados y Reportes Progresivos (Nube)")
     
-    if os.path.exists(archivo_cuadratura):
-        df_cuadratura = pd.read_excel(archivo_cuadratura)
-        if not df_cuadratura.empty:
-            for col in columnas_requeridas:
-                if col not in df_cuadratura.columns:
-                    df_cuadratura[col] = 0.0 if col in ['VentaTotal', 'UtilidadRetirable'] else ""
-            
-            if 'ID' not in df_cuadratura.columns or df_cuadratura['ID'].isna().all():
-                df_cuadratura['ID'] = [str(i) for i in range(len(df_cuadratura))]
+    df_cuadratura = pd.DataFrame()
+    try:
+        res_cuat = supabase.table("cuadratura_diaria").select("*").eq("rut_empresa", rut_actual).execute()
+        if res_cuat.data:
+            df_cuadratura = pd.DataFrame(res_cuat.data)
+    except Exception as e:
+        st.error(f"⚠️ Error cargando cuadraturas desde Supabase: {e}")
 
-            df_cuadratura['Fecha_dt'] = pd.to_datetime(df_cuadratura['Fecha'], errors='coerce')
-            hoy = pd.Timestamp.today().normalize()
+    if not df_cuadratura.empty:
+        df_cuadratura['Fecha_dt'] = pd.to_datetime(df_cuadratura['fecha'], errors='coerce')
+        hoy = pd.Timestamp.today().normalize()
 
-            tab_p1, tab_p2, tab_p3, tab_p4, tab_p5 = st.tabs([
-                "📅 Diario (Selección)", "📈 Semanal", "📊 Quincenal", "📆 Mensual", "📚 Histórico Completo"
-            ])
+        tab_p1, tab_p2, tab_p3, tab_p4, tab_p5 = st.tabs([
+            "📅 Diario (Selección)", "📈 Semanal", "📊 Quincenal", "📆 Mensual", "📚 Histórico Completo"
+        ])
 
-            with tab_p1:
-                st.markdown("#### Detalle del Día Seleccionado")
-                fecha_filtro = st.date_input("Consultar Fecha Específica", value=date.today(), key="filtro_fecha_dia")
-                df_dia = df_cuadratura[df_cuadratura['Fecha_dt'].dt.date == fecha_filtro]
-                if not df_dia.empty:
-                    tot_dia = df_dia['VentaTotal'].sum()
-                    util_dia = df_dia['UtilidadRetirable'].sum()
-                    st.metric("Venta Total del Día", f"${tot_dia:,.2f}")
-                    st.metric("Utilidad Retirable del Día", f"${util_dia:,.2f}")
-                else:
-                    st.info("No hay registros para la fecha seleccionada.")
+        with tab_p1:
+            st.markdown("#### Detalle del Día Seleccionado")
+            fecha_filtro = st.date_input("Consultar Fecha Específica", value=date.today(), key="filtro_fecha_dia")
+            df_dia = df_cuadratura[df_cuadratura['Fecha_dt'].dt.date == fecha_filtro]
+            if not df_dia.empty:
+                tot_dia = df_dia['venta_total'].sum()
+                util_dia = df_dia['utilidad_retirable'].sum()
+                st.metric("Venta Total del Día", f"${tot_dia:,.2f}")
+                st.metric("Utilidad Retirable del Día", f"${util_dia:,.2f}")
+            else:
+                st.info("No hay registros para la fecha seleccionada.")
 
-            with tab_p2:
-                st.markdown("#### Acumulado Últimos 7 Días")
-                inicio_semana = hoy - pd.Timedelta(days=7)
-                df_sem = df_cuadratura[df_cuadratura['Fecha_dt'] >= inicio_semana]
-                st.metric("Venta Acumulada Semana", f"${df_sem['VentaTotal'].sum():,.2f}")
-                st.metric("Utilidad Acumulada Semana", f"${df_sem['UtilidadRetirable'].sum():,.2f}")
+        with tab_p2:
+            st.markdown("#### Acumulado Últimos 7 Días")
+            inicio_semana = hoy - pd.Timedelta(days=7)
+            df_sem = df_cuadratura[df_cuadratura['Fecha_dt'] >= inicio_semana]
+            st.metric("Venta Acumulada Semana", f"${df_sem['venta_total'].sum():,.2f}")
+            st.metric("Utilidad Acumulada Semana", f"${df_sem['utilidad_retirable'].sum():,.2f}")
 
-            with tab_p3:
-                st.markdown("#### Acumulado Últimos 15 Días")
-                inicio_quin = hoy - pd.Timedelta(days=15)
-                df_quin = df_cuadratura[df_cuadratura['Fecha_dt'] >= inicio_quin]
-                st.metric("Venta Acumulada Quincena", f"${df_quin['VentaTotal'].sum():,.2f}")
-                st.metric("Utilidad Acumulada Quincena", f"${df_quin['UtilidadRetirable'].sum():,.2f}")
+        with tab_p3:
+            st.markdown("#### Acumulado Últimos 15 Días")
+            inicio_quin = hoy - pd.Timedelta(days=15)
+            df_quin = df_cuadratura[df_cuadratura['Fecha_dt'] >= inicio_quin]
+            st.metric("Venta Acumulada Quincena", f"${df_quin['venta_total'].sum():,.2f}")
+            st.metric("Utilidad Acumulada Quincena", f"${df_quin['utilidad_retirable'].sum():,.2f}")
 
-            with tab_p4:
-                st.markdown("#### Acumulado Mes en Curso")
-                df_mes = df_cuadratura[(df_cuadratura['Fecha_dt'].dt.month == hoy.month) & (df_cuadratura['Fecha_dt'].dt.year == hoy.year)]
-                st.metric("Venta Acumulada Mes", f"${df_mes['VentaTotal'].sum():,.2f}")
-                st.metric("Utilidad Acumulada Mes", f"${df_mes['UtilidadRetirable'].sum():,.2f}")
+        with tab_p4:
+            st.markdown("#### Acumulado Mes en Curso")
+            df_mes = df_cuadratura[(df_cuadratura['Fecha_dt'].dt.month == hoy.month) & (df_cuadratura['Fecha_dt'].dt.year == hoy.year)]
+            st.metric("Venta Acumulada Mes", f"${df_mes['venta_total'].sum():,.2f}")
+            st.metric("Utilidad Acumulada Mes", f"${df_mes['utilidad_retirable'].sum():,.2f}")
 
-            with tab_p5:
-                st.markdown("#### Historial y Gestión de Registros")
-                for index, row in df_cuadratura.iterrows():
-                    col_h1, col_h2, col_h3, col_h4 = st.columns([2, 3, 3, 1])
-                    with col_h1:
-                        fecha_txt = str(row['Fecha']) if pd.notna(row['Fecha']) else "S/F"
-                        st.markdown(f"**Fecha:** {fecha_txt}")
-                    with col_h2:
-                        v_total = float(row['VentaTotal']) if pd.notna(row['VentaTotal']) else 0.0
-                        st.markdown(f"**Total:** ${v_total:,.2f}")
-                        obs = str(row['Observaciones']) if pd.notna(row['Observaciones']) else "Sin obs"
-                        st.caption(f"Obs: {obs}")
-                    with col_h3:
-                        u_retirable = float(row['UtilidadRetirable']) if pd.notna(row['UtilidadRetirable']) else 0.0
-                        st.markdown(f"**Utilidad:** ${u_retirable:,.2f}")
-                    with col_h4:
-                        row_id = str(row['ID']) if pd.notna(row['ID']) else str(index)
-                        if st.button("🗑️", key=f"del_cuat_{row_id}_{index}"):
-                            df_filtrado = df_cuadratura.drop(index)
-                            df_filtrado.drop(columns=['Fecha_dt'], errors='ignore').to_excel(archivo_cuadratura, index=False)
-                            st.success("🗑️ ¡Registro eliminado con éxito!")
+        with tab_p5:
+            st.markdown("#### Historial y Gestión de Registros")
+            for index, row in df_cuadratura.iterrows():
+                col_h1, col_h2, col_h3, col_h4 = st.columns([2, 3, 3, 1])
+                with col_h1:
+                    fecha_txt = str(row['fecha']) if pd.notna(row['fecha']) else "S/F"
+                    st.markdown(f"**Fecha:** {fecha_txt}")
+                with col_h2:
+                    v_total = float(row['venta_total']) if pd.notna(row['venta_total']) else 0.0
+                    st.markdown(f"**Total:** ${v_total:,.2f}")
+                    obs = str(row['observaciones']) if pd.notna(row['observaciones']) else "Sin obs"
+                    st.caption(f"Obs: {obs}")
+                with col_h3:
+                    u_retirable = float(row['utilidad_retirable']) if pd.notna(row['utilidad_retirable']) else 0.0
+                    st.markdown(f"**Utilidad:** ${u_retirable:,.2f}")
+                with col_h4:
+                    row_id = row.get('id')
+                    if st.button("🗑️", key=f"del_cuat_nube_{row_id}_{index}"):
+                        try:
+                            supabase.table("cuadratura_diaria").delete().eq("id", row_id).execute()
+                            st.success("🗑️ ¡Registro eliminado de la nube con éxito!")
                             st.rerun()
-                    st.divider()
-        else:
-            st.info("ℹ️ No hay registros guardados todavía.")
+                        except Exception as e:
+                            st.error(f"Error al eliminar: {e}")
+                st.divider()
+    else:
+        st.info("ℹ️ Aún no hay registros de cuadratura diarios guardados en la nube para este negocio.")
