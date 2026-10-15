@@ -3123,7 +3123,7 @@ elif menu == "📊 Dashboard Ejecutivo":
         print(f"Error cargando inventario desde la nube: {e}")
 
     # ==============================================================================
-    # 6. CÁLCULOS FINANCIEROS Y FLUJO DE CAJA REAL (CORREGIDO)
+    # 6. CÁLCULOS FINANCIEROS Y FLUJO DE CAJA REAL (BLINDADO)
     # ==============================================================================
     total_ventas_historico = 0.0
     if not df_v.empty:
@@ -3131,28 +3131,44 @@ elif menu == "📊 Dashboard Ejecutivo":
         if col_monto_v:
             total_ventas_historico = float(pd.to_numeric(df_v[col_monto_v], errors='coerce').fillna(0).sum())
 
-    # Entradas Totales (Ventas + Capital Inyectado)
+    # Entradas Totales (Ventas Históricas + Capital Inyectado)
     total_entradas = total_ventas_historico + float(total_inversion_inicial)
 
-    # --- A. GASTOS HISTÓRICOS Y GASTOS PAGADOS ---
+    # --- A. GASTOS HISTÓRICOS REALES (Sin filtros restrictivos que los dejen en 0) ---
     total_gastos_historico = 0.0
-    total_gastos_pagados = 0.0
-    if not df_g.empty:
-        col_monto_g_h = next((c for c in ['monto', 'total', 'monto_total'] if c in df_g.columns), None)
-        if col_monto_g_h:
-            # Gasto total histórico para reportes generales
-            total_gastos_historico = float(pd.to_numeric(df_g[col_monto_g_h], errors='coerce').fillna(0).sum())
+    try:
+        res_g_all = supabase.table("gastos").select("*").execute()
+        if res_g_all.data:
+            df_g_all = pd.DataFrame(res_g_all.data)
+            if not df_g_all.empty and tenant_clean:
+                col_rut_ga = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_g_all.columns), None)
+                if col_rut_ga:
+                    df_g_all = df_g_all[df_g_all[col_rut_ga].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
             
-            # Filtrar solo gastos efectivamente pagados para la caja
-            col_estado_g = next((c for c in ['estado', 'status'] if c in df_g.columns), None)
-            if col_estado_g:
-                df_g_pag = df_g[df_g[col_estado_g].astype(str).str.strip().str.lower().isin(['pagado', 'pagada', 'ok'])]
-            else:
-                df_g_pag = df_g.copy() # Si no hay columna de estado, se asume pagado
-                
-            total_gastos_pagados = float(pd.to_numeric(df_g_pag[col_monto_g_h], errors='coerce').fillna(0).sum())
+            col_mg = next((c for c in ['monto', 'total', 'monto_total'] if c in df_g_all.columns), None)
+            if col_mg and not df_g_all.empty:
+                total_gastos_historico = float(pd.to_numeric(df_g_all[col_mg], errors='coerce').fillna(0).sum())
+    except Exception as e:
+        print(f"Error sumando gastos históricos: {e}")
 
-    # --- B. CUENTAS A PROVEEDORES EFECTIVAMENTE PAGADAS ---
+    # --- B. COMPRAS HISTÓRICAS REALES ---
+    total_compras_historico = 0.0
+    try:
+        res_c_all = supabase.table("compras").select("*").execute()
+        if res_c_all.data:
+            df_c_all = pd.DataFrame(res_c_all.data)
+            if not df_c_all.empty and tenant_clean:
+                col_rut_ca = next((c for c in ['rut_empresa', 'id_negocio', 'rut', 'tenant_id'] if c in df_c_all.columns), None)
+                if col_rut_ca:
+                    df_c_all = df_c_all[df_c_all[col_rut_ca].apply(lambda x: tenant_clean in limpiar_rut_str(x) or limpiar_rut_str(x) in tenant_clean if pd.notna(x) else False)]
+            
+            col_mc = next((c for c in ['costo_total', 'CostoTotal', 'monto_total', 'monto', 'total'] if c in df_c_all.columns), None)
+            if col_mc and not df_c_all.empty:
+                total_compras_historico = float(pd.to_numeric(df_c_all[col_mc], errors='coerce').fillna(0).sum())
+    except Exception as e:
+        print(f"Error sumando compras históricas: {e}")
+
+    # --- C. CUENTAS A PROVEEDORES PAGADAS ---
     total_proveedores_pagados = 0.0
     try:
         res_cpp_pag = supabase.table("cuentas_por_pagar").select("*").in_("estado", ["PAGADO", "PAGADA", "Pagado", "Pagada", "pagado"]).execute()
@@ -3169,15 +3185,8 @@ elif menu == "📊 Dashboard Ejecutivo":
     except Exception as e:
         print(f"Aviso al cargar cuentas por pagar pagadas: {e}")
 
-    # --- C. COMPRAS DIRECTAS ---
-    total_compras_historico = 0.0
-    if not df_c.empty:
-        col_monto_c_h = next((c for c in ['costo_total', 'CostoTotal', 'monto_total', 'monto', 'total'] if c in df_c.columns), None)
-        if col_monto_c_h:
-            total_compras_historico = float(pd.to_numeric(df_c[col_monto_c_h], errors='coerce').fillna(0).sum())
-
-    # Egresos Totales Reales de Caja (Gastos Pagados + Proveedores Pagados + Compras directas)
-    total_egresos_caja = round(total_gastos_pagados + total_proveedores_pagados + total_compras_historico)
+    # Egresos Totales Reales de Caja (Gastos + Compras + Proveedores Pagados)
+    total_egresos_caja = round(total_gastos_historico + total_compras_historico + total_proveedores_pagados)
     
     dinero_estimado_caja = round(total_entradas - total_egresos_caja)
 
