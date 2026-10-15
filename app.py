@@ -3026,16 +3026,18 @@ elif menu == "📊 Dashboard Ejecutivo":
                         df_prod['costo_clean'] = pd.to_numeric(df_prod[col_costo], errors='coerce').fillna(0)
                         df_prod['stock_clean'] = pd.to_numeric(df_prod[col_stock], errors='coerce').fillna(0)
                         
-                        # --- DETECCIÓN DE PRODUCTOS EXENTOS ---
-                        if 'exento' in df_prod.columns:
-                            df_prod['es_exento'] = df_prod['exento'].fillna(False).astype(bool)
+                        # --- DETECCIÓN CORRECTA DE LA COLUMNA 'es_exento' (TEXTO SI/NO) ---
+                        col_ex = next((c for c in ['es_exento', 'exento'] if c in df_prod.columns), None)
+                        if col_ex:
+                            # Convierte a texto, limpia espacios y revisa si dice 'si'
+                            df_prod['es_exento'] = df_prod[col_ex].astype(str).str.strip().str.lower().isin(['si', 'true', '1', 'yes'])
                         else:
                             df_prod['es_exento'] = False
                         
-                        # Cálculo estrictamente al Costo Neto (Costo Unitario x Stock, sin multiplicar por 1.19)
+                        # Cálculo estrictamente al Costo Neto
                         df_prod['valor_neto'] = df_prod['costo_clean'] * df_prod['stock_clean']
                         
-                        # Desglose por tipo de producto
+                        # Desglose correcto por tipo de producto
                         inventario_neto_afectos = float(df_prod[~df_prod['es_exento']]['valor_neto'].sum())
                         inventario_costo_exentos = float(df_prod[df_prod['es_exento']]['valor_neto'].sum())
                         
