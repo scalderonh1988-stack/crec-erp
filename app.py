@@ -3469,25 +3469,31 @@ elif menu == "📦 Inventario y Productos":
                     elif p_neto_calc > 0: p_bruto_calc = p_neto_calc * (1.0 + (iva_final / 100.0))
 
                     nuevo_producto = {
-                        "rut_empresa": rut_actual, "codigo": codigo.strip(), "bodega": bodega_final.strip(' "\''),
-                        "descripcion": descripcion.strip(), "categoria": categoria if categoria != "Ninguna" else None,
-                        "costo": costo, "precio_neto": round(p_neto_calc, 2), "porcentaje_iva": round(iva_final, 2),
-                        "precio_venta": round(p_bruto_calc, 2), "stock": stock, "es_exento": es_exento,
-                        "impuesto_especifico": impuesto_especifico if impuesto_especifico != "Ninguno" else None, "activo": activo
+                        "rut_empresa": rut_actual, 
+                        "codigo": codigo.strip(), 
+                        "bodega": bodega_final.strip(' "\''),
+                        "descripcion": descripcion.strip(), 
+                        "categoria": categoria if categoria != "Ninguna" else None,
+                        "costo": costo, 
+                        "precio_neto": round(p_neto_calc, 2), 
+                        "porcentaje_iva": round(iva_final, 2),
+                        "precio_venta": round(p_bruto_calc, 2), 
+                        "stock": stock, 
+                        "es_exento": es_exento,
+                        "impuesto_especifico": impuesto_especifico if impuesto_especifico != "Ninguno" else None, 
+                        "activo": activo
                     }
                     try:
                         res_check = supabase.table("productos").select("id").eq("rut_empresa", rut_actual).eq("codigo", codigo.strip()).eq("bodega", bodega_final).execute()
                         if res_check.data:
                             supabase.table("productos").update(nuevo_producto).eq("id", res_check.data[0]["id"]).execute()
-                            st.success(f"✅ Producto actualizado.")
+                            st.success(f"✅ Producto actualizado correctamente.")
                         else:
                             supabase.table("productos").insert(nuevo_producto).execute()
-                            st.success(f"✅ Producto creado.")
+                            st.success(f"✅ Producto creado correctamente.")
                         st.rerun()
                     except Exception as e: 
-                        # ESTO DETENDRÁ LA APP Y MOSTRARÁ EL ERROR REAL EN ROJO
                         st.error(f"❌ ERROR DETALLADO DE SUPABASE: {e}")
-                        st.stop()
 
     # ==========================================
     # 🚨 PESTAÑA 2: INGREDIENTES / MATERIA PRIMA (NUEVA)
