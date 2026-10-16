@@ -632,13 +632,14 @@ def generar_guia_pdf(
 
     pdf.set_y(71)
 
-    # --- C. TABLA DE DETALLE ---
+    # --- C. TABLA DE DETALLE (Con Precio Bruto Unitario incluido) ---
     pdf.set_fill_color(235, 238, 242)
     pdf.set_draw_color(180, 185, 195)
     pdf.set_text_color(30, 30, 30)
     pdf.set_font("Arial", "B", 8)
 
-    col_w = [75, 18, 32, 32, 33]
+    # Anchos de columnas ajustados para que sumen exactamente 190mm (ancho útil de la hoja)
+    col_w = [75, 15, 28, 36, 36]
     pdf.cell(col_w[0], 7, " DESCRIPCIÓN", border=1, fill=True)
     pdf.cell(col_w[1], 7, "CANT", border=1, align="C", fill=True)
     pdf.cell(col_w[2], 7, "P. UNIT BRUTO", border=1, align="R", fill=True)
@@ -653,7 +654,9 @@ def generar_guia_pdf(
     for item in carrito:
         producto = str(item.get("Descripción") or item.get("Producto") or "Ítem")
         cantidad = float(item.get("Cantidad", 1))
-        precio_bruto = float(item.get("Precio Unitario") or item.get("Precio_Unitario") or 0)
+        
+        # Rescate del precio unitario bruto desde el ítem
+        precio_bruto = float(item.get("Precio Unitario") or item.get("Precio_Unitario") or item.get("precio_bruto") or 0)
         
         precio_neto = precio_bruto / 1.19
         subtotal_bruto = cantidad * precio_bruto
