@@ -541,7 +541,6 @@ def generar_guia_pdf(
             if img_bytes:
                 img = Image.open(img_bytes)
 
-                # Convertir transparencias PNG/WEBP (RGBA) a fondo blanco RGB
                 if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
                     img = img.convert("RGBA")
                     background = Image.new("RGB", img.size, (255, 255, 255))
@@ -550,7 +549,6 @@ def generar_guia_pdf(
                 else:
                     img = img.convert("RGB")
 
-                # Guardar en un archivo temporal seguro para FPDF
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
                     temp_img_path = tmp_file.name
                     img.save(temp_img_path, format="PNG")
@@ -570,7 +568,7 @@ def generar_guia_pdf(
                     pass
 
     if has_logo:
-        text_x_offset = 40  # Desplaza los datos de la empresa para dar espacio al logo
+        text_x_offset = 40  
 
     # Cuadro Rojo DTE (Derecha)
     pdf.set_draw_color(217, 4, 41)
@@ -632,19 +630,18 @@ def generar_guia_pdf(
 
     pdf.set_y(71)
 
-    # --- C. TABLA DE DETALLE (Con Precio Bruto Unitario incluido) ---
+    # --- C. TABLA DE DETALLE (Solo Descripción, Cant, P. Unit Bruto y Total Bruto) ---
     pdf.set_fill_color(235, 238, 242)
     pdf.set_draw_color(180, 185, 195)
     pdf.set_text_color(30, 30, 30)
-    pdf.set_font("Arial", "B", 8)
+    pdf.set_font("Arial", "B", 8.5)
 
-    # Anchos de columnas ajustados para que sumen exactamente 190mm (ancho útil de la hoja)
-    col_w = [75, 15, 28, 36, 36]
+    # Anchos distribuidos para sumar exactamente 190mm (ancho útil de la página)
+    col_w = [90, 20, 40, 40]
     pdf.cell(col_w[0], 7, " DESCRIPCIÓN", border=1, fill=True)
     pdf.cell(col_w[1], 7, "CANT", border=1, align="C", fill=True)
     pdf.cell(col_w[2], 7, "P. UNIT BRUTO", border=1, align="R", fill=True)
-    pdf.cell(col_w[3], 7, "P. UNIT NETO", border=1, align="R", fill=True)
-    pdf.cell(col_w[4], 7, "TOTAL NETO ", border=1, align="R", fill=True, ln=True)
+    pdf.cell(col_w[3], 7, "TOTAL BRUTO ", border=1, align="R", fill=True, ln=True)
 
     pdf.set_font("Arial", "", 8.5)
     pdf.set_text_color(0, 0, 0)
@@ -655,24 +652,19 @@ def generar_guia_pdf(
         producto = str(item.get("Descripción") or item.get("Producto") or "Ítem")
         cantidad = float(item.get("Cantidad", 1))
         
-        # Rescate del precio unitario bruto desde el ítem
         precio_bruto = float(item.get("Precio Unitario") or item.get("Precio_Unitario") or item.get("precio_bruto") or 0)
-        
-        precio_neto = precio_bruto / 1.19
         subtotal_bruto = cantidad * precio_bruto
-        subtotal_neto = round(subtotal_bruto / 1.19)
 
         total_general_bruto += subtotal_bruto
 
-        pdf.cell(col_w[0], 6.5, f" {producto[:38]}", border="LRB")
+        pdf.cell(col_w[0], 6.5, f" {producto[:50]}", border="LRB")
         pdf.cell(col_w[1], 6.5, f"{cantidad:g}", border="LRB", align="C")
         pdf.cell(col_w[2], 6.5, f"${precio_bruto:,.0f}", border="LRB", align="R")
-        pdf.cell(col_w[3], 6.5, f"${round(precio_neto):,.0f}", border="LRB", align="R")
-        pdf.cell(col_w[4], 6.5, f"${subtotal_neto:,.0f} ", border="LRB", align="R", ln=True)
+        pdf.cell(col_w[3], 6.5, f"${subtotal_bruto:,.0f} ", border="LRB", align="R", ln=True)
 
     pdf.ln(4)
 
-    # --- D. TOTALES ---
+    # --- D. TOTALES (Calculados internamente para el resumen inferior) ---
     tot_neto = round(total_general_bruto / 1.19)
     tot_iva = total_general_bruto - tot_neto
 
