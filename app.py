@@ -636,7 +636,6 @@ def generar_guia_pdf(
     pdf.set_text_color(30, 30, 30)
     pdf.set_font("Arial", "B", 8.5)
 
-    # Anchos distribuidos para sumar exactamente 190mm (ancho útil de la página)
     col_w = [90, 20, 40, 40]
     pdf.cell(col_w[0], 7, " DESCRIPCIÓN", border=1, fill=True)
     pdf.cell(col_w[1], 7, "CANT", border=1, align="C", fill=True)
@@ -664,23 +663,10 @@ def generar_guia_pdf(
 
     pdf.ln(4)
 
-    # --- D. TOTALES (Calculados internamente para el resumen inferior) ---
-    tot_neto = round(total_general_bruto / 1.19)
-    tot_iva = total_general_bruto - tot_neto
-
-    pdf.set_x(110)
-    pdf.set_font("Arial", "B", 9)
-    pdf.set_text_color(50, 50, 50)
-    pdf.cell(50, 6, "SUBTOTAL NETO:", align="R")
-    pdf.cell(40, 6, f"${tot_neto:,.0f} ", align="R", ln=True)
-
-    pdf.set_x(110)
-    pdf.cell(50, 6, "IVA (19%):", align="R")
-    pdf.cell(40, 6, f"${tot_iva:,.0f} ", align="R", ln=True)
-
+    # --- D. TOTALES (Sin subtotales, solo Total General) ---
     pdf.set_draw_color(180, 180, 180)
     pdf.line(140, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(1)
+    pdf.ln(2)
 
     pdf.set_x(110)
     pdf.set_font("Arial", "B", 10.5)
