@@ -5524,6 +5524,14 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
 
+    # --- 💡 VISTA PREVIA DEL PRÓXIMO FOLIO EN TIEMPO REAL ---
+    # Consultamos inmediatamente el folio que le corresponderá según el tipo seleccionado
+    if modo_str == "INTERNO":
+        folio_siguiente_preview = obtener_siguiente_folio_supabase(supabase, rut_actual, tipo_documento)
+        st.info(f"📌 **Próximo Folio Automático ({tipo_documento}):** N° **{folio_siguiente_preview}**")
+    else:
+        st.caption("ℹ️ **Modo Oficial (SII):** El folio definitivo será asignado y retornado por el Servicio de Impuestos Internos al momento de timbrar.")
+
     # --- 7. FACTURAR DESDE GUÍA PREVIA ---
     if tipo_documento == "Factura Electrónica":
         viene_de_guia = st.checkbox("🔗 Facturar desde una Guía de Despacho previa")
