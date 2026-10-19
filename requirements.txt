@@ -6,3 +6,4 @@ fpdf
 Pillow
 plotly
 werkzeug
+google-genai
