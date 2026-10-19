@@ -5166,13 +5166,35 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     DB_LOCAL_NAME = "pos_local_cache.db"
 
-    # --- 🛠️ FUNCIONES AUXILIARES PARA MODO OFFLINE Y EXENTOS ---
+    # --- 🛠️ FUNCIONES AUXILIARES PARA MODO OFFLINE, EXENTOS Y FOLIOS ---
     def evaluar_es_exento(val):
         """Evalúa de forma robusta si un valor representa un producto exento."""
         if isinstance(val, bool): return val
         if isinstance(val, (int, float)): return val == 1
         if isinstance(val, str): return val.lower().strip() in ["true", "si", "sí", "1", "t", "yes"]
         return False
+
+    def obtener_siguiente_folio_supabase(supabase_client, rut_empresa, tipo_doc):
+        """Consulta a Supabase el último folio generado para esta empresa y tipo de documento, y retorna el siguiente."""
+        try:
+            res = supabase_client.table("ventas") \
+                .select("folio") \
+                .eq("rut_empresa", str(rut_empresa).strip()) \
+                .eq("documento", str(tipo_doc).strip()) \
+                .order("id", desc=True) \
+                .limit(1) \
+                .execute()
+            
+            if res.data and len(res.data) > 0:
+                ultimo = res.data[0].get("folio")
+                if ultimo:
+                    digitos = "".join(filter(str.isdigit, str(ultimo)))
+                    if digitos.isdigit():
+                        return str(int(digitos) + 1)
+            return "1"
+        except Exception as e:
+            print(f"Error obteniendo correlativo de folio: {e}")
+            return datetime.now().strftime("%H%M%S")
 
     def init_db_local_pos():
         """Inicializa las tablas locales en SQLite si no existen."""
@@ -5869,8 +5891,9 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                     st.session_state.procesando_emision_dte = False
                                     st.stop()
 
+                        # 🔄 Consulta automática del siguiente folio en Supabase si no es oficial o no vino folio
                         if not numero_folio_actual:
-                            numero_folio_actual = datetime.now().strftime("%H%M%S")
+                            numero_folio_actual = obtener_siguiente_folio_supabase(supabase, rut_actual, tipo_documento)
 
                         transaccion_id_actual = str(numero_folio_actual)
                         lineas_productos = ""
@@ -5894,10 +5917,8 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             cantidad_vendida = float(item["Cantidad"])
 
                             # --- ⚡ ACTUALIZACIÓN DE INVENTARIO EN TIEMPO REAL ---
-                            # 1. Actualizar en caché local SQLite inmediatamente
                             actualizar_stock_local(rut_actual, bodega_actual, codigo_vendido, cantidad_vendida)
 
-                            # 2. Actualizar en Supabase (si hay conexión y no es guía previa)
                             if not es_offline_para_cobro and not item.get("es_guia_previa", False):
                                 try:
                                     res_receta = supabase.table("recetas").select("*").eq("rut_empresa", str(rut_actual)).eq("codigo_producto_final", codigo_vendido).execute()
@@ -5948,7 +5969,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "xml_url": xml_url_dte
                             })
 
-                        # Registrar venta en Supabase o cola offline
                         if not es_offline_para_cobro:
                             try:
                                 res_venta = supabase.table("ventas").insert(registros_ventas_batch).execute()
@@ -5959,7 +5979,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         else:
                             guardar_venta_offline_db(rut_actual, caja_actual, tipo_documento, cliente_nombre, total_venta, forma_pago, modo_str, st.session_state.carrito_ventas)
 
-                        # Registrar en Cuentas por Cobrar si es Crédito
                         if forma_pago in ["Crédito", "Consignación"] and not es_offline_para_cobro:
                             try:
                                 supabase.table("cuentas_por_cobrar").insert({
@@ -5976,7 +5995,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             except Exception as e:
                                 print(f"Error registrando CxC: {e}")
 
-                        # Actualizar DataFrame en sesión para refrescar la vista al volver
                         df_actualizado = cargar_catalogo_local(rut_actual, bodega_actual)
                         st.session_state.df_nube_pos = df_actualizado
 
