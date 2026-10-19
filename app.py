@@ -17,6 +17,7 @@ import plotly.express as px
 from fpdf import FPDF
 from supabase import Client, create_client
 from werkzeug.security import generate_password_hash
+from google import genai
 
 from gestor_licencia import guardar_licencia_online, validar_licencia_offline
 
@@ -3839,7 +3840,12 @@ elif menu == "📈 Informes y Movimientos (Kardex)":
     with tab_inf2:
         st.markdown("### 🛒 Registro de Entradas y Compras (Nube)")
         try:
-            res_compras_nube = supabase.table("compras").select("*").execute()
+            # 1. Obtenemos el negocio seleccionado actualmente en la sesión
+            rut_actual = st.session_state.get("negocio_seleccionado")
+            
+            # 2. Consultamos a Supabase filtrando exclusivamente por este negocio
+            res_compras_nube = supabase.table("compras").select("*").eq("id_negocio", rut_actual).execute()
+            
             if res_compras_nube.data:
                 df_c = pd.DataFrame(res_compras_nube.data)
                 st.dataframe(df_c, use_container_width=True)
