@@ -5531,7 +5531,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
     modo_str = "INTERNO" if "Interno" in modo_operacion else "OFICIAL"
 
     # --- 💡 VISTA PREVIA DEL PRÓXIMO FOLIO EN TIEMPO REAL ---
-    # Consultamos inmediatamente el folio que le corresponderá según el tipo seleccionado
     if modo_str == "INTERNO":
         folio_siguiente_preview = obtener_siguiente_folio_supabase(supabase, rut_actual, tipo_documento)
         st.info(f"📌 **Próximo Folio Automático ({tipo_documento}):** N° **{folio_siguiente_preview}**")
@@ -5711,7 +5710,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
             with col_tr3: comuna_receptor = st.text_input("Comuna:", value=comuna_receptor)
 
     # =========================================================================
-    # --- VISTA 1: PANTALLA DE ÉXITO (PDF Y RECIBO TÉRMICO DISPONIBLES) ---
+    # --- VISTA 1: PANTALLA DE ÉXITO ---
     # =========================================================================
     if st.session_state.ultimo_recibo is not None:
         st.success("🎉 ¡Transacción completada y procesada con éxito!")
@@ -5738,21 +5737,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
         cfg_ticket_actual = st.session_state.get("config_ticket", {})
         formato_impresion = cfg_ticket_actual.get("formato_impresion", "80mm (Térmica Estándar)")
-
-        if "58mm" in formato_impresion:
-            separador, linea_guion, ancho_max = "================================", "--------------------------------", 32
-        elif "80mm" in formato_impresion:
-            separador, linea_guion, ancho_max = "==========================================", "------------------------------------------", 42
-        else:
-            separador, linea_guion, ancho_max = "==================================================", "--------------------------------------------------", 55
-
-        lineas_productos_fmt = ""
-        for item in items_a_mostrar:
-            cant = int(item['Cantidad']) if float(item['Cantidad']).is_integer() else item['Cantidad']
-            ex_tag = " (EX)" if evaluar_es_exento(item.get('Es Exento', False)) else ""
-            desc = (str(item['Descripción']) + ex_tag)[:(ancho_max - 12)].ljust(ancho_max - 12)
-            sub = f"${item['Subtotal']:,.0f}"
-            lineas_productos_fmt += f"{cant}x {desc} {sub}\n"
 
         mostrar_documento_unificado(
             tipo_documento=tipo_documento,
@@ -5905,12 +5889,10 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                     st.session_state.procesando_emision_dte = False
                                     st.stop()
 
-                        # 🔄 Consulta automática del siguiente folio en Supabase si no es oficial o no vino folio
                         if not numero_folio_actual:
                             numero_folio_actual = obtener_siguiente_folio_supabase(supabase, rut_actual, tipo_documento)
 
                         transaccion_id_actual = str(numero_folio_actual)
-                        lineas_productos = ""
                         
                         folio_origen = st.session_state.get("folio_guia_origen")
                         if folio_origen and tipo_documento == "Factura Electrónica" and not es_offline_para_cobro:
@@ -5920,17 +5902,12 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             except Exception:
                                 pass 
                         
-                        total_neto_ticket, total_iva_ticket = 0.0, 0.0
                         registros_ventas_batch = []
 
                         for item in st.session_state.carrito_ventas:
-                            ex_tag_txt = " (EX)" if evaluar_es_exento(item.get('Es Exento', False)) else ""
-                            lineas_productos += f"- {item['Descripción']}{ex_tag_txt} (x{int(item['Cantidad'])}) ... ${item['Subtotal']:,.2f}\n"
-                            
                             codigo_vendido = str(item["Código"])
                             cantidad_vendida = float(item["Cantidad"])
 
-                            # --- ⚡ ACTUALIZACIÓN DE INVENTARIO EN TIEMPO REAL ---
                             actualizar_stock_local(rut_actual, bodega_actual, codigo_vendido, cantidad_vendida)
 
                             if not es_offline_para_cobro and not item.get("es_guia_previa", False):
@@ -5959,9 +5936,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             monto_bruto = float(item["Subtotal"])
                             neto_calc = monto_bruto if evaluar_es_exento(item.get("Es Exento", False)) else monto_bruto / 1.19
                             iva_calc = 0.0 if evaluar_es_exento(item.get("Es Exento", False)) else monto_bruto - neto_calc
-
-                            total_neto_ticket += neto_calc
-                            total_iva_ticket += iva_calc
 
                             registros_ventas_batch.append({
                                 "folio": transaccion_id_actual,
@@ -6043,16 +6017,17 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 )
 
             opciones_productos = ["-- Selecciona o busca un producto --"] + [f"{row[col_cod]} - {row[col_desc]} (Stock: {row.get(col_stock, 0)})" for idx, row in df_nube.iterrows()]
-            prod_sugerido_pos_idx = 0
-
+            
             producto_seleccionado = st.selectbox(
                 "O selecciona manualmente el producto:",
                 options=opciones_productos,
-                index=prod_sugerido_pos_idx,
                 key="selectbox_producto_venta"
             )
         
-            if producto_seleccionado != st.session_state.ultimo_prod_sel:
+            # Identificador único del producto seleccionado para limpiar inputs de forma dinámica
+            id_prod_actual = producto_seleccionado.split(" - ")[0] if producto_seleccionado != "-- Selecciona un producto --" else "default"
+
+            if producto_seleccionado != st.session_state.get("ultimo_prod_sel", ""):
                 st.session_state.ultimo_prod_sel = producto_seleccionado
                 if producto_seleccionado != "-- Selecciona o busca un producto --":
                     c_buscado = producto_seleccionado.split(" - ")[0]
@@ -6062,12 +6037,13 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 else:
                     st.session_state.precio_actual_input = 0.0
 
-            with st.form("form_agregar_item"):
+            # 🛠️ CORRECCIÓN: Usar una key dinámica en el formulario y limpiar estados
+            with st.form(key=f"form_agregar_item_{id_prod_actual}"):
                 col_cant, col_precio_input = st.columns(2)
                 with col_cant:
-                    cantidad_vendida = st.number_input("Cantidad", min_value=1.0, step=1.0, value=1.0, format="%.2f")
+                    cantidad_vendida = st.number_input("Cantidad", min_value=0.01, step=1.0, value=1.0, format="%.2f", key=f"cant_prod_{id_prod_actual}")
                 with col_precio_input:
-                    precio_venta = st.number_input("Precio Unitario ($)", min_value=0.0, step=1.0, value=float(st.session_state.precio_actual_input))
+                    precio_venta = st.number_input("Precio Unitario ($)", min_value=0.0, step=1.0, value=float(st.session_state.precio_actual_input), key=f"precio_prod_{id_prod_actual}")
 
                 btn_agregar = st.form_submit_button("➕ Agregar al Carrito de Venta")
 
@@ -6087,7 +6063,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             stock_disponible = float(fila[col_stock] or 0.0)
                             es_exento = evaluar_es_exento(fila.get("es_exento", False))
                         
-                        unidades_en_carrito = sum(item["Cantidad"] for item in st.session_state.carrito_ventas if item["Código"] == c_buscado)
+                        unidades_en_carrito = sum(item["Cantidad"] for item in st.session_state.carrito_ventas if str(item["Código"]) == str(c_buscado))
                         total_intentado = unidades_en_carrito + float(cantidad_vendida)
 
                         controlar_stock = "Estricto" in st.session_state.get("radio_modo_inventario", "Estricto")
@@ -6095,16 +6071,30 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         if controlar_stock and total_intentado > stock_disponible:
                             st.error(f"🚨 **¡Inventario Insuficiente en {bodega_actual}!** Stock disponible: {stock_disponible:,.2f}")
                         else:
-                            st.session_state.carrito_ventas.append({
-                                "Código": c_buscado,
-                                "Descripción": producto_seleccionado.split(" - ")[1].split(" (Stock:")[0],
-                                "Cantidad": float(cantidad_vendida),
-                                "Precio Unitario": float(precio_venta),
-                                "Subtotal": float(cantidad_vendida) * float(precio_venta),
-                                "Es Exento": es_exento,
-                                "Tasa ILA": tasa_ila_item,
-                                "es_guia_previa": False
-                            })
+                            nombre_desc = producto_seleccionado.split(" - ")[1].split(" (Stock:")[0]
+                            
+                            # 🛠️ CORRECCIÓN DE DUPLICACIÓN: Si ya está en el carrito, sumar cantidad en lugar de duplicar fila
+                            encontrado_en_carrito = False
+                            for item in st.session_state.carrito_ventas:
+                                if str(item["Código"]) == str(c_buscado):
+                                    item["Cantidad"] += float(cantidad_vendida)
+                                    item["Precio Unitario"] = float(precio_venta)
+                                    item["Subtotal"] = item["Cantidad"] * float(precio_venta)
+                                    encontrado_en_carrito = True
+                                    break
+                            
+                            if not encontrado_en_carrito:
+                                st.session_state.carrito_ventas.append({
+                                    "Código": c_buscado,
+                                    "Descripción": nombre_desc,
+                                    "Cantidad": float(cantidad_vendida),
+                                    "Precio Unitario": float(precio_venta),
+                                    "Subtotal": float(cantidad_vendida) * float(precio_venta),
+                                    "Es Exento": es_exento,
+                                    "Tasa ILA": tasa_ila_item,
+                                    "es_guia_previa": False
+                                })
+                            st.success(f"✔️ Agregado: {nombre_desc}")
                             st.rerun()
         else:
             st.info(f"ℹ️ Aún no hay productos registrados en {bodega_actual}.")
