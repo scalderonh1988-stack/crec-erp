@@ -2375,8 +2375,8 @@ if menu == "🏠 Home / Bienvenida":
 # --- 9. RENDERIZADO DE MÓDULOS DE INVENTARIO Y REGISTROS ---
 elif menu == "📦 Inventario y Productos":
     mostrar_encabezado_con_home("📦 Administración de Inventario")
+    tab_inv1, tab_inv2, tab_inv3, tab_inv4, tab_inv5 = st.tabs(["📦 Productos", "👥 Clientes", "🚚 Proveedores", "🏢 Bodegas y Sucursales", "👨‍💼 Vendedores"])
     
-    tab_inv1, tab_inv2, tab_inv3, tab_inv4 = st.tabs(["📦 Productos", "👥 Clientes", "🚚 Proveedores", "🏢 Bodegas y Sucursales"])
     
     # ---------------------------------------------------------
     # TAB 1: PRODUCTOS
@@ -2698,7 +2698,56 @@ elif menu == "📦 Inventario y Productos":
                         st.success(f"✅ ¡Bodega '{nombre_bodega}' creada con éxito!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar en Supabase: {e}")     
+                        st.error(f"❌ Error al guardar en Supabase: {e}")    
+# ---------------------------------------------------------
+    # TAB 5: VENDEDORES (NUEVO)
+    # ---------------------------------------------------------
+    with tab_inv5:  # Recuerda expandir las st.tabs con 5 elementos arriba: ["📦 Productos", "👥 Clientes", "🚚 Proveedores", "🏢 Bodegas y Sucursales", "👨‍💼 Vendedores"]
+        st.markdown("### 👨‍💼 Gestión de Vendedores y Comisiones")
+        st.info("💡 Registra a los vendedores de tu local para asociarlos a las ventas y calcular comisiones.")
+        
+        df_vendedores = pd.DataFrame()
+        rut_act_str = str(rut_actual).strip()
+
+        try:
+            res_vendedores = supabase.table("vendedores").select("*").eq("rut_empresa", rut_act_str).execute()
+            if res_vendedores.data:
+                df_vendedores = pd.DataFrame(res_vendedores.data)
+                st.dataframe(df_vendedores, use_container_width=True)
+            else:
+                st.info("ℹ️ No hay vendedores registrados para este negocio aún.")
+        except Exception as e:
+            st.error(f"⚠️ Error cargando vendedores desde la nube: {e}")
+
+        with st.form("form_nuevo_vendedor", clear_on_submit=True):
+            st.markdown("##### Registrar Nuevo Vendedor")
+            col_v1, col_v2 = st.columns(2)
+            with col_v1:
+                nombre_vendedor = st.text_input("Nombre Completo *", placeholder="Ej: Carlos Pérez")
+                rut_vendedor = st.text_input("RUT / Identificación *", placeholder="Ej: 12.345.678-9")
+            with col_v2:
+                comision_vendedor = st.number_input("% Comisión por Venta", min_value=0.0, max_value=100.0, value=0.0, step=0.5)
+                telefono_vendedor = st.text_input("Teléfono de Contacto", placeholder="Opcional")
+            
+            btn_g_vendedor = st.form_submit_button("💾 Guardar Vendedor")
+            
+            if btn_g_vendedor:
+                if not nombre_vendedor or not rut_vendedor:
+                    st.warning("⚠️ El nombre y el RUT del vendedor son obligatorios.")
+                else:
+                    nuevo_vendedor_data = {
+                        "rut_empresa": rut_act_str,
+                        "rut": rut_vendedor.strip(),
+                        "nombre": nombre_vendedor.strip(),
+                        "comision": float(comision_vendedor),
+                        "telefono": telefono_vendedor.strip()
+                    }
+                    try:
+                        supabase.table("vendedores").insert(nuevo_vendedor_data).execute()
+                        st.success(f"✅ ¡Vendedor '{nombre_vendedor}' registrado con éxito!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar en Supabase: {e}")                        
 
 elif menu == "📚 Historial de Ventas":
     mostrar_modulo_historial_ventas(ruta_negocio)                    
@@ -5591,7 +5640,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         st.warning("⚠️ Ingresa un folio válido.")
     st.markdown("---")
 
-    # --- 8. SELECCIÓN DE CLIENTE Y DATOS TRIBUTARIOS ---
+    # --- 8. SELECCIÓN DE CLIENTE, VENDEDOR Y DATOS TRIBUTARIOS ---
     cliente_nombre, cliente_rut = "", ""
     giro_receptor, dir_receptor, comuna_receptor = "Sin Giro", "Santiago", "Santiago"
     df_clientes_pos = pd.DataFrame()
@@ -5647,7 +5696,23 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 idx_cliente = i
                 break
 
-    cliente_elegido = st.selectbox("👤 Selecciona o asigna un cliente:", lista_clientes, index=idx_cliente)
+    # Dividir pantalla para Cliente y Vendedor
+    col_cv1, col_cv2 = st.columns(2)
+    with col_cv1:
+        cliente_elegido = st.selectbox("👤 Selecciona o asigna un cliente:", lista_clientes, index=idx_cliente)
+
+    with col_cv2:
+        # --- 👨‍💼 CARGAR VENDEDORES DISPONIBLES ---
+        lista_vendedores = ["Sin Vendedor Asignado"]
+        if modo_online:
+            try:
+                res_vend_pos = supabase.table("vendedores").select("nombre, rut").eq("rut_empresa", str(rut_actual)).execute()
+                if res_vend_pos.data:
+                    for v in res_vend_pos.data:
+                        lista_vendedores.append(f"{v.get('nombre')} ({v.get('rut')})")
+            except Exception:
+                pass
+        vendedor_seleccionado = st.selectbox("👨‍💼 Vendedor Responsable de la Venta:", options=lista_vendedores)
 
     if cliente_elegido and cliente_elegido != "-- Selecciona un cliente (Opcional / Requerido para Crédito y Factura) --" and " (" in cliente_elegido:
         cliente_nombre = cliente_elegido.split(" (")[0]
@@ -5944,6 +6009,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "caja": caja_actual, 
                                 "documento": tipo_documento,
                                 "cliente": cliente_nombre if cliente_nombre else "Cliente General",
+                                "vendedor": vendedor_seleccionado, # <--- ¡Vendedor guardado en Supabase!
                                 "codigo_producto": codigo_vendido, 
                                 "detalle": str(item["Descripción"]),
                                 "cantidad": cantidad_vendida, 
