@@ -723,7 +723,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
     folios_existentes = set()
 
     try:
-        # Traer folios reales que existen actualmente en la tabla 'ventas' (evita registros huérfanos)
         res_ventas = supabase.table("ventas").select("folio").eq("rut_empresa", rut_actual).execute()
         if not res_ventas.data:
             res_ventas = supabase.table("ventas").select("folio").eq("rut_empresa", rut_actual.replace(".", "")).execute()
@@ -731,12 +730,10 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         if res_ventas.data:
             folios_existentes = {limpiar_folio_str(v.get("folio")) for v in res_ventas.data if v.get("folio")}
 
-        # Consultar la tabla de cuentas por cobrar
         res_cxc = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual).execute()
         if res_cxc.data:
             df_cxp = pd.DataFrame(res_cxc.data)
         else:
-            # Reintento de respaldo sin puntos por inconsistencias de formato de RUT
             res_cxc_alt = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual.replace(".", "")).execute()
             if res_cxc_alt.data:
                 df_cxp = pd.DataFrame(res_cxc_alt.data)
@@ -749,15 +746,12 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         df_cxp["monto_total"] = pd.to_numeric(df_cxp["monto_total"], errors="coerce").fillna(0.0)
         df_cxp["monto_abonado"] = pd.to_numeric(df_cxp.get("monto_abonado", 0.0), errors="coerce").fillna(0.0)
         
-        # Limpieza de folios para cruce exacto
         df_cxp["folio_venta_limpio"] = df_cxp["folio_venta"].apply(limpiar_folio_str)
         
-        # Filtro insensible a mayúsculas/género ("pagado", "pagada", "anulado", "anulada")
         estados_invalidos = ["pagada", "pagado", "anulada", "anulado"]
         condicion_estado = ~df_cxp["estado"].astype(str).str.strip().str.lower().isin(estados_invalidos)
-        condicion_saldo = df_cxp["saldo_pendiente"] != 0  # Muestra deudas (>0) y Saldos a Favor (<0)
+        condicion_saldo = df_cxp["saldo_pendiente"] != 0  
         
-        # Filtro estricto: el folio de la venta DEBE existir en la tabla 'ventas'
         if folios_existentes:
             condicion_folio_real = df_cxp["folio_venta_limpio"].isin(folios_existentes)
             df_cxp = df_cxp[condicion_estado & condicion_saldo & condicion_folio_real].copy()
@@ -803,14 +797,12 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         
         st.dataframe(df_display, use_container_width=True)
         
-        # Métricas principales
         total_pendiente = df_filtrado["saldo_pendiente"].sum()
         st.metric(label="💰 Total Dinero en la Calle (Por Cobrar)", value=f"${total_pendiente:,.2f}")
         
         st.divider()
-        st.markdown("### 💳 Registrar Abono o Pago")
+        st.markdown("### 💳 Registrar Abono, Pago o Prórroga")
         
-        # 6. Lógica de abonos y reingresos
         deudas_opciones = df_filtrado.copy() if not df_filtrado.empty else df_cxp.copy()
         
         if not deudas_opciones.empty:
@@ -821,7 +813,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             )
             opciones_deuda = deudas_opciones["etiqueta"].tolist()
             
-            deuda_seleccionada = st.selectbox("📌 Selecciona el documento/venta a abonar:", options=opciones_deuda)
+            deuda_seleccionada = st.selectbox("📌 Selecciona el documento/venta:", options=opciones_deuda)
             
             folio_seleccionado = limpiar_folio_str(deuda_seleccionada.split(" | ")[0].replace("Folio: ", ""))
             fila_deuda = deudas_opciones[deudas_opciones["folio_venta_limpio"] == folio_seleccionado].iloc[0]
@@ -829,8 +821,52 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             saldo_actual = float(fila_deuda["saldo_pendiente"])
             monto_abonado_actual = float(fila_deuda.get("monto_abonado", 0.0))
             id_deuda = fila_deuda["id"]
+            rut_cliente_actual = str(fila_deuda.get("rut_cliente", "")).strip()
+            nombre_cliente_actual = str(fila_deuda.get("cliente", "")).strip()
             
-            # --- CONSULTAR DETALLE DE VENTA PARA DETECTAR CONSIGNACIONES ---
+            # --- SEPARAR NETO E IVA (FUNCIONALIDAD OBLIGATORIA / TRIBUTARIA) ---
+            st.markdown("---")
+            st.markdown("#### 🏛️ Desglose Tributario (Neto e IVA)")
+            # Estimación estándar 19% IVA (Neto = Total / 1.19, IVA = Total - Neto)
+            iva_estimado = round(saldo_actual - (saldo_actual / 1.19), 2)
+            neto_estimado = round(saldo_actual / 1.19, 2)
+            
+            col_iva1, col_iva2, col_iva3 = st.columns(3)
+            col_iva1.metric("Monto Total Pendiente", f"${saldo_actual:,.2f}")
+            col_iva2.metric("Valor Neto Aprox.", f"${neto_estimado:,.2f}")
+            col_iva3.metric("IVA Obligatorio (19%)", f"${iva_estimado:,.2f}")
+            
+            exigir_solo_iva = st.checkbox("📌 Marcar si la empresa exige/acuerda pagar obligatoriamente el IVA de este saldo ahora", key=f"ch_iva_{folio_seleccionado}")
+            monto_minimo_cobro = iva_estimado if exigir_solo_iva else 0.0
+            if exigir_solo_iva:
+                st.info(f"ℹ️ Con esta opción activa, el sistema validará que el abono cubra al menos el IVA obligatorio de **${iva_estimado:,.2f}**.")
+
+            # --- GESTIÓN DE PRÓRROGAS ---
+            with st.expander("⏳ Solicitar / Asignar Prórroga de Vencimiento"):
+                col_pr1, col_pr2 = st.columns(2)
+                with col_pr1:
+                    dias_prorroga = st.number_input("Días adicionales de prórroga:", min_value=1, value=15, step=1, key=f"dias_pr_{folio_seleccionado}")
+                with col_pr2:
+                    st.write("")
+                    st.write("")
+                    btn_aplicar_prorroga = st.button("📅 Extender Vencimiento", key=f"btn_prorr_{folio_seleccionado}")
+                
+                if btn_aplicar_prorroga:
+                    try:
+                        venc_actual_str = fila_deuda.get("fecha_vencimiento")
+                        base_fecha = pd.to_datetime(venc_actual_str).date() if pd.notnull(venc_actual_str) else date.today()
+                        nueva_fecha_venc = base_fecha + timedelta(days=int(dias_prorroga))
+                        
+                        supabase.table("cuentas_por_cobrar").update({
+                            "fecha_vencimiento": nueva_fecha_venc.strftime("%Y-%m-%d")
+                        }).eq("id", id_deuda).execute()
+                        
+                        st.success(f"✅ Prórroga aplicada con éxito. Nuevo vencimiento para el Folio {folio_seleccionado}: **{nueva_fecha_venc.strftime('%Y-%m-%d')}**")
+                        st.rerun()
+                    except Exception as err_pr:
+                        st.error(f"❌ Error al aplicar prórroga: {err_pr}")
+
+            # --- CONSULTAR DETALLE DE VENTA PARA CONSIGNACIONES ---
             items_venta = []
             es_consignacion = False
             try:
@@ -853,7 +889,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             except Exception as e:
                 st.warning(f"⚠️ No se pudo obtener el detalle de la venta: {e}")
 
-            # --- REGISTRO DE ABONO EN DINERO (BASE USD / ALTERNATIVA CLP) ---
+            # --- REGISTRO DE ABONO EN DINERO ---
             texto_sesion_completo = " ".join([f"{k} {v}" for k, v in st.session_state.items()]).upper()
             texto_ruta = str(ruta_negocio).upper()
             
@@ -865,7 +901,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
 
             if es_multimoneda:
                 dolar_hoy = obtener_dolar_hoy()
-                
                 moneda_pago = st.radio(
                     "Seleccione la moneda del pago:",
                     ["Dólares (USD $)", "Pesos Chilenos (CLP $)"],
@@ -874,78 +909,99 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                 )
 
                 if moneda_pago == "Pesos Chilenos (CLP $)":
-                    st.info(f"🇨🇱 **Valor Dólar Observado (Chile):** ${dolar_hoy:,.2f} CLP")
-                    
                     col_clp, col_tc = st.columns(2)
                     with col_clp:
-                        monto_clp = st.number_input(
-                            "Monto recibido en CLP ($):",
-                            min_value=0.0,
-                            step=1000.0,
-                            format="%.2f",
-                            key=f"clp_{folio_seleccionado}"
-                        )
+                        monto_clp = st.number_input("Monto recibido en CLP ($):", min_value=0.0, step=1000.0, format="%.2f", key=f"clp_{folio_seleccionado}")
                     with col_tc:
-                        tipo_cambio = st.number_input(
-                            "Tipo de Cambio (T/C CLP/USD):",
-                            min_value=1.0,
-                            value=float(dolar_hoy),
-                            step=1.0,
-                            format="%.2f",
-                            key=f"tc_{folio_seleccionado}"
-                        )
-
+                        tipo_cambio = st.number_input("Tipo de Cambio (T/C CLP/USD):", min_value=1.0, value=float(dolar_hoy), step=1.0, format="%.2f", key=f"tc_{folio_seleccionado}")
                     monto_abono = monto_clp / tipo_cambio if tipo_cambio > 0 else 0.0
-                    st.success(f"💰 Equivalente a abonar a la deuda: **${monto_abono:,.2f} USD**")
-
                 else:
-                    monto_abono = st.number_input(
-                        f"💵 Monto a abonar en USD (Saldo adeudado: ${saldo_actual:,.2f} USD):",
-                        min_value=0.0,
-                        step=10.0,
-                        format="%.2f",
-                        key=f"usd_{folio_seleccionado}"
-                    )
+                    monto_abono = st.number_input(f"💵 Monto a abonar en USD (Saldo adeudado: ${saldo_actual:,.2f} USD):", min_value=0.0, step=10.0, format="%.2f", key=f"usd_{folio_seleccionado}")
             else:
-                monto_abono = st.number_input(
-                    f"💵 Monto a abonar en dinero (Saldo adeudado: ${saldo_actual:,.2f}):",
-                    min_value=0.0,
-                    step=100.0,
-                    key=f"clp_{folio_seleccionado}"
-                )
+                monto_abono = st.number_input(f"💵 Monto a abonar en dinero (Saldo adeudado: ${saldo_actual:,.2f}):", min_value=0.0, step=100.0, key=f"clp_{folio_seleccionado}")
 
-            # --- BOTÓN DE CONFIRMACIÓN DE ABONO EN DINERO ---
+            # --- BOTÓN DE CONFIRMACIÓN DE ABONO Y EXCEDENTES A DEUDAS MÁS ANTIGUAS ---
             if st.button("💵 Confirmar y Registrar Abono", type="primary", use_container_width=True, key=f"btn_confirmar_abono_{folio_seleccionado}"):
                 if monto_abono <= 0:
                     st.warning("⚠️ Ingresa un monto mayor a 0 para registrar el abono.")
+                elif exigir_solo_iva and monto_abono < iva_estimado:
+                    st.error(f"🚨 El abono ingresado es menor al IVA obligatorio exigido de ${iva_estimado:,.2f}.")
                 else:
                     try:
-                        # Permite saldos negativos si se abona más de la deuda (Saldo a Favor)
-                        nuevo_saldo = saldo_actual - float(monto_abono)
-                        nuevo_monto_abonado = monto_abonado_actual + float(monto_abono)
+                        excedente_actual = monto_abono
+                        
+                        # 1. Liquidar o abonar el folio seleccionado actualmente
+                        nuevo_saldo = saldo_actual - float(excedente_actual)
+                        nuevo_monto_abonado = monto_abonado_actual + float(excedente_actual)
                         
                         if nuevo_saldo < 0:
-                            nuevo_estado = "Saldo a Favor"
-                            monto_excedente = abs(nuevo_saldo)
-                            msg_exito = f"🎉 ¡Abono registrado! La deuda del Folio **{folio_seleccionado}** fue saldada y el cliente tiene un **Saldo a Favor de ${monto_excedente:,.2f}**."
-                        elif nuevo_saldo == 0:
+                            # Queda excedente (Saldo a Favor)
+                            excedente_actual = abs(nuevo_saldo)
+                            nuevo_saldo = 0.0
+                            nuevo_monto_abonado = monto_abonado_actual + (monto_abono - excedente_actual)
                             nuevo_estado = "Pagado"
-                            msg_exito = f"🎉 ¡Abono registrado! La deuda del Folio **{folio_seleccionado}** ha sido pagada por completo."
+                        elif nuevo_saldo == 0:
+                            excedente_actual = 0.0
+                            nuevo_estado = "Pagado"
                         else:
+                            excedente_actual = 0.0
                             nuevo_estado = "Pendiente"
-                            msg_exito = f"✅ ¡Abono de **${monto_abono:,.2f}** registrado con éxito! Nuevo saldo pendiente: **${nuevo_saldo:,.2f}**"
 
-                        # Actualización de saldo, abono acumulado y estado en Supabase
+                        # Actualizar deuda principal actual en Supabase
                         supabase.table("cuentas_por_cobrar").update({
                             "monto_abonado": nuevo_monto_abonado,
                             "saldo_pendiente": nuevo_saldo,
                             "estado": nuevo_estado
                         }).eq("id", id_deuda).execute()
 
-                        st.success(msg_exito)
+                        mensaje_excedente_extra = ""
+
+                        # 2. DISTRIBUIR EXCEDENTE EN CASCADA HACIA DEUDAS MÁS ANTIGUAS DE LA MISMA EMPRESA
+                        if excedente_actual > 0:
+                            # Buscar otras deudas pendientes de la misma empresa ordenadas por fecha de emisión ascendente (más antiguas primero)
+                            query_antiguas = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual).neq("id", id_deuda).order("fecha_emision", desc=False)
+                            
+                            res_antiguas = query_antiguas.execute()
+                            if res_antiguas.data:
+                                deudas_empresa = [
+                                    d for d in res_antiguas.data 
+                                    if (str(d.get("rut_cliente","")).strip() == rut_cliente_actual or str(d.get("cliente","")).strip() == nombre_cliente_actual)
+                                    and float(d.get("saldo_pendiente", 0)) > 0
+                                ]
+
+                                for deuda_ant in deudas_empresa:
+                                    if excedente_actual <= 0:
+                                        break
+                                    
+                                    id_ant = deuda_ant["id"]
+                                    saldo_ant = float(deuda_ant["saldo_pendiente"])
+                                    abonado_ant = float(deuda_ant.get("monto_abonado", 0.0))
+                                    folio_ant = deuda_ant.get("folio_venta", "S/F")
+
+                                    if excedente_actual >= saldo_ant:
+                                        # Paga por completo la deuda antigua y queda remanente
+                                        excedente_actual -= saldo_ant
+                                        supabase.table("cuentas_por_cobrar").update({
+                                            "monto_abonado": abonado_ant + saldo_ant,
+                                            "saldo_pendiente": 0.0,
+                                            "estado": "Pagado"
+                                        }).eq("id", id_ant).execute()
+                                        mensaje_excedente_extra += f" | Folio antiguo {folio_ant} saldado por completo"
+                                    else:
+                                        # Consume parte del excedente en esta deuda antigua
+                                        nuevo_saldo_ant = saldo_ant - excedente_actual
+                                        supabase.table("cuentas_por_cobrar").update({
+                                            "monto_abonado": abonado_ant + excedente_actual,
+                                            "saldo_pendiente": nuevo_saldo_ant,
+                                            "estado": "Pendiente"
+                                        }).eq("id", id_ant).execute()
+                                        mensaje_excedente_extra += f" | Se abonaron ${excedente_actual:,.2f} al Folio antiguo {folio_ant}"
+                                        excedente_actual = 0.0
+
+                        st.success(f"🎉 ¡Abono registrado con éxito!{mensaje_excedente_extra}")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al registrar el abono en Supabase: {e}")
+                        st.error(f"❌ Error al procesar el abono y excedentes: {e}")
 
             # --- REGISTRO DE REINGRESO / DEVOLUCIÓN (SÓLO SI ES CONSIGNACIÓN) ---
             if es_consignacion and items_venta:
@@ -996,7 +1052,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                                 for cod_prod, datos in devoluciones.items():
                                     cant = datos["cant_devuelta"]
                                     if cant > 0:
-                                        # 1. Devuelve stock al inventario en 'productos' o 'ingredientes'
                                         res_p = supabase.table("productos").select("id, stock").eq("rut_empresa", rut_actual).eq("codigo", str(cod_prod)).execute()
                                         if res_p.data:
                                             stk_actual = float(res_p.data[0].get("stock") or 0.0)
@@ -1009,7 +1064,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                                                 supabase.table("ingredientes").update({"stock": stk_actual + cant}).eq("id", res_i.data[0]["id"]).execute()
                                                 unidades_devueltas_exito += cant
 
-                                        # 2. Descuenta la venta en la tabla 'ventas' para restar de Caja y Ventas Totales
                                         res_v = supabase.table("ventas").select("*").eq("rut_empresa", rut_actual).execute()
                                         if res_v.data:
                                             rows_coincidentes = [
@@ -1032,7 +1086,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                                                         "monto": nuevo_monto_v
                                                     }).eq("id", row_v["id"]).execute()
 
-                                # 3. Ajusta el saldo pendiente en Cuentas por Cobrar
                                 nuevo_saldo = max(0.0, saldo_actual - total_rebaja_calculada)
                                 estado_final = "DEVUELTO" if nuevo_saldo <= 0 else "Pendiente"
 
