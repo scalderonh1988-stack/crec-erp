@@ -801,7 +801,88 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
         st.metric(label="💰 Total Dinero en la Calle (Por Cobrar)", value=f"${total_pendiente:,.2f}")
         
         st.divider()
-        st.markdown("### 💳 Registrar Abono, Pago o Prórroga")
+        
+        # =========================================================================
+        # NUEVO: ABONO GLOBAL / MASIVO POR CLIENTE (DISTRIBUCIÓN EN CASCADA)
+        # =========================================================================
+        st.markdown("### ⚡ Abono Global por Cliente (Abono Masivo en Cascada)")
+        st.info("💡 Usa esta opción cuando un cliente te haga un pago grande (ej: pagar múltiples documentos a la vez) y quieras que se distribuya automáticamente cubriendo desde los documentos más antiguos hasta los más nuevos.")
+
+        with st.expander("💼 Realizar Abono Global / Masivo a un Cliente"):
+            clientes_con_deuda = df_filtrado[df_filtrado["saldo_pendiente"] > 0]["cliente"].dropna().unique().tolist()
+            
+            if clientes_con_deuda:
+                cliente_global_elegido = st.selectbox("Selecciona el Cliente:", options=clientes_con_deuda, key="global_cliente_sel")
+                
+                # Filtrar deudas de este cliente ordenadas de la más antigua a la más nueva
+                df_deudas_cliente = df_filtrado[
+                    (df_filtrado["cliente"] == cliente_global_elegido) & 
+                    (df_filtrado["saldo_pendiente"] > 0)
+                ].sort_values(by="fecha_emision", ascending=True)
+                
+                deuda_total_cliente = df_deudas_cliente["saldo_pendiente"].sum()
+                st.write(f"📌 Deuda total pendiente de **{cliente_global_elegido}**: **${deuda_total_cliente:,.2f}** (en {len(df_deudas_cliente)} documentos)")
+
+                monto_abono_global = st.number_input(
+                    "Monto total recibido del cliente ($):",
+                    min_value=0.0,
+                    max_value=float(deuda_total_cliente * 1.5),
+                    step=10000.0,
+                    key="global_monto_abono"
+                )
+
+                if st.button("🚀 Distribuir y Aplicar Abono Masivo", type="primary", key="btn_ejecutar_abono_global"):
+                    if monto_abono_global <= 0:
+                        st.warning("⚠️ Ingresa un monto mayor a 0.")
+                    else:
+                        try:
+                            remanente = float(monto_abono_global)
+                            detalle_distribucion = []
+
+                            for _, row_d in df_deudas_cliente.iterrows():
+                                if remanente <= 0:
+                                    break
+                                
+                                id_reg = row_d["id"]
+                                saldo_doc = float(row_d["saldo_pendiente"])
+                                abonado_doc = float(row_d.get("monto_abonado", 0.0))
+                                folio_doc = row_d["folio_venta_limpio"]
+
+                                if remanente >= saldo_doc:
+                                    remanente -= saldo_doc
+                                    nuevo_abonado = abonado_doc + saldo_doc
+                                    supabase.table("cuentas_por_cobrar").update({
+                                        "monto_abonado": nuevo_abonado,
+                                        "saldo_pendiente": 0.0,
+                                        "estado": "Pagado"
+                                    }).eq("id", id_reg).execute()
+                                    detalle_distribucion.append(f"✅ Folio {folio_doc}: Saldado por completo (${saldo_doc:,.2f})")
+                                else:
+                                    nuevo_saldo_doc = saldo_doc - remanente
+                                    nuevo_abonado = abonado_doc + remanente
+                                    supabase.table("cuentas_por_cobrar").update({
+                                        "monto_abonado": nuevo_abonado,
+                                        "saldo_pendiente": nuevo_saldo_doc,
+                                        "estado": "Pendiente"
+                                    }).eq("id", id_reg).execute()
+                                    detalle_distribucion.append(f"⚖️ Folio {folio_doc}: Abono parcial de ${remanente:,.2f} (Nuevo saldo: ${nuevo_saldo_doc:,.2f})")
+                                    remanente = 0.0
+
+                            st.success(f"🎉 ¡Abono masivo aplicado correctamente a las deudas de {cliente_global_elegido}!")
+                            for det in detalle_distribucion:
+                                st.write(det)
+                            
+                            if remanente > 0:
+                                st.info(f"ℹ️ Quedó un remanente a favor del cliente de **${remanente:,.2f}** que no se aplicó porque se cubrieron todas sus deudas.")
+
+                            st.rerun()
+                        except Exception as err_glob:
+                            st.error(f"❌ Error al procesar el abono masivo: {err_glob}")
+            else:
+                st.info("ℹ️ No hay clientes con deudas pendientes para procesar abonos globales.")
+
+        st.divider()
+        st.markdown("### 💳 Registrar Abono, Pago o Prórroga (Por Documento Individual)")
         
         deudas_opciones = df_filtrado.copy() if not df_filtrado.empty else df_cxp.copy()
         
@@ -813,7 +894,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             )
             opciones_deuda = deudas_opciones["etiqueta"].tolist()
             
-            deuda_seleccionada = st.selectbox("📌 Selecciona el documento/venta:", options=opciones_deuda)
+            deuda_seleccionada = st.selectbox("📌 Selecciona el documento/venta específico:", options=opciones_deuda)
             
             folio_seleccionado = limpiar_folio_str(deuda_seleccionada.split(" | ")[0].replace("Folio: ", ""))
             fila_deuda = deudas_opciones[deudas_opciones["folio_venta_limpio"] == folio_seleccionado].iloc[0]
@@ -824,10 +905,9 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             rut_cliente_actual = str(fila_deuda.get("rut_cliente", "")).strip()
             nombre_cliente_actual = str(fila_deuda.get("cliente", "")).strip()
             
-            # --- SEPARAR NETO E IVA (FUNCIONALIDAD OBLIGATORIA / TRIBUTARIA) ---
+            # --- SEPARAR NETO E IVA ---
             st.markdown("---")
             st.markdown("#### 🏛️ Desglose Tributario (Neto e IVA)")
-            # Estimación estándar 19% IVA (Neto = Total / 1.19, IVA = Total - Neto)
             iva_estimado = round(saldo_actual - (saldo_actual / 1.19), 2)
             neto_estimado = round(saldo_actual / 1.19, 2)
             
@@ -837,7 +917,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             col_iva3.metric("IVA Obligatorio (19%)", f"${iva_estimado:,.2f}")
             
             exigir_solo_iva = st.checkbox("📌 Marcar si la empresa exige/acuerda pagar obligatoriamente el IVA de este saldo ahora", key=f"ch_iva_{folio_seleccionado}")
-            monto_minimo_cobro = iva_estimado if exigir_solo_iva else 0.0
             if exigir_solo_iva:
                 st.info(f"ℹ️ Con esta opción activa, el sistema validará que el abono cubra al menos el IVA obligatorio de **${iva_estimado:,.2f}**.")
 
@@ -889,7 +968,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             except Exception as e:
                 st.warning(f"⚠️ No se pudo obtener el detalle de la venta: {e}")
 
-            # --- REGISTRO DE ABONO EN DINERO ---
+            # --- REGISTRO DE ABONO INDIVIDUAL CON CASCADA DE EXCEDENTES ---
             texto_sesion_completo = " ".join([f"{k} {v}" for k, v in st.session_state.items()]).upper()
             texto_ruta = str(ruta_negocio).upper()
             
@@ -920,7 +999,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
             else:
                 monto_abono = st.number_input(f"💵 Monto a abonar en dinero (Saldo adeudado: ${saldo_actual:,.2f}):", min_value=0.0, step=100.0, key=f"clp_{folio_seleccionado}")
 
-            # --- BOTÓN DE CONFIRMACIÓN DE ABONO Y EXCEDENTES A DEUDAS MÁS ANTIGUAS ---
             if st.button("💵 Confirmar y Registrar Abono", type="primary", use_container_width=True, key=f"btn_confirmar_abono_{folio_seleccionado}"):
                 if monto_abono <= 0:
                     st.warning("⚠️ Ingresa un monto mayor a 0 para registrar el abono.")
@@ -930,12 +1008,10 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                     try:
                         excedente_actual = monto_abono
                         
-                        # 1. Liquidar o abonar el folio seleccionado actualmente
                         nuevo_saldo = saldo_actual - float(excedente_actual)
                         nuevo_monto_abonado = monto_abonado_actual + float(excedente_actual)
                         
                         if nuevo_saldo < 0:
-                            # Queda excedente (Saldo a Favor)
                             excedente_actual = abs(nuevo_saldo)
                             nuevo_saldo = 0.0
                             nuevo_monto_abonado = monto_abonado_actual + (monto_abono - excedente_actual)
@@ -947,7 +1023,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                             excedente_actual = 0.0
                             nuevo_estado = "Pendiente"
 
-                        # Actualizar deuda principal actual en Supabase
                         supabase.table("cuentas_por_cobrar").update({
                             "monto_abonado": nuevo_monto_abonado,
                             "saldo_pendiente": nuevo_saldo,
@@ -956,9 +1031,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
 
                         mensaje_excedente_extra = ""
 
-                        # 2. DISTRIBUIR EXCEDENTE EN CASCADA HACIA DEUDAS MÁS ANTIGUAS DE LA MISMA EMPRESA
                         if excedente_actual > 0:
-                            # Buscar otras deudas pendientes de la misma empresa ordenadas por fecha de emisión ascendente (más antiguas primero)
                             query_antiguas = supabase.table("cuentas_por_cobrar").select("*").eq("rut_empresa", rut_actual).neq("id", id_deuda).order("fecha_emision", desc=False)
                             
                             res_antiguas = query_antiguas.execute()
@@ -979,7 +1052,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                                     folio_ant = deuda_ant.get("folio_venta", "S/F")
 
                                     if excedente_actual >= saldo_ant:
-                                        # Paga por completo la deuda antigua y queda remanente
                                         excedente_actual -= saldo_ant
                                         supabase.table("cuentas_por_cobrar").update({
                                             "monto_abonado": abonado_ant + saldo_ant,
@@ -988,7 +1060,6 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                                         }).eq("id", id_ant).execute()
                                         mensaje_excedente_extra += f" | Folio antiguo {folio_ant} saldado por completo"
                                     else:
-                                        # Consume parte del excedente en esta deuda antigua
                                         nuevo_saldo_ant = saldo_ant - excedente_actual
                                         supabase.table("cuentas_por_cobrar").update({
                                             "monto_abonado": abonado_ant + excedente_actual,
@@ -1003,7 +1074,7 @@ def mostrar_modulo_cuentas_por_cobrar(ruta_negocio):
                     except Exception as e:
                         st.error(f"❌ Error al procesar el abono y excedentes: {e}")
 
-            # --- REGISTRO DE REINGRESO / DEVOLUCIÓN (SÓLO SI ES CONSIGNACIÓN) ---
+            # --- REGISTRO DE REINGRESO / DEVOLUCIÓN ---
             if es_consignacion and items_venta:
                 st.divider()
                 st.markdown("### 🔄 Reingreso / Devolución de Mercadería (Consignación)")
