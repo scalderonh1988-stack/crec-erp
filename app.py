@@ -5555,14 +5555,18 @@ elif menu == "💰 Módulo de Ventas (POS)":
             print(f"Error en sincronización offline: {e}")
             return 0
 
-    # --- 🟢 INICIALIZACIÓN DE LA CAJA LOCAL ---
+    # --- 🟢 INICIALIZACIÓN DE LA CAJA LOCAL Y AUTO-SINCRONIZACIÓN ---
     init_db_local_pos()
     modo_online = hay_conexion_activa()
 
+    # Sincronización automática silenciosa en segundo plano al cargar el POS si hay internet
     if modo_online:
-        cant_sinc = sincronizar_ventas_pendientes_pos(supabase)
-        if cant_sinc > 0:
-            st.toast(f"🔄 ¡Se sincronizaron {cant_sinc} ventas pendientes acumuladas offline!", icon="🎉")
+        try:
+            cant_sinc = sincronizar_ventas_pendientes_pos(supabase)
+            if cant_sinc > 0:
+                st.toast(f"🔄 ¡Se sincronizaron automáticamente {cant_sinc} ventas pendientes con Supabase!", icon="🎉")
+        except Exception as e:
+            print(f"Error en auto-sincronización: {e}")
 
     # --- 🛡️ 1. GUARDIA DE SESIÓN Y ATRIBUTOS BÁSICOS ---
     rut_actual = get_current_tenant()
@@ -5609,21 +5613,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     st.markdown("---")
 
-    # --- 🔄 BOTÓN DE SINCRONIZACIÓN MANUAL DE VENTAS OFFLINE ---
-    with st.expander("🔄 Sincronización Manual de Ventas Pendientes (Offline)"):
-        st.info("Si se acumularon ventas en el modo local/contingencia y deseas subirlas a Supabase ahora, haz clic aquí:")
-        if st.button("📤 Sincronizar Ventas Pendientes con Supabase", use_container_width=True, type="primary"):
-            try:
-                cant_sinc = sincronizar_ventas_pendientes_pos(supabase)
-                if cant_sinc > 0:
-                    st.success(f"🎉 ¡Se sincronizaron exitosamente {cant_sinc} ventas pendientes a Supabase!")
-                    st.rerun()
-                else:
-                    st.warning("⚠️ No hay ventas pendientes por sincronizar en la base de datos local o el sistema no detecta internet.")
-            except Exception as e:
-                st.error(f"❌ Error al sincronizar: {e}")
-
-    # --- 4. CARGA PREVIA DEL INVENTARIO ---
+        # --- 4. CARGA PREVIA DEL INVENTARIO ---
     df_nube = pd.DataFrame()
     if modo_online:
         try:
