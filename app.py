@@ -5610,24 +5610,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
         key="bodega_pos_seleccionada"
     )
 
-    # --- 🛠️ BOTÓN TEMPORAL DE FORZAR SUBIDA DE PENDIENTES (CORREGIDO DE INDENTACIÓN) ---
-    with st.expander("🛠️ Forzar Subida de Ventas Pendientes (Local a Supabase)"):
-        if st.button("🚀 Subir ventas pendientes ahora"):
-            try:
-                conn_temp = sqlite3.connect(DB_LOCAL_NAME)
-                df_pend = pd.read_sql_query("SELECT * FROM ventas_pendientes WHERE estado = 'pendiente'", conn_temp)
-                conn_temp.close()
-                
-                if not df_pend.empty:
-                    st.write(f"Se encontraron {len(df_pend)} ventas pendientes en SQLite. Intentando subir...")
-                    cant = sincronizar_ventas_pendientes_pos(supabase)
-                    st.success(f"¡Sincronización finalizada! Se subieron {cant} registros.")
-                    st.rerun()
-                else:
-                    st.info("No hay registros en 'ventas_pendientes' con estado 'pendiente'.")
-            except Exception as e:
-                st.error(f"Error al forzar sincronización: {e}")
-
     st.markdown("---")
 
     # --- 4. CARGA PREVIA DEL INVENTARIO ---
