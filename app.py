@@ -3251,7 +3251,6 @@ elif menu == "📊 Dashboard Ejecutivo":
                         # --- DETECCIÓN CORRECTA DE LA COLUMNA 'es_exento' (TEXTO SI/NO) ---
                         col_ex = next((c for c in ['es_exento', 'exento'] if c in df_prod.columns), None)
                         if col_ex:
-                            # Convierte a texto, limpia espacios y revisa si dice 'si'
                             df_prod['es_exento'] = df_prod[col_ex].astype(str).str.strip().str.lower().isin(['si', 'true', '1', 'yes'])
                         else:
                             df_prod['es_exento'] = False
@@ -3289,7 +3288,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     # Entradas Totales (Ventas Históricas + Capital Inyectado)
     total_entradas = total_ventas_historico + float(total_inversion_inicial)
 
-    # --- A. GASTOS HISTÓRICOS REALES (Sin filtros restrictivos que los dejen en 0) ---
+    # --- A. GASTOS HISTÓRICOS REALES (Aislados por empresa) ---
     total_gastos_historico = 0.0
     try:
         res_g_all = supabase.table("gastos").select("*").execute()
@@ -3306,7 +3305,7 @@ elif menu == "📊 Dashboard Ejecutivo":
     except Exception as e:
         print(f"Error sumando gastos históricos: {e}")
 
-    # --- B. COMPRAS HISTÓRICAS REALES ---
+    # --- B. COMPRAS HISTÓRICAS REALES (Aisladas por empresa) ---
     total_compras_historico = 0.0
     try:
         res_c_all = supabase.table("compras").select("*").execute()
