@@ -5559,7 +5559,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
     init_db_local_pos()
     modo_online = hay_conexion_activa()
 
-    # Sincronización automática silenciosa en segundo plano al cargar el POS si hay internet
     if modo_online:
         try:
             cant_sinc = sincronizar_ventas_pendientes_pos(supabase)
@@ -5613,7 +5612,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     st.markdown("---")
 
-        # --- 4. CARGA PREVIA DEL INVENTARIO ---
+    # --- 4. CARGA PREVIA DEL INVENTARIO ---
     df_nube = pd.DataFrame()
     if modo_online:
         try:
@@ -5824,13 +5823,11 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 idx_cliente = i
                 break
 
-    # Dividir pantalla para Cliente y Vendedor
     col_cv1, col_cv2 = st.columns(2)
     with col_cv1:
         cliente_elegido = st.selectbox("👤 Selecciona o asigna un cliente:", lista_clientes, index=idx_cliente)
 
     with col_cv2:
-        # --- 👨‍💼 CARGAR VENDEDORES DISPONIBLES ---
         lista_vendedores = ["Sin Vendedor Asignado"]
         if modo_online:
             try:
@@ -5980,7 +5977,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.pop("folio_guia_origen", None) 
                 st.rerun()
 
-# =========================================================================
+    # =========================================================================
     # --- VISTA 2: PANTALLA DE PAGO Y CONFIRMACIÓN CON DTE ---
     # =========================================================================
     elif st.session_state.estado_pago:
@@ -6095,6 +6092,9 @@ elif menu == "💰 Módulo de Ventas (POS)":
                             except Exception:
                                 pass 
                         
+                        # --- EVALUAR VENDEDOR VACÍO O ASIGNADO ---
+                        vendedor_a_guardar = vendedor_seleccionado if (vendedor_seleccionado and vendedor_seleccionado != "Sin Vendedor Asignado") else None
+
                         registros_ventas_batch = []
 
                         for item in st.session_state.carrito_ventas:
@@ -6137,7 +6137,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "caja": caja_actual, 
                                 "documento": tipo_documento,
                                 "cliente": cliente_nombre if cliente_nombre else "Cliente General",
-                                "vendedor": vendedor_seleccionado,
+                                "vendedor": vendedor_a_guardar,
                                 "codigo_producto": codigo_vendido, 
                                 "detalle": str(item["Descripción"]),
                                 "cantidad": cantidad_vendida, 
@@ -6222,7 +6222,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 key="selectbox_producto_venta"
             )
         
-            # Identificador único del producto seleccionado para limpiar inputs de forma dinámica
             id_prod_actual = producto_seleccionado.split(" - ")[0] if producto_seleccionado != "-- Selecciona un producto --" else "default"
 
             if producto_seleccionado != st.session_state.get("ultimo_prod_sel", ""):
@@ -6235,7 +6234,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 else:
                     st.session_state.precio_actual_input = 0.0
 
-            # 🛠️ CORRECCIÓN: Usar una key dinámica en el formulario y limpiar estados
             with st.form(key=f"form_agregar_item_{id_prod_actual}"):
                 col_cant, col_precio_input = st.columns(2)
                 with col_cant:
@@ -6271,7 +6269,6 @@ elif menu == "💰 Módulo de Ventas (POS)":
                         else:
                             nombre_desc = producto_seleccionado.split(" - ")[1].split(" (Stock:")[0]
                             
-                            # 🛠️ CORRECCIÓN DE DUPLICACIÓN: Si ya está en el carrito, sumar cantidad en lugar de duplicar fila
                             encontrado_en_carrito = False
                             for item in st.session_state.carrito_ventas:
                                 if str(item["Código"]) == str(c_buscado):
