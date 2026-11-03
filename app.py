@@ -5976,7 +5976,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                 st.session_state.pop("folio_guia_origen", None) 
                 st.rerun()
 
-    # =========================================================================
+# =========================================================================
     # --- VISTA 2: PANTALLA DE PAGO Y CONFIRMACIÓN CON DTE ---
     # =========================================================================
     elif st.session_state.estado_pago:
@@ -6133,7 +6133,7 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "caja": caja_actual, 
                                 "documento": tipo_documento,
                                 "cliente": cliente_nombre if cliente_nombre else "Cliente General",
-                                "vendedor": vendedor_seleccionado, # <--- ¡Vendedor guardado en Supabase!
+                                "vendedor": vendedor_seleccionado,
                                 "codigo_producto": codigo_vendido, 
                                 "detalle": str(item["Descripción"]),
                                 "cantidad": cantidad_vendida, 
@@ -6147,14 +6147,18 @@ elif menu == "💰 Módulo de Ventas (POS)":
                                 "xml_url": xml_url_dte
                             })
 
+                        # --- INSERCIÓN A SUPABASE CON CAPTURA DE ERROR EXPLÍCITA ---
                         if not es_offline_para_cobro:
                             try:
                                 res_venta = supabase.table("ventas").insert(registros_ventas_batch).execute()
                                 if not res_venta.data:
+                                    st.warning("⚠️ Supabase no confirmó la inserción. Resguardando venta localmente.")
                                     guardar_venta_offline_db(rut_actual, caja_actual, tipo_documento, cliente_nombre, total_venta, forma_pago, modo_str, st.session_state.carrito_ventas)
-                            except Exception:
+                            except Exception as ex_supabase:
+                                st.error(f"🚨 ERROR REAL DE SUPABASE AL INSERTAR: {ex_supabase}")
                                 guardar_venta_offline_db(rut_actual, caja_actual, tipo_documento, cliente_nombre, total_venta, forma_pago, modo_str, st.session_state.carrito_ventas)
                         else:
+                            st.warning("🟠 El sistema detectó la red inactiva. Guardando en caché local SQLite.")
                             guardar_venta_offline_db(rut_actual, caja_actual, tipo_documento, cliente_nombre, total_venta, forma_pago, modo_str, st.session_state.carrito_ventas)
 
                         if forma_pago in ["Crédito", "Consignación"] and not es_offline_para_cobro:
