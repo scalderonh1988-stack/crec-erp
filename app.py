@@ -5609,6 +5609,20 @@ elif menu == "💰 Módulo de Ventas (POS)":
 
     st.markdown("---")
 
+    # --- 🔄 BOTÓN DE SINCRONIZACIÓN MANUAL DE VENTAS OFFLINE ---
+    with st.expander("🔄 Sincronización Manual de Ventas Pendientes (Offline)"):
+        st.info("Si se acumularon ventas en el modo local/contingencia y deseas subirlas a Supabase ahora, haz clic aquí:")
+        if st.button("📤 Sincronizar Ventas Pendientes con Supabase", use_container_width=True, type="primary"):
+            try:
+                cant_sinc = sincronizar_ventas_pendientes_pos(supabase)
+                if cant_sinc > 0:
+                    st.success(f"🎉 ¡Se sincronizaron exitosamente {cant_sinc} ventas pendientes a Supabase!")
+                    st.rerun()
+                else:
+                    st.warning("⚠️ No hay ventas pendientes por sincronizar en la base de datos local o el sistema no detecta internet.")
+            except Exception as e:
+                st.error(f"❌ Error al sincronizar: {e}")
+
     # --- 4. CARGA PREVIA DEL INVENTARIO ---
     df_nube = pd.DataFrame()
     if modo_online:
